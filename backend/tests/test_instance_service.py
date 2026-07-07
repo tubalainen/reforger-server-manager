@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from models import Instance
 from services import instance_service
@@ -34,6 +35,19 @@ def test_render_without_public_address_leaves_it():
     cfg = instance_service.render_instance_config(_template_config(), _inst(), "")
     # empty public address must not overwrite the template's value
     assert "publicAddress" not in cfg or cfg["publicAddress"] == ""
+
+
+def test_server_files_ready_detects_binary(tmp_path, monkeypatch):
+    import config
+
+    monkeypatch.setattr(config.settings, "serverfiles_dir", str(tmp_path))
+    assert instance_service.server_files_ready("stable") is False
+    branch_dir = tmp_path / "stable"
+    branch_dir.mkdir()
+    (branch_dir / instance_service.SERVER_BINARY).write_text("#!/bin/sh\n")
+    assert instance_service.server_files_ready("stable") is True
+    # a different branch is still not ready
+    assert instance_service.server_files_ready("experimental") is False
 
 
 def test_render_no_rcon_when_template_has_none():
@@ -88,6 +102,8 @@ def test_create_container_uses_acemod_contract(tmp_path, monkeypatch):
     assert captured["name"] == "reforger-instance-1"
     # ACE Mod contract: use our mounted config, don't self-generate
     assert captured["environment"]["ARMA_CONFIG"] == "server.json"
+    # never self-install: instances run the pre-downloaded files
+    assert captured["environment"]["SKIP_INSTALL"] == "true"
     assert captured["environment"]["STEAM_APPID"] == "1890870"  # experimental
     assert captured["environment"]["SERVER_PUBLIC_PORT"] == "2005"
     assert captured["environment"]["SERVER_PUBLIC_ADDRESS"] == "203.0.113.5"

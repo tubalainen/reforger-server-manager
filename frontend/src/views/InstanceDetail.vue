@@ -82,7 +82,7 @@ onUnmounted(() => {
 
 <template>
   <div class="container">
-    <router-link to="/" class="btn btn-sm btn-outline-secondary mb-3">← Instances</router-link>
+    <router-link to="/instances" class="btn btn-sm btn-outline-secondary mb-3">← Instances</router-link>
 
     <div v-if="error" class="alert alert-warning py-2">{{ error }}</div>
 
@@ -95,10 +95,20 @@ onUnmounted(() => {
           </span>
         </h1>
         <div class="btn-group">
-          <button v-if="inst.status !== 'running'" class="btn btn-success" @click="action('start')">Start</button>
+          <button
+            v-if="inst.status !== 'running'"
+            class="btn btn-success"
+            :disabled="!inst.server_files_ready"
+            @click="action('start')"
+          >Start</button>
           <button v-else class="btn btn-outline-secondary" @click="action('stop')">Stop</button>
           <button class="btn btn-outline-primary" @click="action('restart')">Restart</button>
         </div>
+      </div>
+
+      <div v-if="!inst.server_files_ready" class="alert alert-warning py-2">
+        The {{ inst.branch }} server files are not downloaded yet —
+        <router-link to="/downloads">download them on the Downloads tab</router-link> before starting.
       </div>
 
       <div class="row g-3 mb-3">

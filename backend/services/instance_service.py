@@ -32,9 +32,23 @@ CONTAINER_RCON_PORT = 19999
 
 CONFIG_FILENAME = "server.json"
 
+# The dedicated-server binary the image launches from /reforger (WORKDIR).
+# Its presence is our proof that a branch's server files are installed.
+SERVER_BINARY = "ArmaReforgerServer"
+
 
 class InstanceError(Exception):
     """User-facing instance operation failure."""
+
+
+def server_files_ready(branch: str) -> bool:
+    """True when the branch's server files have been downloaded.
+
+    We require the actual server binary (not just Steam's manifest) so a
+    partial or interrupted download does not count as ready.
+    """
+    binary = Path(config.settings.serverfiles_dir) / branch / SERVER_BINARY
+    return binary.is_file()
 
 
 # --------------------------------------------------------------------------- #
@@ -146,6 +160,11 @@ def start_instance(instance_id: int) -> None:
         inst = session.get(Instance, instance_id)
         if not inst:
             raise InstanceError("Instance not found")
+        if not server_files_ready(inst.branch):
+            raise InstanceError(
+                f"The {inst.branch} server files are not downloaded yet — "
+                "download them on the Downloads tab first"
+            )
         template_config = _template_config(session, inst)
 
         # Reuse an existing container if present, else create one.
@@ -197,7 +216,9 @@ def _create_container(inst: Instance, config_path: Path):
     }
     environment = {
         "STEAM_APPID": config.BRANCHES[inst.branch]["app_id"],
-        "SKIP_INSTALL": "false",
+        # Never self-install: instances run the files fetched on the Downloads
+        # tab and mounted at /reforger. Downloading is gated in start_instance.
+        "SKIP_INSTALL": "true",
         "ARMA_CONFIG": CONFIG_FILENAME,
         "SERVER_BIND_PORT": str(CONTAINER_GAME_PORT),
         "SERVER_PUBLIC_PORT": str(inst.game_port),
@@ -284,6 +305,7 @@ def instance_view(inst: Instance, template_name: str | None) -> dict:
         "desired_state": inst.desired_state,
         "auto_restart": inst.auto_restart,
         "status": status,
+        "server_files_ready": server_files_ready(inst.branch),
         "created_at": inst.created_at.isoformat(),
     }
 
@@ -321,6 +343,8 @@ def reconcile_and_recover() -> None:
     for inst in instances:
         if inst.desired_state != "running" or not inst.auto_restart:
             continue
+        if not server_files_ready(inst.branch):
+            continue  # can't run without server files; don't spam restart attempts
         status = container_status(inst.id)
         if status in ("exited", "absent", "created"):
             logger.info("Auto-restarting instance %s (was %s)", inst.name, status)

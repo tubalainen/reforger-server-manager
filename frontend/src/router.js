@@ -11,11 +11,12 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/login', name: 'login', component: Login, meta: { public: true } },
-    { path: '/', name: 'instances', component: Instances },
-    { path: '/instances/:id', name: 'instance-detail', component: InstanceDetail, props: true },
-    { path: '/templates', name: 'templates', component: Templates },
+    // Templates is the starting point of the workflow, so it is the landing page
+    { path: '/', name: 'templates', component: Templates },
     { path: '/templates/new', name: 'template-new', component: TemplateWizard },
     { path: '/templates/:id/edit', name: 'template-edit', component: TemplateWizard, props: true },
+    { path: '/instances', name: 'instances', component: Instances },
+    { path: '/instances/:id', name: 'instance-detail', component: InstanceDetail, props: true },
     { path: '/downloads', name: 'downloads', component: Downloads },
   ],
 })

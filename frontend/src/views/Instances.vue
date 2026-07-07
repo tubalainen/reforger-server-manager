@@ -101,7 +101,7 @@ onUnmounted(() => clearInterval(poll))
         <p class="fs-1 mb-2">🖥️</p>
         <p class="mb-1">No server instances yet.</p>
         <p class="small mb-0">
-          Create one from a <router-link to="/templates">template</router-link> to run an Arma
+          Create one from a <router-link to="/">template</router-link> to run an Arma
           Reforger server in its own container.
         </p>
       </div>
@@ -133,10 +133,16 @@ onUnmounted(() => clearInterval(poll))
               game :{{ inst.game_port }} · A2S :{{ inst.a2s_port }} · RCON :{{ inst.rcon_port }}
             </div>
 
+            <div v-if="!inst.server_files_ready" class="alert alert-warning py-1 px-2 small mb-2">
+              {{ inst.branch }} server files not downloaded —
+              <router-link to="/downloads">get them on Downloads</router-link> before starting.
+            </div>
+
             <div class="d-flex gap-2 flex-wrap">
               <button
                 v-if="inst.status !== 'running'"
                 class="btn btn-sm btn-success"
+                :disabled="!inst.server_files_ready"
                 @click="action(inst, 'start')"
               >Start</button>
               <button v-else class="btn btn-sm btn-outline-secondary" @click="action(inst, 'stop')">
@@ -169,7 +175,7 @@ onUnmounted(() => clearInterval(poll))
           <div class="modal-body">
             <div v-if="create.error" class="alert alert-danger py-2 small">{{ create.error }}</div>
             <div v-if="!hasTemplates" class="alert alert-info py-2 small">
-              You need a <router-link to="/templates">template</router-link> first.
+              You need a <router-link to="/">template</router-link> first.
             </div>
             <template v-else>
               <div class="mb-3">
