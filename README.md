@@ -22,9 +22,10 @@ Docker image: `ghcr.io/tubalainen/reforger-server-manager:latest`
       [Workshop](https://reforger.armaplatform.com/workshop), auto-resolve all mod
       dependencies, add extra mods, tune settings, save — and download the resulting
       `config.json`
-- [ ] Multiple concurrent server instances (stable + experimental side by side), each a
+- [x] Multiple concurrent server instances (stable + experimental side by side), each a
       Docker container spawned and supervised by the manager
-- [ ] Live server logs in the browser, crash auto-restart, scheduled restarts
+- [x] Live server logs in the browser, crash auto-restart
+- [ ] Scheduled restarts
 
 ## Architecture
 
@@ -40,6 +41,23 @@ are sibling containers the manager creates through the Docker API, attached to t
 Docker network and labeled so they survive manager restarts. Server files are downloaded
 once per branch into local folders (`./serverfiles/stable`, `./serverfiles/experimental`)
 and mounted read-only into each instance.
+
+## How server instances run
+
+Each instance is a sibling container created from `REFORGER_SERVER_IMAGE`
+(ACE Mod's [arma-reforger](https://github.com/acemod/docker-reforger) image by
+default). The manager:
+
+- leases a unique host UDP port for game / A2S / RCON from the `.env` ranges and
+  bakes them into a per-instance `config.json` rendered from the template;
+- mounts the shared `./serverfiles/<branch>` install at `/reforger` so instances
+  of the same branch reuse one download, plus per-instance `configs/`, `profile/`
+  and `workshop/` folders under `./data/instances/<id>/`;
+- labels the container so it is rediscovered after a manager restart, and
+  restarts it automatically if it crashes (toggle per instance).
+
+Stable and experimental servers can run side by side. Live server logs stream to
+the instance detail page.
 
 ## Quick start
 

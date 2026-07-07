@@ -16,6 +16,7 @@ logger = logging.getLogger("manager.docker")
 LABEL_MANAGED = "reforger-manager.managed"
 LABEL_ROLE = "reforger-manager.role"
 LABEL_BRANCH = "reforger-manager.branch"
+LABEL_INSTANCE_ID = "reforger-manager.instance_id"
 
 ROLE_STEAMCMD = "steamcmd"
 ROLE_INSTANCE = "instance"
@@ -83,6 +84,17 @@ def find_containers(role: str, status: str | None = None, branch: str | None = N
     except DockerException as exc:
         logger.warning("Container lookup (%s) failed: %s", role, exc)
         return []
+
+
+def find_instance_container(instance_id: int):
+    """Return the single container for an instance id, or None."""
+    filters = {"label": [f"{LABEL_INSTANCE_ID}={instance_id}"]}
+    try:
+        found = get_client().containers.list(all=True, filters=filters)
+    except DockerException as exc:
+        logger.warning("Instance container lookup (%s) failed: %s", instance_id, exc)
+        return None
+    return found[0] if found else None
 
 
 def remove_exited(role: str) -> None:
