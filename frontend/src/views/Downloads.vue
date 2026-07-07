@@ -2,10 +2,23 @@
 import { onMounted, onUnmounted, reactive, nextTick } from 'vue'
 import { api } from '../api'
 
-const state = reactive({ branches: [], docker: true, error: '' })
+const state = reactive({ branches: [], docker: true, error: '', steamcmd_image: '', server_image: '' })
 const logs = reactive({})
+const updateInfo = reactive({})
+const checking = reactive({})
 const sockets = {}
 const logPanes = {}
+
+async function checkUpdate(branch) {
+  checking[branch] = true
+  try {
+    updateInfo[branch] = await api(`/api/serverfiles/${branch}/check-update`)
+  } catch (e) {
+    state.error = e.message
+  } finally {
+    checking[branch] = false
+  }
+}
 
 const badge = { stable: 'text-bg-success', experimental: 'text-bg-warning' }
 
@@ -27,6 +40,8 @@ async function refresh() {
     const data = await api('/api/serverfiles')
     state.docker = data.docker
     state.branches = data.branches
+    state.steamcmd_image = data.steamcmd_image
+    state.server_image = data.server_image
     state.error = ''
     for (const b of data.branches) {
       if (b.job?.status === 'running') connect(b.branch)
@@ -142,17 +157,39 @@ onUnmounted(() => {
               Download completed.
             </div>
 
-            <button
-              class="btn btn-primary"
-              :disabled="!state.docker || (b.job && b.job.status === 'running')"
-              @click="startDownload(b.branch)"
-            >
+            <div v-if="updateInfo[b.branch]" class="small mb-2">
+              <span class="text-secondary">Latest Steam build:</span>
+              {{ updateInfo[b.branch].latest_build || 'unknown' }}
               <span
-                v-if="b.job && b.job.status === 'running'"
-                class="spinner-border spinner-border-sm me-1"
-              ></span>
-              {{ b.installed ? 'Update server files' : 'Download server files' }}
-            </button>
+                v-if="updateInfo[b.branch].update_available"
+                class="badge text-bg-warning ms-1"
+              >Update available</span>
+              <span
+                v-else-if="updateInfo[b.branch].installed_build"
+                class="badge text-bg-success ms-1"
+              >Up to date</span>
+            </div>
+
+            <div class="d-flex gap-2">
+              <button
+                class="btn btn-primary"
+                :disabled="!state.docker || (b.job && b.job.status === 'running')"
+                @click="startDownload(b.branch)"
+              >
+                <span
+                  v-if="b.job && b.job.status === 'running'"
+                  class="spinner-border spinner-border-sm me-1"
+                ></span>
+                {{ b.installed ? 'Update server files' : 'Download server files' }}
+              </button>
+              <button
+                class="btn btn-outline-secondary"
+                :disabled="!state.docker || checking[b.branch]"
+                @click="checkUpdate(b.branch)"
+              >
+                {{ checking[b.branch] ? 'Checking…' : 'Check for updates' }}
+              </button>
+            </div>
 
             <pre
               v-if="logs[b.branch]?.length"
@@ -164,5 +201,10 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+
+    <p class="text-secondary small mt-3 mb-0">
+      SteamCMD image: <code>{{ state.steamcmd_image }}</code> ·
+      Server image: <code>{{ state.server_image }}</code>
+    </p>
   </div>
 </template>

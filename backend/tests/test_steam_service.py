@@ -38,6 +38,38 @@ def test_parse_noise_returns_none():
         assert parse_line(line) is None
 
 
+def test_parse_latest_build_picks_public_branch():
+    from services.steam_service import parse_latest_build
+
+    vdf = '''
+    "1874900"
+    {
+        "depots"
+        {
+            "branches"
+            {
+                "public"
+                {
+                    "buildid"		"19352300"
+                    "timeupdated"	"1751884800"
+                }
+                "experimental"
+                {
+                    "buildid"		"99999999"
+                }
+            }
+        }
+    }
+    '''
+    assert parse_latest_build(vdf) == "19352300"
+
+
+def test_parse_latest_build_none_when_absent():
+    from services.steam_service import parse_latest_build
+
+    assert parse_latest_build("no branches here") is None
+
+
 def test_installed_info_missing_manifest():
     assert steam.installed_info("stable") is None
 

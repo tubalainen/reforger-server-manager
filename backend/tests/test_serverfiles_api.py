@@ -25,6 +25,7 @@ def test_status_lists_both_branches(logged_in):
     assert r.status_code == 200
     body = r.json()
     assert body["docker"] is False
+    assert "steamcmd_image" in body and "server_image" in body
     branches = {b["branch"]: b for b in body["branches"]}
     assert branches["stable"]["app_id"] == "1874900"
     assert branches["experimental"]["app_id"] == "1890870"
@@ -33,6 +34,15 @@ def test_status_lists_both_branches(logged_in):
 
 def test_download_unknown_branch_404(logged_in):
     assert logged_in.post("/api/serverfiles/nightly/download").status_code == 404
+
+
+def test_check_update_docker_down_409(logged_in):
+    # conftest mocks docker ping False -> check-update reports daemon down
+    assert logged_in.get("/api/serverfiles/stable/check-update").status_code == 409
+
+
+def test_check_update_unknown_branch_404(logged_in):
+    assert logged_in.get("/api/serverfiles/nightly/check-update").status_code == 404
 
 
 def test_download_conflict_while_running(logged_in):

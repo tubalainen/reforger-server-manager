@@ -30,7 +30,17 @@ BUILDID_RE = re.compile(r'"buildid"\s+"(\d+)"')
 LASTUPDATED_RE = re.compile(r'"LastUpdated"\s+"(\d+)"')
 SIZE_RE = re.compile(r'"SizeOnDisk"\s+"(\d+)"')
 
+# The public-branch buildid inside `app_info_print` VDF output. [^{}] keeps the
+# match inside the "public" block so we don't grab another branch's buildid.
+PUBLIC_BUILD_RE = re.compile(r'"public"\s*\{[^{}]*?"buildid"\s+"(\d+)"', re.S)
+
 LOG_RING_SIZE = 1000
+
+
+def parse_latest_build(text: str) -> str | None:
+    """Extract the public-branch build id from steamcmd app_info_print output."""
+    m = PUBLIC_BUILD_RE.search(text)
+    return m.group(1) if m else None
 
 
 def parse_line(line: str) -> dict | None:
@@ -115,6 +125,58 @@ class SteamService:
             "build_id": find(BUILDID_RE),
             "last_updated": int(find(LASTUPDATED_RE) or 0),
             "size_bytes": int(find(SIZE_RE) or 0),
+        }
+
+    def latest_build_id(self, branch: str) -> str | None:
+        """Query Steam for the current public build id of the branch's app.
+
+        Runs a short one-shot steamcmd container (app_info_print) and parses
+        its VDF output. Returns None on any failure — callers treat that as
+        "unknown", never fatal.
+        """
+        app_id = config.BRANCHES[branch]["app_id"]
+        command = [
+            "+login", "anonymous",
+            "+app_info_update", "1",
+            "+app_info_print", app_id,
+            "+quit",
+        ]
+        try:
+            container = docker_service.get_client().containers.run(
+                config.settings.steamcmd_image,
+                command,
+                detach=True,
+                name=f"reforger-steamcheck-{branch}-{int(time.time())}",
+                labels={docker_service.LABEL_MANAGED: "true"},
+            )
+        except DockerException as exc:
+            logger.warning("Could not start steam version check: %s", exc)
+            return None
+        try:
+            container.wait(timeout=120)
+            output = container.logs().decode("utf-8", errors="replace")
+        except Exception as exc:
+            logger.warning("Steam version check failed: %s", exc)
+            output = ""
+        finally:
+            try:
+                container.remove(force=True)
+            except DockerException:
+                pass
+        return parse_latest_build(output)
+
+    def update_status(self, branch: str) -> dict:
+        """Installed vs latest build id, and whether an update is available."""
+        installed = self.installed_info(branch)
+        installed_build = installed.get("build_id") if installed else None
+        latest_build = self.latest_build_id(branch)
+        update_available = bool(
+            installed_build and latest_build and installed_build != latest_build
+        )
+        return {
+            "installed_build": installed_build,
+            "latest_build": latest_build,
+            "update_available": update_available,
         }
 
     async def start(self, branch: str) -> DownloadJob:
