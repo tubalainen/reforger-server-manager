@@ -32,8 +32,19 @@ async def serverfiles_status(_user: str = Depends(auth.require_session)):
     docker_ok = await asyncio.to_thread(docker_service.ping)
     return {
         "docker": docker_ok,
+        "steamcmd_image": config.settings.steamcmd_image,
+        "server_image": config.settings.reforger_server_image,
         "branches": [_branch_state(b) for b in config.BRANCHES],
     }
+
+
+@router.get("/{branch}/check-update")
+async def check_update(branch: str, _user: str = Depends(auth.require_session)):
+    """Compare the installed build against Steam's current public build."""
+    _require_branch(branch)
+    if not await asyncio.to_thread(docker_service.ping):
+        raise HTTPException(status_code=409, detail="Docker daemon is not reachable")
+    return await asyncio.to_thread(steam.update_status, branch)
 
 
 @router.post("/{branch}/download", status_code=202)
