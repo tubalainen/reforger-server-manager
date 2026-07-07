@@ -7,13 +7,10 @@ services:
     restart: unless-stopped
     env_file: .env
     ports:
-      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8080}:8080"
-    # Grants the non-root app user access to the docker socket (see .env DOCKER_GID)
-    group_add:
-      - "${DOCKER_GID:-999}"
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-7780}:8080"
     volumes:
       # Manager state: SQLite DB, per-instance configs and profiles.
-      # Must be writable by uid 1000 (chown -R 1000:1000 ./data).
+      # Ownership is fixed automatically by the container entrypoint.
       - ./data:/data
       # Root-equivalent on the host — required to spawn server containers.
       # Keep the GUI behind auth + firewall/reverse proxy.
