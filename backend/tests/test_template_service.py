@@ -84,3 +84,39 @@ def test_advanced_bounds_validated():
         _spec(server_min_grass_distance=999)
     with pytest.raises(ValidationError):
         _spec(ai_limit=-5)
+
+
+def test_longbow_extra_settings_render_and_roundtrip():
+    cfg = _spec(
+        mods_required_by_default=True, disable_ai=True, join_queue_max_size=20,
+        persistence_enabled=True, auto_save_interval=15, hive_id=42,
+        rcon_password="pw", rcon_permission="monitor", rcon_max_clients=8,
+    ).to_config()
+    assert cfg["game"]["modsRequiredByDefault"] is True
+    assert cfg["operating"]["disableAI"] is True
+    assert cfg["operating"]["joinQueue"] == {"maxSize": 20}
+    assert cfg["game"]["gameProperties"]["persistence"]["autoSaveInterval"] == 15
+    assert cfg["game"]["gameProperties"]["persistence"]["hiveId"] == 42
+    assert cfg["rcon"]["permission"] == "monitor"
+    assert cfg["rcon"]["maxClients"] == 8
+
+    restored = spec_from_config(json.dumps(cfg))
+    assert restored["mods_required_by_default"] is True
+    assert restored["disable_ai"] is True
+    assert restored["join_queue_max_size"] == 20
+    assert restored["persistence_enabled"] is True
+    assert restored["auto_save_interval"] == 15
+    assert restored["hive_id"] == 42
+    assert restored["rcon_permission"] == "monitor"
+    assert restored["rcon_max_clients"] == 8
+
+
+def test_persistence_omitted_when_disabled():
+    cfg = _spec().to_config()
+    assert "persistence" not in cfg["game"]["gameProperties"]
+    assert spec_from_config(json.dumps(cfg))["persistence_enabled"] is False
+
+
+def test_rcon_permission_pattern_validated():
+    with pytest.raises(ValidationError):
+        _spec(rcon_permission="superuser")

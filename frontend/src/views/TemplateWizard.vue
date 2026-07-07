@@ -24,6 +24,7 @@ const spec = reactive({
   max_players: 64,
   visible: true,
   cross_platform: true,
+  mods_required_by_default: false,
   battleye: true,
   server_max_view_distance: 1600,
   server_min_grass_distance: 0,
@@ -37,10 +38,17 @@ const spec = reactive({
   disable_navmesh_streaming: false,
   disable_server_shutdown: false,
   disable_crash_reporter: false,
+  disable_ai: false,
   player_save_time: 120,
   ai_limit: -1,
   slot_reservation_timeout: 60,
+  join_queue_max_size: 0,
+  persistence_enabled: false,
+  auto_save_interval: 10,
+  hive_id: 0,
   rcon_password: '',
+  rcon_permission: 'admin',
+  rcon_max_clients: 16,
 })
 
 const showAdvanced = ref(false)
@@ -414,7 +422,11 @@ onMounted(async () => {
             </div>
             <div class="col-md-4">
               <label class="form-label">Slot reservation timeout (s)</label>
-              <input v-model.number="spec.slot_reservation_timeout" type="number" min="5" class="form-control" />
+              <input v-model.number="spec.slot_reservation_timeout" type="number" min="5" max="300" class="form-control" />
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Join queue max size <small class="text-secondary">(0 = off)</small></label>
+              <input v-model.number="spec.join_queue_max_size" type="number" min="0" max="50" class="form-control" />
             </div>
             <div class="col-12">
               <div class="fw-semibold small text-secondary mb-1">VON (voice)</div>
@@ -455,6 +467,53 @@ onMounted(async () => {
                 <div class="form-check">
                   <input id="op5" v-model="spec.disable_crash_reporter" class="form-check-input" type="checkbox" />
                   <label for="op5" class="form-check-label">Disable crash reporter</label>
+                </div>
+                <div class="form-check">
+                  <input id="op6" v-model="spec.disable_ai" class="form-check-input" type="checkbox" />
+                  <label for="op6" class="form-check-label">Disable AI</label>
+                </div>
+                <div class="form-check">
+                  <input id="op7" v-model="spec.mods_required_by_default" class="form-check-input" type="checkbox" />
+                  <label for="op7" class="form-check-label">Mods required by default</label>
+                </div>
+              </div>
+            </div>
+
+            <div class="col-12">
+              <div class="fw-semibold small text-secondary mb-1">Persistence (save games)</div>
+              <div class="row g-2 align-items-end">
+                <div class="col-auto">
+                  <div class="form-check mb-2">
+                    <input id="persist" v-model="spec.persistence_enabled" class="form-check-input" type="checkbox" />
+                    <label for="persist" class="form-check-label">Enable persistence</label>
+                  </div>
+                </div>
+                <div class="col-6 col-md-3">
+                  <label class="form-label small">Auto-save interval (min)</label>
+                  <input v-model.number="spec.auto_save_interval" type="number" min="0" max="60"
+                    class="form-control" :disabled="!spec.persistence_enabled" />
+                </div>
+                <div class="col-6 col-md-3">
+                  <label class="form-label small">Hive ID</label>
+                  <input v-model.number="spec.hive_id" type="number" min="0" max="16383"
+                    class="form-control" :disabled="!spec.persistence_enabled" />
+                </div>
+              </div>
+            </div>
+
+            <div class="col-12">
+              <div class="fw-semibold small text-secondary mb-1">RCON <small>(only used when a password is set on the previous screen)</small></div>
+              <div class="row g-2">
+                <div class="col-6 col-md-4">
+                  <label class="form-label small">Permission</label>
+                  <select v-model="spec.rcon_permission" class="form-select">
+                    <option value="admin">admin</option>
+                    <option value="monitor">monitor</option>
+                  </select>
+                </div>
+                <div class="col-6 col-md-4">
+                  <label class="form-label small">Max clients</label>
+                  <input v-model.number="spec.rcon_max_clients" type="number" min="1" max="16" class="form-control" />
                 </div>
               </div>
             </div>

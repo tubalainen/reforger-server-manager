@@ -36,10 +36,11 @@ class TemplateSpec(BaseModel):
     cross_platform: bool = True
     supported_platforms: list[str] = Field(default_factory=lambda: list(DEFAULT_SUPPORTED_PLATFORMS))
     admins: list[str] = []
+    mods_required_by_default: bool = False
 
     # gameProperties
     battleye: bool = True
-    server_max_view_distance: int = Field(default=1600, ge=500, le=10000)
+    server_max_view_distance: int = Field(default=1600, ge=500, le=12000)
     server_min_grass_distance: int = Field(default=0, ge=0, le=150)
     network_view_distance: int = Field(default=1500, ge=500, le=5000)
     disable_third_person: bool = False
@@ -53,12 +54,21 @@ class TemplateSpec(BaseModel):
     disable_navmesh_streaming: bool = False
     disable_server_shutdown: bool = False
     disable_crash_reporter: bool = False
-    player_save_time: int = Field(default=120, ge=0, le=86400)
+    disable_ai: bool = False
+    player_save_time: int = Field(default=120, ge=1, le=65535)
     ai_limit: int = Field(default=-1, ge=-1, le=1000)
-    slot_reservation_timeout: int = Field(default=60, ge=5, le=6000)
+    slot_reservation_timeout: int = Field(default=60, ge=5, le=300)
+    join_queue_max_size: int = Field(default=0, ge=0, le=50)
 
-    # rcon (optional)
+    # persistence (save games) — written only when enabled
+    persistence_enabled: bool = False
+    auto_save_interval: int = Field(default=10, ge=0, le=60)
+    hive_id: int = Field(default=0, ge=0, le=16383)
+
+    # rcon (optional; block written only when a password is set)
     rcon_password: str = ""
+    rcon_permission: str = Field(default="admin", pattern="^(admin|monitor)$")
+    rcon_max_clients: int = Field(default=16, ge=1, le=16)
 
     def to_config(self) -> dict:
         """Render the full server config.json.
@@ -100,24 +110,34 @@ class TemplateSpec(BaseModel):
                     "VONCanTransmitCrossFaction": self.von_can_transmit_cross_faction,
                 },
                 "mods": mods,
+                "modsRequiredByDefault": self.mods_required_by_default,
             },
             "operating": {
                 "lobbyPlayerSynchronise": self.lobby_player_synchronise,
                 "disableNavmeshStreaming": self.disable_navmesh_streaming,
                 "disableServerShutdown": self.disable_server_shutdown,
                 "disableCrashReporter": self.disable_crash_reporter,
+                "disableAI": self.disable_ai,
                 "playerSaveTime": self.player_save_time,
                 "aiLimit": self.ai_limit,
                 "slotReservationTimeout": self.slot_reservation_timeout,
+                "joinQueue": {"maxSize": self.join_queue_max_size},
             },
         }
+        if self.persistence_enabled:
+            config["game"]["gameProperties"]["persistence"] = {
+                "autoSaveInterval": self.auto_save_interval,
+                "hiveId": self.hive_id,
+                "databases": {},
+                "storages": {},
+            }
         if self.rcon_password:
             config["rcon"] = {
                 "address": "0.0.0.0",
                 "port": 19999,
                 "password": self.rcon_password,
-                "permission": "admin",
-                "maxClients": 16,
+                "permission": self.rcon_permission,
+                "maxClients": self.rcon_max_clients,
             }
         return config
 
@@ -148,6 +168,7 @@ def spec_from_config(config_json: str) -> dict:
         "cross_platform": game.get("crossPlatform", True),
         "supported_platforms": game.get("supportedPlatforms", list(DEFAULT_SUPPORTED_PLATFORMS)),
         "admins": game.get("admins", []),
+        "mods_required_by_default": game.get("modsRequiredByDefault", False),
         "battleye": props.get("battlEye", True),
         "server_max_view_distance": props.get("serverMaxViewDistance", 1600),
         "server_min_grass_distance": props.get("serverMinGrassDistance", 0),
@@ -161,8 +182,15 @@ def spec_from_config(config_json: str) -> dict:
         "disable_navmesh_streaming": operating.get("disableNavmeshStreaming", False),
         "disable_server_shutdown": operating.get("disableServerShutdown", False),
         "disable_crash_reporter": operating.get("disableCrashReporter", False),
+        "disable_ai": operating.get("disableAI", False),
         "player_save_time": operating.get("playerSaveTime", 120),
         "ai_limit": operating.get("aiLimit", -1),
         "slot_reservation_timeout": operating.get("slotReservationTimeout", 60),
+        "join_queue_max_size": (operating.get("joinQueue") or {}).get("maxSize", 0),
+        "persistence_enabled": "persistence" in props,
+        "auto_save_interval": (props.get("persistence") or {}).get("autoSaveInterval", 10),
+        "hive_id": (props.get("persistence") or {}).get("hiveId", 0),
         "rcon_password": rcon.get("password", ""),
+        "rcon_permission": rcon.get("permission", "admin"),
+        "rcon_max_clients": rcon.get("maxClients", 16),
     }
