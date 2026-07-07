@@ -8,8 +8,10 @@ its own Docker container — from a single `docker-compose.yaml` on any VPS or h
 Inspired by (and a spiritual successor to) [Longbow / ArmaReforgerServerTool](https://github.com/soda3x/ArmaReforgerServerTool)
 by soda3x — reimagined as a Linux-first, Dockerized web application.
 
-> **Status: early scaffold (v0.1.0).** Login, app shell and the container plumbing are in
+> **Status: early scaffold (v0.0.1).** Login, app shell and the container plumbing are in
 > place; the feature milestones below land one by one.
+
+Docker image: `ghcr.io/tubalainen/reforger-server-manager:latest`
 
 ## Features (roadmap)
 
@@ -77,11 +79,27 @@ npm run dev
 Build the production image locally: comment `image:` / uncomment `build:` in
 `docker-compose.yaml`, then `docker compose up --build -d`.
 
-## Credits
+## Credits & sources
 
-- [soda3x/ArmaReforgerServerTool (Longbow)](https://github.com/soda3x/ArmaReforgerServerTool) — the original Windows GUI this project takes its feature set and inspiration from
-- [acemod/docker-reforger](https://github.com/acemod/docker-reforger) and the wider community of Reforger container images
-- [Bohemia Interactive — Arma Reforger server documentation](https://community.bistudio.com/wiki/Arma_Reforger:Server_Config)
+This project stands on the shoulders of the Arma Reforger community. Inspiration and
+reference material used in its design:
+
+**The original tool this project succeeds**
+- [soda3x/ArmaReforgerServerTool (Longbow)](https://github.com/soda3x/ArmaReforgerServerTool) — the Windows GUI whose feature set (scenario selection, mod list import/export, crash monitoring, scheduled restarts) defines this project's scope
+
+**Reforger dedicated-server container images** (the manager spawns instances from one of these; inspiration for the container architecture)
+- [acemod/docker-reforger](https://github.com/acemod/docker-reforger) — default instance image; env-driven config, stable/experimental via `STEAM_APPID`
+- [RouHim/arma-reforger-container-image](https://github.com/RouHim/arma-reforger-container-image) — compose-first design, mounted `config.json`
+- [jsknnr/arma-reforger-server](https://github.com/jsknnr/arma-reforger-server), [Kexanone/reforger-server](https://github.com/Kexanone/reforger-server), [soda3x/docker-reforger-server](https://github.com/soda3x/docker-reforger-server), [zuwarm/reforger-server](https://github.com/zuwarm/reforger-server) — alternative images surveyed for the architecture
+- [steamcmd/steamcmd](https://hub.docker.com/r/steamcmd/steamcmd) — official SteamCMD image used for one-shot server-file downloads
+
+**Workshop data** (no official API exists; these prove the scraping approach)
+- [Arma Reforger Workshop](https://reforger.armaplatform.com/workshop) — the source of scenario, mod and dependency metadata
+- [SirFrostingham/Arma-Reforger-Workshop-Mods-Dependencies-Downloader](https://github.com/SirFrostingham/Arma-Reforger-Workshop-Mods-Dependencies-Downloader) and [SowinskiBraeden/ReforgerWorkshopAPI](https://github.com/SowinskiBraeden/ReforgerWorkshopAPI) — community dependency-resolution tools
+
+**Official documentation**
+- [Bohemia Interactive — Arma Reforger: Server Config](https://community.bistudio.com/wiki/Arma_Reforger:Server_Config) — the `config.json` schema templates render to
+- [Bohemia Interactive — Arma Reforger: Server Hosting](https://community.bistudio.com/wiki/Arma_Reforger:Server_Hosting) — Steam app IDs (stable `1874900`, experimental `1890870`) and hosting guidance
 
 ## License
 
