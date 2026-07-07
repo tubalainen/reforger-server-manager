@@ -18,20 +18,16 @@ services:
       # Root-equivalent on the host — required to spawn server containers.
       # Keep the GUI behind auth + firewall/reverse proxy.
       - /var/run/docker.sock:/var/run/docker.sock
-      # Read-only views of the downloaded server files, for build inspection.
-      - serverfiles-stable:/serverfiles/stable:ro
-      - serverfiles-experimental:/serverfiles/experimental:ro
+      # Downloaded server files, one folder per branch: written by the
+      # steamcmd download jobs, mounted into each server instance.
+      # Kept as plain local folders so they are easy to inspect and back up.
+      - ./serverfiles/stable:/serverfiles/stable:ro
+      - ./serverfiles/experimental:/serverfiles/experimental:ro
     networks:
       - reforger-net
 
-# Explicit names so the manager can attach sibling server containers and
-# mount these volumes into them without depending on the compose project name.
+# Explicit name so the manager can attach sibling server containers
+# without depending on the compose project name.
 networks:
   reforger-net:
     name: reforger-net
-
-volumes:
-  serverfiles-stable:
-    name: reforger-serverfiles-stable
-  serverfiles-experimental:
-    name: reforger-serverfiles-experimental

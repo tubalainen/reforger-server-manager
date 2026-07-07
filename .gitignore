@@ -11,6 +11,7 @@ frontend/dist/
 
 # Runtime data
 data/
+serverfiles/
 .env
 
 # Local reference material (never push)
