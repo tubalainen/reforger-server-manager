@@ -8,7 +8,7 @@ its own Docker container — from a single `docker-compose.yaml` on any VPS or h
 Inspired by (and a spiritual successor to) [Longbow / ArmaReforgerServerTool](https://github.com/soda3x/ArmaReforgerServerTool)
 by soda3x — reimagined as a Linux-first, Dockerized web application.
 
-> **Status: early scaffold (v0.0.1).** Login, app shell and the container plumbing are in
+> **Status: early scaffold.** Login, app shell and the container plumbing are in
 > place; the feature milestones below land one by one.
 
 Docker image: `ghcr.io/tubalainen/reforger-server-manager:latest`
@@ -62,22 +62,23 @@ front for VPS use, or set `WEB_BIND=0.0.0.0` at your own risk (login is still re
 
 ## Development
 
-```bash
-# backend (Python 3.12+)
-cd backend
-python -m venv .venv && . .venv/bin/activate
-pip install -r requirements-dev.txt
-pytest tests
-uvicorn main:app --reload --port 8080
+Everything runs in Docker — there is nothing to install on the host:
 
-# frontend (Node 20+), proxies /api to :8080
+```bash
+# Build and run from source: comment 'image:', uncomment 'build:' in docker-compose.yaml
+docker compose up --build -d
+
+# Run the backend test suite in a container
+docker build --target test .
+```
+
+For frontend work with hot reload (Node 20+; proxies `/api` to the running manager):
+
+```bash
 cd frontend
 npm install
 npm run dev
 ```
-
-Build the production image locally: comment `image:` / uncomment `build:` in
-`docker-compose.yaml`, then `docker compose up --build -d`.
 
 ## Credits & sources
 
