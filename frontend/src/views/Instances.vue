@@ -5,6 +5,7 @@ import { api } from '../api'
 
 const router = useRouter()
 const instances = ref([])
+const summary = ref(null)
 const templates = ref([])
 const error = ref('')
 const showCreate = ref(false)
@@ -30,6 +31,17 @@ async function load() {
   } catch (e) {
     error.value = e.message
   }
+  try {
+    summary.value = await api('/api/instances/summary')
+  } catch {
+    /* keep last */
+  }
+}
+
+const statusChip = {
+  running: 'text-bg-success',
+  exited: 'text-bg-danger',
+  unknown: 'text-bg-warning',
 }
 
 async function openCreate() {
@@ -102,6 +114,35 @@ onUnmounted(() => clearInterval(poll))
     </div>
 
     <div v-if="error" class="alert alert-warning py-2">{{ error }}</div>
+
+    <!-- Summary status bar (issue #12) -->
+    <div v-if="summary && summary.total" class="card mb-3 bg-body-tertiary">
+      <div class="card-body py-2">
+        <div class="d-flex flex-wrap align-items-center gap-3">
+          <div class="d-flex gap-3 me-2">
+            <div><span class="fs-5 fw-semibold">{{ summary.running }}</span>
+              <span class="text-secondary small">/ {{ summary.total }} running</span></div>
+            <div><span class="fs-5 fw-semibold">{{ summary.players_total }}</span>
+              <span class="text-secondary small">players online</span></div>
+          </div>
+          <div class="vr d-none d-md-block"></div>
+          <div class="d-flex flex-wrap gap-2">
+            <router-link
+              v-for="s in summary.servers"
+              :key="s.id"
+              :to="{ name: 'instance-detail', params: { id: s.id } }"
+              class="badge rounded-pill text-decoration-none d-inline-flex align-items-center gap-1"
+              :class="statusChip[s.status] || 'text-bg-secondary'"
+              :title="s.connect || 'PUBLIC_ADDRESS not set'"
+            >
+              {{ s.name }}
+              <span v-if="s.status === 'running'">· {{ s.players ?? '—' }}👤</span>
+              <span v-else>· {{ s.status }}</span>
+            </router-link>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <div v-if="!instances.length" class="card text-center text-secondary py-5">
       <div class="card-body">

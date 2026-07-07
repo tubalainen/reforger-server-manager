@@ -503,6 +503,49 @@ def prune_old_logs() -> int:
     return removed
 
 
+def instances_summary() -> dict:
+    """Aggregate + per-server snapshot for the summary status bar (issue #12)."""
+    public = config.settings.public_address
+    docker_up = docker_service.ping()
+    with Session(get_engine()) as session:
+        instances = _all_instances(session)
+
+    servers = []
+    running = 0
+    players_total = 0
+    for inst in instances:
+        status = container_status(inst.id) if docker_up else "unknown"
+        players = None
+        if status == "running":
+            running += 1
+            container = docker_service.find_instance_container(inst.id)
+            if container:
+                try:
+                    log_text = container.logs(tail=80).decode("utf-8", errors="replace")
+                    parsed = parse_server_status(log_text)
+                    if parsed:
+                        players = parsed["players"]
+                        players_total += players
+                except DockerException:
+                    pass
+        servers.append({
+            "id": inst.id,
+            "name": inst.name,
+            "branch": inst.branch,
+            "status": status,
+            "players": players,
+            "connect": f"{public}:{inst.game_port}" if public else None,
+        })
+
+    return {
+        "total": len(instances),
+        "running": running,
+        "players_total": players_total,
+        "public_address": public or None,
+        "servers": servers,
+    }
+
+
 def list_views() -> list[dict]:
     with Session(get_engine()) as session:
         instances = _all_instances(session)
