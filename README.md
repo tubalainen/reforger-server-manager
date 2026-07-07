@@ -47,12 +47,14 @@ and mounted read-only into each instance.
 git clone https://github.com/tubalainen/reforger-server-manager.git
 cd reforger-server-manager
 cp .env.example .env
-# edit .env: set ADMIN_PASSWORD, SESSION_SECRET and DOCKER_GID (stat -c '%g' /var/run/docker.sock)
-mkdir -p data serverfiles/stable serverfiles/experimental && sudo chown -R 1000:1000 data
+# edit .env: set ADMIN_PASSWORD and SESSION_SECRET
 docker compose up -d
 ```
 
-Open `http://localhost:8080` and sign in with the credentials from `.env`.
+Open `http://localhost:7780` and sign in with the credentials from `.env`.
+No other host setup is needed: the `data/` and `serverfiles/` folders are created on
+first run, and the container fixes their ownership itself before dropping privileges
+to an unprivileged user (uid 1000).
 
 By default the GUI binds to `127.0.0.1` — put a reverse proxy (nginx/Caddy) with TLS in
 front for VPS use, or set `WEB_BIND=0.0.0.0` at your own risk (login is still required).
