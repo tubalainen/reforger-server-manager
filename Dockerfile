@@ -6,6 +6,14 @@ RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
+# ---- Test stage (skipped in normal builds): docker build --target test . -----
+FROM python:3.12-slim AS test
+WORKDIR /app
+COPY backend/requirements.txt backend/requirements-dev.txt ./
+RUN pip install --no-cache-dir -r requirements-dev.txt
+COPY backend/ /app/
+RUN python -m pytest tests -q
+
 # ---- Stage 2: FastAPI runtime ------------------------------------------------
 FROM python:3.12-slim
 
