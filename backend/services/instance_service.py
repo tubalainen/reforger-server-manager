@@ -212,6 +212,46 @@ def _resolve_port(kind: str, requested: int | None, used: set[int], rng: tuple[i
         raise InstanceError(str(exc)) from exc
 
 
+def update_ports(
+    instance_id: int,
+    game_port: int | None,
+    a2s_port: int | None,
+    rcon_port: int | None,
+) -> None:
+    """Change a stopped instance's host ports (issue #8).
+
+    The container bakes ports in at creation, so any existing container is
+    removed here and recreated with the new ports on the next start.
+    """
+    if container_status(instance_id) == "running":
+        raise InstanceError("Stop the instance before changing its ports")
+    with Session(get_engine()) as session:
+        inst = session.get(Instance, instance_id)
+        if not inst:
+            raise InstanceError("Instance not found")
+        g_used, a_used, r_used = used_ports(session, exclude_id=instance_id)
+        inst.game_port = _resolve_port(
+            "game", game_port if game_port is not None else inst.game_port,
+            g_used, config.settings.game_port_range,
+        )
+        inst.a2s_port = _resolve_port(
+            "A2S", a2s_port if a2s_port is not None else inst.a2s_port,
+            a_used, config.settings.a2s_port_range,
+        )
+        inst.rcon_port = _resolve_port(
+            "RCON", rcon_port if rcon_port is not None else inst.rcon_port,
+            r_used, config.settings.rcon_port_range,
+        )
+        session.add(inst)
+        session.commit()
+    container = docker_service.find_instance_container(instance_id)
+    if container:
+        try:
+            container.remove(force=True)  # recreated with new ports on next start
+        except DockerException as exc:
+            logger.warning("Could not remove container for %s: %s", instance_id, exc)
+
+
 def _template_config(session: Session, inst: Instance) -> str:
     template = session.get(Template, inst.template_id)
     if not template:

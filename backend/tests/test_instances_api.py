@@ -79,6 +79,37 @@ def test_start_without_docker_conflicts(logged_in):
     assert "Docker" in r.json()["detail"]
 
 
+def test_edit_ports_when_stopped(logged_in):
+    tid = _template(logged_in)
+    iid = logged_in.post("/api/instances", json={"name": "e", "template_id": tid}).json()["id"]
+    r = logged_in.put(f"/api/instances/{iid}/ports",
+                      json={"game_port": 2015, "a2s_port": 17790, "rcon_port": 20010})
+    assert r.status_code == 200
+    body = r.json()
+    assert (body["game_port"], body["a2s_port"], body["rcon_port"]) == (2015, 17790, 20010)
+
+
+def test_edit_ports_conflict(logged_in):
+    tid = _template(logged_in)
+    a = logged_in.post("/api/instances", json={"name": "pa", "template_id": tid}).json()
+    iid = logged_in.post("/api/instances", json={"name": "pb", "template_id": tid}).json()["id"]
+    # try to take instance a's game port
+    r = logged_in.put(f"/api/instances/{iid}/ports", json={"game_port": a["game_port"]})
+    assert r.status_code == 409
+    assert "already used" in r.json()["detail"]
+
+
+def test_edit_ports_partial_keeps_others(logged_in):
+    tid = _template(logged_in)
+    created = logged_in.post("/api/instances", json={"name": "pp", "template_id": tid}).json()
+    iid = created["id"]
+    r = logged_in.put(f"/api/instances/{iid}/ports", json={"game_port": 2018})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["game_port"] == 2018
+    assert body["a2s_port"] == created["a2s_port"]  # unchanged
+
+
 def test_auto_restart_toggle(logged_in):
     tid = _template(logged_in)
     iid = logged_in.post("/api/instances", json={"name": "s", "template_id": tid}).json()["id"]

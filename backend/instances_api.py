@@ -29,6 +29,12 @@ class AutoRestart(BaseModel):
     auto_restart: bool
 
 
+class UpdatePorts(BaseModel):
+    game_port: int | None = Field(default=None, ge=1, le=65535)
+    a2s_port: int | None = Field(default=None, ge=1, le=65535)
+    rcon_port: int | None = Field(default=None, ge=1, le=65535)
+
+
 @router.get("")
 async def list_instances(_user: str = Depends(auth.require_session)):
     return await asyncio.to_thread(instance_service.list_views)
@@ -95,6 +101,20 @@ async def stop(instance_id: int, _user: str = Depends(auth.require_session)):
 async def restart(instance_id: int, _user: str = Depends(auth.require_session)):
     await asyncio.to_thread(_action, instance_service.stop_instance, instance_id)
     await asyncio.to_thread(_action, instance_service.start_instance, instance_id)
+    return await asyncio.to_thread(_view, instance_id)
+
+
+@router.put("/{instance_id}/ports")
+async def update_ports(
+    instance_id: int, body: UpdatePorts, _user: str = Depends(auth.require_session)
+):
+    try:
+        await asyncio.to_thread(
+            instance_service.update_ports,
+            instance_id, body.game_port, body.a2s_port, body.rcon_port,
+        )
+    except InstanceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     return await asyncio.to_thread(_view, instance_id)
 
 
