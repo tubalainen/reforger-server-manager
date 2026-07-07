@@ -3,6 +3,7 @@ import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 import auth
@@ -58,6 +59,14 @@ async def get_instance(instance_id: int, _user: str = Depends(auth.require_sessi
     return await asyncio.to_thread(_view, instance_id)
 
 
+@router.get("/{instance_id}/stats")
+async def stats(instance_id: int, _user: str = Depends(auth.require_session)):
+    try:
+        return await asyncio.to_thread(instance_service.instance_stats, instance_id)
+    except InstanceError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
 def _action(fn, instance_id: int):
     try:
         fn(instance_id)
@@ -104,6 +113,24 @@ def _action_value(fn, instance_id: int, value):
 @router.delete("/{instance_id}", status_code=204)
 async def delete(instance_id: int, _user: str = Depends(auth.require_session)):
     await asyncio.to_thread(instance_service.delete_instance, instance_id)
+
+
+@router.get("/{instance_id}/logfiles")
+async def list_logfiles(instance_id: int, _user: str = Depends(auth.require_session)):
+    return await asyncio.to_thread(instance_service.list_log_files, instance_id)
+
+
+@router.get("/{instance_id}/logfiles/download")
+async def download_logfile(
+    instance_id: int, path: str, _user: str = Depends(auth.require_session)
+):
+    try:
+        target = await asyncio.to_thread(
+            instance_service.resolve_log_file, instance_id, path
+        )
+    except InstanceError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return FileResponse(target, filename=target.name, media_type="text/plain")
 
 
 @router.websocket("/{instance_id}/logs")

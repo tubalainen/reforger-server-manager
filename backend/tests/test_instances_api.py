@@ -94,6 +94,20 @@ def test_stop_and_delete(logged_in):
     assert logged_in.get(f"/api/instances/{iid}").status_code == 404
 
 
+def test_stats_endpoint_shape(logged_in):
+    tid = _template(logged_in)
+    iid = logged_in.post("/api/instances", json={"name": "s", "template_id": tid}).json()["id"]
+    r = logged_in.get(f"/api/instances/{iid}/stats")
+    assert r.status_code == 200
+    body = r.json()
+    # docker mocked down -> container absent, live fields stay None
+    assert body["game_port"] and "players" in body and "cpu_percent" in body
+
+
+def test_stats_unknown_instance_404(logged_in):
+    assert logged_in.get("/api/instances/999/stats").status_code == 404
+
+
 def test_status_absent_when_no_container(logged_in):
     tid = _template(logged_in)
     iid = logged_in.post("/api/instances", json={"name": "s", "template_id": tid}).json()["id"]

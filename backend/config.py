@@ -4,7 +4,7 @@ import secrets
 from dataclasses import dataclass
 
 APP_NAME = "Reforger Server Manager"
-APP_VERSION = "0.6.0"
+APP_VERSION = "0.7.0"
 
 # Steam app IDs for the Arma Reforger Dedicated Server
 STEAM_APPID_STABLE = "1874900"
@@ -37,6 +37,7 @@ class Settings:
     data_dir: str
     serverfiles_dir: str
     steamcmd_timeout_minutes: int
+    log_retention_days: int
     static_dir: str
     docker_network: str
     reforger_server_image: str
@@ -62,6 +63,7 @@ class Settings:
             data_dir=os.environ.get("DATA_DIR", "./data"),
             serverfiles_dir=os.environ.get("SERVERFILES_DIR", "/serverfiles"),
             steamcmd_timeout_minutes=int(os.environ.get("STEAMCMD_TIMEOUT_MINUTES", "60")),
+            log_retention_days=int(os.environ.get("LOG_RETENTION_DAYS", "14")),
             static_dir=os.environ.get("STATIC_DIR", ""),
             docker_network=os.environ.get("DOCKER_NETWORK", "reforger-net"),
             reforger_server_image=os.environ.get(
