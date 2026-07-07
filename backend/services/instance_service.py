@@ -13,6 +13,7 @@ one install instead of each re-downloading. The image still validates on start
 """
 import json
 import logging
+import re
 from pathlib import Path
 
 from docker.errors import DockerException, ImageNotFound, NotFound
@@ -24,6 +25,49 @@ from services import docker_service, ports
 from services.template_service import spec_from_config
 
 logger = logging.getLogger("manager.instance")
+
+# The server prints a periodic status line, e.g.:
+#   FPS: 60.0, frame time (...), Mem: 1190747 kB, Player: 0, AI: 0, ...
+SERVER_STATUS_RE = re.compile(
+    r"FPS:\s*([\d.]+),.*?Mem:\s*(\d+)\s*kB,\s*Player:\s*(\d+)"
+)
+
+
+def parse_server_status(log_text: str) -> dict | None:
+    """Return the most recent {fps, mem_kb, players} from server log output."""
+    last = None
+    for m in SERVER_STATUS_RE.finditer(log_text):
+        last = m
+    if not last:
+        return None
+    return {
+        "fps": float(last.group(1)),
+        "mem_kb": int(last.group(2)),
+        "players": int(last.group(3)),
+    }
+
+
+def _docker_cpu_mem(container) -> dict:
+    """One-shot CPU%/memory from docker stats (best-effort; {} on failure)."""
+    try:
+        s = container.stats(stream=False)
+    except (DockerException, KeyError, ValueError):
+        return {}
+    try:
+        cpu = s["cpu_stats"]
+        pre = s["precpu_stats"]
+        cpu_delta = cpu["cpu_usage"]["total_usage"] - pre["cpu_usage"]["total_usage"]
+        sys_delta = cpu.get("system_cpu_usage", 0) - pre.get("system_cpu_usage", 0)
+        online = cpu.get("online_cpus") or len(cpu["cpu_usage"].get("percpu_usage") or [1])
+        cpu_pct = (cpu_delta / sys_delta) * online * 100 if sys_delta > 0 else 0.0
+        mem = s["memory_stats"]
+        return {
+            "cpu_percent": round(cpu_pct, 1),
+            "mem_bytes": mem.get("usage", 0),
+            "mem_limit_bytes": mem.get("limit", 0),
+        }
+    except (KeyError, ZeroDivisionError, TypeError):
+        return {}
 
 # Container-internal ports (fixed); host ports are the leased ones, mapped 1:1
 CONTAINER_GAME_PORT = 2001
@@ -330,6 +374,120 @@ def instance_view(inst: Instance, template_name: str | None) -> dict:
         "server_files_ready": server_files_ready(inst.branch),
         "created_at": inst.created_at.isoformat(),
     }
+
+
+def instance_stats(instance_id: int) -> dict:
+    """Live status for the top bar: connect info, players/FPS/mem, CPU/mem.
+
+    Player/FPS/server-memory come from the server's own periodic status line
+    in the container log; CPU and container memory come from docker stats.
+    """
+    with Session(get_engine()) as session:
+        inst = session.get(Instance, instance_id)
+        if not inst:
+            raise InstanceError("Instance not found")
+        game_port = inst.game_port
+
+    public = config.settings.public_address
+    stats: dict = {
+        "public_address": public or None,
+        "game_port": game_port,
+        "connect": f"{public}:{game_port}" if public else None,
+        "status": container_status(instance_id),
+        "players": None,
+        "server_fps": None,
+        "server_mem_kb": None,
+        "cpu_percent": None,
+        "mem_bytes": None,
+        "mem_limit_bytes": None,
+    }
+
+    container = docker_service.find_instance_container(instance_id)
+    if container is None or stats["status"] != "running":
+        return stats
+
+    try:
+        log_text = container.logs(tail=100).decode("utf-8", errors="replace")
+        server = parse_server_status(log_text)
+        if server:
+            stats["players"] = server["players"]
+            stats["server_fps"] = server["fps"]
+            stats["server_mem_kb"] = server["mem_kb"]
+    except DockerException as exc:
+        logger.debug("Could not read logs for stats (instance %s): %s", instance_id, exc)
+
+    stats.update(_docker_cpu_mem(container))
+    return stats
+
+
+# --------------------------------------------------------------------------- #
+# Log files (crash reports, console logs) under the per-instance profile dir
+# --------------------------------------------------------------------------- #
+
+_LOG_SUFFIXES = {".log", ".rpt", ".txt", ".mdmp", ".dmp"}
+_MAX_LOG_FILES = 300
+
+
+def _profile_dir(instance_id: int) -> Path:
+    return Path(config.settings.data_dir) / "instances" / str(instance_id) / "profile"
+
+
+def list_log_files(instance_id: int) -> list[dict]:
+    """List log/crash files under an instance's profile dir, newest first."""
+    root = _profile_dir(instance_id)
+    if not root.is_dir():
+        return []
+    files = []
+    for p in root.rglob("*"):
+        if p.is_file() and p.suffix.lower() in _LOG_SUFFIXES:
+            st = p.stat()
+            files.append({
+                "path": p.relative_to(root).as_posix(),
+                "size": st.st_size,
+                "modified": st.st_mtime,
+            })
+    files.sort(key=lambda f: f["modified"], reverse=True)
+    return files[:_MAX_LOG_FILES]
+
+
+def resolve_log_file(instance_id: int, relpath: str) -> Path:
+    """Resolve a log file path, guarding against directory traversal."""
+    root = _profile_dir(instance_id).resolve()
+    target = (root / relpath).resolve()
+    if root not in target.parents and target != root:
+        raise InstanceError("Invalid log path")
+    if not target.is_file() or target.suffix.lower() not in _LOG_SUFFIXES:
+        raise InstanceError("Log file not found")
+    return target
+
+
+def prune_old_logs() -> int:
+    """Delete per-session log dirs older than LOG_RETENTION_DAYS. Returns count.
+
+    Reforger writes each session under <profile>/logs/<session>/; only those
+    are pruned, never the rest of the profile.
+    """
+    import shutil
+    import time as _time
+
+    cutoff = _time.time() - config.settings.log_retention_days * 86400
+    removed = 0
+    instances_root = Path(config.settings.data_dir) / "instances"
+    if not instances_root.is_dir():
+        return 0
+    for logs_dir in instances_root.glob("*/profile/logs"):
+        if not logs_dir.is_dir():
+            continue
+        for session_dir in logs_dir.iterdir():
+            try:
+                if session_dir.is_dir() and session_dir.stat().st_mtime < cutoff:
+                    shutil.rmtree(session_dir, ignore_errors=True)
+                    removed += 1
+            except OSError:
+                continue
+    if removed:
+        logger.info("Pruned %d expired log session dir(s)", removed)
+    return removed
 
 
 def list_views() -> list[dict]:
