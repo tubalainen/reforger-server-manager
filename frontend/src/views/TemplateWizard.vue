@@ -26,9 +26,24 @@ const spec = reactive({
   cross_platform: true,
   battleye: true,
   server_max_view_distance: 1600,
+  server_min_grass_distance: 0,
   network_view_distance: 1500,
+  disable_third_person: false,
+  fast_validation: true,
+  von_disable_ui: false,
+  von_disable_direct_speech_ui: false,
+  von_can_transmit_cross_faction: false,
+  lobby_player_synchronise: true,
+  disable_navmesh_streaming: false,
+  disable_server_shutdown: false,
+  disable_crash_reporter: false,
+  player_save_time: 120,
+  ai_limit: -1,
+  slot_reservation_timeout: 60,
   rcon_password: '',
 })
+
+const showAdvanced = ref(false)
 
 // Display metadata that isn't part of the spec but helps the user
 const chosenScenario = ref(null) // {scenario_id, name, from_asset}
@@ -369,6 +384,78 @@ onMounted(async () => {
               <div class="form-check">
                 <input id="be" v-model="spec.battleye" class="form-check-input" type="checkbox" />
                 <label for="be" class="form-check-label">BattlEye</label>
+              </div>
+              <div class="form-check">
+                <input id="tp" v-model="spec.disable_third_person" class="form-check-input" type="checkbox" />
+                <label for="tp" class="form-check-label">First-person only</label>
+              </div>
+            </div>
+          </div>
+
+          <button
+            class="btn btn-link px-0 mt-3"
+            @click="showAdvanced = !showAdvanced"
+          >
+            {{ showAdvanced ? '▾ Hide' : '▸ Show' }} advanced settings
+          </button>
+
+          <div v-show="showAdvanced" class="row g-3 border-top pt-3">
+            <div class="col-md-4">
+              <label class="form-label">Min grass distance</label>
+              <input v-model.number="spec.server_min_grass_distance" type="number" min="0" max="150" class="form-control" />
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Player save interval (s)</label>
+              <input v-model.number="spec.player_save_time" type="number" min="0" class="form-control" />
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">AI limit <small class="text-secondary">(-1 = unlimited)</small></label>
+              <input v-model.number="spec.ai_limit" type="number" min="-1" class="form-control" />
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Slot reservation timeout (s)</label>
+              <input v-model.number="spec.slot_reservation_timeout" type="number" min="5" class="form-control" />
+            </div>
+            <div class="col-12">
+              <div class="fw-semibold small text-secondary mb-1">VON (voice)</div>
+              <div class="d-flex gap-4 flex-wrap">
+                <div class="form-check">
+                  <input id="von1" v-model="spec.von_disable_ui" class="form-check-input" type="checkbox" />
+                  <label for="von1" class="form-check-label">Disable VON UI</label>
+                </div>
+                <div class="form-check">
+                  <input id="von2" v-model="spec.von_disable_direct_speech_ui" class="form-check-input" type="checkbox" />
+                  <label for="von2" class="form-check-label">Disable direct-speech UI</label>
+                </div>
+                <div class="form-check">
+                  <input id="von3" v-model="spec.von_can_transmit_cross_faction" class="form-check-input" type="checkbox" />
+                  <label for="von3" class="form-check-label">Cross-faction VON</label>
+                </div>
+              </div>
+            </div>
+            <div class="col-12">
+              <div class="fw-semibold small text-secondary mb-1">Operating</div>
+              <div class="d-flex gap-4 flex-wrap">
+                <div class="form-check">
+                  <input id="op1" v-model="spec.fast_validation" class="form-check-input" type="checkbox" />
+                  <label for="op1" class="form-check-label">Fast validation</label>
+                </div>
+                <div class="form-check">
+                  <input id="op2" v-model="spec.lobby_player_synchronise" class="form-check-input" type="checkbox" />
+                  <label for="op2" class="form-check-label">Lobby player sync</label>
+                </div>
+                <div class="form-check">
+                  <input id="op3" v-model="spec.disable_navmesh_streaming" class="form-check-input" type="checkbox" />
+                  <label for="op3" class="form-check-label">Disable navmesh streaming</label>
+                </div>
+                <div class="form-check">
+                  <input id="op4" v-model="spec.disable_server_shutdown" class="form-check-input" type="checkbox" />
+                  <label for="op4" class="form-check-label">Disable auto-shutdown</label>
+                </div>
+                <div class="form-check">
+                  <input id="op5" v-model="spec.disable_crash_reporter" class="form-check-input" type="checkbox" />
+                  <label for="op5" class="form-check-label">Disable crash reporter</label>
+                </div>
               </div>
             </div>
           </div>

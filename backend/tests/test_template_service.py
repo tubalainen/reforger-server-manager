@@ -54,3 +54,33 @@ def test_roundtrip_config_to_spec():
     assert restored["max_players"] == 48
     assert restored["scenario_id"] == "{ECC61978EDCC2B5A}Missions/23_Campaign.conf"
     assert restored["mods"][0]["modId"] == "591AF5BDA9F7CE8B"
+
+
+def test_advanced_options_render_and_roundtrip():
+    cfg = _spec(
+        disable_third_person=True, fast_validation=False, ai_limit=64,
+        von_can_transmit_cross_faction=True, disable_server_shutdown=True,
+        player_save_time=300, server_min_grass_distance=50,
+    ).to_config()
+    props = cfg["game"]["gameProperties"]
+    op = cfg["operating"]
+    assert props["disableThirdPerson"] is True
+    assert props["fastValidation"] is False
+    assert props["VONCanTransmitCrossFaction"] is True
+    assert props["serverMinGrassDistance"] == 50
+    assert op["aiLimit"] == 64
+    assert op["disableServerShutdown"] is True
+    assert op["playerSaveTime"] == 300
+
+    restored = spec_from_config(json.dumps(cfg))
+    assert restored["disable_third_person"] is True
+    assert restored["fast_validation"] is False
+    assert restored["ai_limit"] == 64
+    assert restored["player_save_time"] == 300
+
+
+def test_advanced_bounds_validated():
+    with pytest.raises(ValidationError):
+        _spec(server_min_grass_distance=999)
+    with pytest.raises(ValidationError):
+        _spec(ai_limit=-5)

@@ -40,7 +40,22 @@ class TemplateSpec(BaseModel):
     # gameProperties
     battleye: bool = True
     server_max_view_distance: int = Field(default=1600, ge=500, le=10000)
+    server_min_grass_distance: int = Field(default=0, ge=0, le=150)
     network_view_distance: int = Field(default=1500, ge=500, le=5000)
+    disable_third_person: bool = False
+    fast_validation: bool = True
+    von_disable_ui: bool = False
+    von_disable_direct_speech_ui: bool = False
+    von_can_transmit_cross_faction: bool = False
+
+    # operating (advanced)
+    lobby_player_synchronise: bool = True
+    disable_navmesh_streaming: bool = False
+    disable_server_shutdown: bool = False
+    disable_crash_reporter: bool = False
+    player_save_time: int = Field(default=120, ge=0, le=86400)
+    ai_limit: int = Field(default=-1, ge=-1, le=1000)
+    slot_reservation_timeout: int = Field(default=60, ge=5, le=6000)
 
     # rcon (optional)
     rcon_password: str = ""
@@ -75,13 +90,25 @@ class TemplateSpec(BaseModel):
                 "supportedPlatforms": self.supported_platforms,
                 "gameProperties": {
                     "serverMaxViewDistance": self.server_max_view_distance,
+                    "serverMinGrassDistance": self.server_min_grass_distance,
                     "networkViewDistance": self.network_view_distance,
                     "battlEye": self.battleye,
+                    "disableThirdPerson": self.disable_third_person,
+                    "fastValidation": self.fast_validation,
+                    "VONDisableUI": self.von_disable_ui,
+                    "VONDisableDirectSpeechUI": self.von_disable_direct_speech_ui,
+                    "VONCanTransmitCrossFaction": self.von_can_transmit_cross_faction,
                 },
                 "mods": mods,
             },
             "operating": {
-                "lobbyPlayerSynchronise": True,
+                "lobbyPlayerSynchronise": self.lobby_player_synchronise,
+                "disableNavmeshStreaming": self.disable_navmesh_streaming,
+                "disableServerShutdown": self.disable_server_shutdown,
+                "disableCrashReporter": self.disable_crash_reporter,
+                "playerSaveTime": self.player_save_time,
+                "aiLimit": self.ai_limit,
+                "slotReservationTimeout": self.slot_reservation_timeout,
             },
         }
         if self.rcon_password:
@@ -108,6 +135,7 @@ def spec_from_config(config_json: str) -> dict:
     cfg = json.loads(config_json)
     game = cfg.get("game", {})
     props = game.get("gameProperties", {})
+    operating = cfg.get("operating", {})
     rcon = cfg.get("rcon", {})
     return {
         "scenario_id": game.get("scenarioId", ""),
@@ -122,6 +150,19 @@ def spec_from_config(config_json: str) -> dict:
         "admins": game.get("admins", []),
         "battleye": props.get("battlEye", True),
         "server_max_view_distance": props.get("serverMaxViewDistance", 1600),
+        "server_min_grass_distance": props.get("serverMinGrassDistance", 0),
         "network_view_distance": props.get("networkViewDistance", 1500),
+        "disable_third_person": props.get("disableThirdPerson", False),
+        "fast_validation": props.get("fastValidation", True),
+        "von_disable_ui": props.get("VONDisableUI", False),
+        "von_disable_direct_speech_ui": props.get("VONDisableDirectSpeechUI", False),
+        "von_can_transmit_cross_faction": props.get("VONCanTransmitCrossFaction", False),
+        "lobby_player_synchronise": operating.get("lobbyPlayerSynchronise", True),
+        "disable_navmesh_streaming": operating.get("disableNavmeshStreaming", False),
+        "disable_server_shutdown": operating.get("disableServerShutdown", False),
+        "disable_crash_reporter": operating.get("disableCrashReporter", False),
+        "player_save_time": operating.get("playerSaveTime", 120),
+        "ai_limit": operating.get("aiLimit", -1),
+        "slot_reservation_timeout": operating.get("slotReservationTimeout", 60),
         "rcon_password": rcon.get("password", ""),
     }

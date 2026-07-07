@@ -18,6 +18,10 @@ class CreateInstance(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     template_id: int
     branch: str = "stable"
+    # Optional explicit host ports; omit to auto-lease from the .env ranges
+    game_port: int | None = Field(default=None, ge=1, le=65535)
+    a2s_port: int | None = Field(default=None, ge=1, le=65535)
+    rcon_port: int | None = Field(default=None, ge=1, le=65535)
 
 
 class AutoRestart(BaseModel):
@@ -33,7 +37,9 @@ async def list_instances(_user: str = Depends(auth.require_session)):
 async def create_instance(body: CreateInstance, _user: str = Depends(auth.require_session)):
     try:
         inst = await asyncio.to_thread(
-            instance_service.create_instance, body.name, body.template_id, body.branch
+            instance_service.create_instance,
+            body.name, body.template_id, body.branch,
+            body.game_port, body.a2s_port, body.rcon_port,
         )
     except InstanceError as exc:
         raise HTTPException(status_code=409, detail=str(exc))

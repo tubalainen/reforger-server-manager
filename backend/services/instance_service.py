@@ -117,7 +117,19 @@ def used_ports(session: Session, exclude_id: int | None = None) -> tuple[set, se
 # Lifecycle
 # --------------------------------------------------------------------------- #
 
-def create_instance(name: str, template_id: int, branch: str) -> Instance:
+def create_instance(
+    name: str,
+    template_id: int,
+    branch: str,
+    game_port: int | None = None,
+    a2s_port: int | None = None,
+    rcon_port: int | None = None,
+) -> Instance:
+    """Create an instance. Ports are auto-leased unless explicitly given.
+
+    Explicit ports are validated against the other instances so two servers
+    never collide on a host port; auto-leased ports come from the .env ranges.
+    """
     if branch not in config.BRANCHES:
         raise InstanceError(f"Unknown branch '{branch}'")
     with Session(get_engine()) as session:
@@ -126,15 +138,11 @@ def create_instance(name: str, template_id: int, branch: str) -> Instance:
         if not session.get(Template, template_id):
             raise InstanceError("Template not found")
         g_used, a_used, r_used = used_ports(session)
-        try:
-            game, a2s, rcon = ports.lease(
-                config.settings.game_port_range,
-                config.settings.a2s_port_range,
-                config.settings.rcon_port_range,
-                g_used, a_used, r_used,
-            )
-        except ports.PortExhaustedError as exc:
-            raise InstanceError(str(exc)) from exc
+
+        game = _resolve_port("game", game_port, g_used, config.settings.game_port_range)
+        a2s = _resolve_port("A2S", a2s_port, a_used, config.settings.a2s_port_range)
+        rcon = _resolve_port("RCON", rcon_port, r_used, config.settings.rcon_port_range)
+
         inst = Instance(
             name=name, template_id=template_id, branch=branch,
             game_port=game, a2s_port=a2s, rcon_port=rcon,
@@ -144,6 +152,20 @@ def create_instance(name: str, template_id: int, branch: str) -> Instance:
         session.refresh(inst)
         logger.info("Created instance %s (ports g=%s a2s=%s rcon=%s)", name, game, a2s, rcon)
         return inst
+
+
+def _resolve_port(kind: str, requested: int | None, used: set[int], rng: tuple[int, int]) -> int:
+    """Validate an explicit port, or auto-lease the first free one in range."""
+    if requested is not None:
+        if not (1 <= requested <= 65535):
+            raise InstanceError(f"{kind} port {requested} is out of range")
+        if requested in used:
+            raise InstanceError(f"{kind} port {requested} is already used by another instance")
+        return requested
+    try:
+        return ports.first_free(*rng, used)
+    except ports.PortExhaustedError as exc:
+        raise InstanceError(str(exc)) from exc
 
 
 def _template_config(session: Session, inst: Instance) -> str:
