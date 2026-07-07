@@ -1,0 +1,6 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+itsdangerous>=2.2
+sqlmodel>=0.0.22
+docker>=7.1
+httpx>=0.27

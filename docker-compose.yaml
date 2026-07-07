@@ -1,0 +1,37 @@
+services:
+  manager:
+    image: ghcr.io/tubalainen/reforger-server-manager:latest
+    # To build locally from source instead: comment 'image:', uncomment 'build:'
+    # build: .
+    container_name: reforger-manager
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8080}:8080"
+    # Grants the non-root app user access to the docker socket (see .env DOCKER_GID)
+    group_add:
+      - "${DOCKER_GID:-999}"
+    volumes:
+      # Manager state: SQLite DB, per-instance configs and profiles.
+      # Must be writable by uid 1000 (chown -R 1000:1000 ./data).
+      - ./data:/data
+      # Root-equivalent on the host — required to spawn server containers.
+      # Keep the GUI behind auth + firewall/reverse proxy.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Read-only views of the downloaded server files, for build inspection.
+      - serverfiles-stable:/serverfiles/stable:ro
+      - serverfiles-experimental:/serverfiles/experimental:ro
+    networks:
+      - reforger-net
+
+# Explicit names so the manager can attach sibling server containers and
+# mount these volumes into them without depending on the compose project name.
+networks:
+  reforger-net:
+    name: reforger-net
+
+volumes:
+  serverfiles-stable:
+    name: reforger-serverfiles-stable
+  serverfiles-experimental:
+    name: reforger-serverfiles-experimental

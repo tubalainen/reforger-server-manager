@@ -1,0 +1,61 @@
+"""SQLite persistence (SQLModel): server templates, instances, port leases."""
+from datetime import datetime, timezone
+from pathlib import Path
+
+from sqlmodel import Field, SQLModel, create_engine
+
+import config
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class Template(SQLModel, table=True):
+    """A saved Arma server template: scenario + mods + settings.
+
+    config_json holds the full Reforger server config.json this template
+    renders to; scenario/mod picks are edited through it.
+    """
+
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(index=True, unique=True)
+    description: str = ""
+    config_json: str
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
+class Instance(SQLModel, table=True):
+    """A concrete server: a template bound to a branch, ports and a container."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(index=True, unique=True)
+    template_id: int = Field(foreign_key="template.id")
+    branch: str = "stable"  # stable | experimental
+    game_port: int
+    a2s_port: int
+    rcon_port: int
+    container_id: str = ""
+    desired_state: str = "stopped"  # running | stopped
+    auto_restart: bool = True
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+_engine = None
+
+
+def get_engine():
+    global _engine
+    if _engine is None:
+        data_dir = Path(config.settings.data_dir)
+        data_dir.mkdir(parents=True, exist_ok=True)
+        _engine = create_engine(
+            f"sqlite:///{data_dir / 'manager.db'}",
+            connect_args={"check_same_thread": False},
+        )
+    return _engine
+
+
+def init_db() -> None:
+    SQLModel.metadata.create_all(get_engine())
