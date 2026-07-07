@@ -34,6 +34,11 @@ async def list_instances(_user: str = Depends(auth.require_session)):
     return await asyncio.to_thread(instance_service.list_views)
 
 
+@router.get("/summary")
+async def summary(_user: str = Depends(auth.require_session)):
+    return await asyncio.to_thread(instance_service.instances_summary)
+
+
 @router.post("", status_code=201)
 async def create_instance(body: CreateInstance, _user: str = Depends(auth.require_session)):
     try:

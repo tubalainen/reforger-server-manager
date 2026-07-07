@@ -108,6 +108,23 @@ def test_stats_unknown_instance_404(logged_in):
     assert logged_in.get("/api/instances/999/stats").status_code == 404
 
 
+def test_summary_aggregates(logged_in):
+    tid = _template(logged_in)
+    logged_in.post("/api/instances", json={"name": "a", "template_id": tid, "branch": "stable"})
+    logged_in.post("/api/instances", json={"name": "b", "template_id": tid, "branch": "experimental"})
+    r = logged_in.get("/api/instances/summary")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 2
+    assert body["running"] == 0  # docker mocked down
+    assert len(body["servers"]) == 2
+    assert {s["name"] for s in body["servers"]} == {"a", "b"}
+
+
+def test_summary_requires_auth(client):
+    assert client.get("/api/instances/summary").status_code == 401
+
+
 def test_status_absent_when_no_container(logged_in):
     tid = _template(logged_in)
     iid = logged_in.post("/api/instances", json={"name": "s", "template_id": tid}).json()["id"]
