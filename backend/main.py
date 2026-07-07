@@ -14,10 +14,11 @@ from fastapi.staticfiles import StaticFiles
 import auth
 import config
 import models
+import instances_api
 import serverfiles_api
 import templates_api
 import workshop_api
-from services import docker_service
+from services import docker_service, instance_service
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("manager")
@@ -35,15 +36,31 @@ async def lifespan(_app: FastAPI):
     if not config.settings.admin_password or config.settings.admin_password == "change-me-now":
         logger.warning("ADMIN_PASSWORD is unset or still the example value — change it in .env")
     models.init_db()
+    monitor_task = None
     if await asyncio.to_thread(docker_service.ping):
         await asyncio.to_thread(
             docker_service.remove_exited, docker_service.ROLE_STEAMCMD
         )
+        monitor_task = asyncio.create_task(_crash_monitor())
     else:
         logger.warning(
             "Docker daemon not reachable — downloads and server instances are disabled"
         )
-    yield
+    try:
+        yield
+    finally:
+        if monitor_task:
+            monitor_task.cancel()
+
+
+async def _crash_monitor():
+    """Periodically restart instances that should be running but died."""
+    while True:
+        try:
+            await asyncio.to_thread(instance_service.reconcile_and_recover)
+        except Exception as exc:  # never let the monitor die silently
+            logger.warning("Crash monitor pass failed: %s", exc)
+        await asyncio.sleep(15)
 
 
 app = FastAPI(title=config.APP_NAME, version=config.APP_VERSION, lifespan=lifespan)
@@ -51,6 +68,7 @@ app.include_router(auth.router)
 app.include_router(serverfiles_api.router)
 app.include_router(workshop_api.router)
 app.include_router(templates_api.router)
+app.include_router(instances_api.router)
 
 
 @app.get("/api/health")

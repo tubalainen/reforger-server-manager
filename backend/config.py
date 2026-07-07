@@ -4,7 +4,7 @@ import secrets
 from dataclasses import dataclass
 
 APP_NAME = "Reforger Server Manager"
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.3.0"
 
 # Steam app IDs for the Arma Reforger Dedicated Server
 STEAM_APPID_STABLE = "1874900"
@@ -65,7 +65,7 @@ class Settings:
             static_dir=os.environ.get("STATIC_DIR", ""),
             docker_network=os.environ.get("DOCKER_NETWORK", "reforger-net"),
             reforger_server_image=os.environ.get(
-                "REFORGER_SERVER_IMAGE", "ghcr.io/acemod/docker-reforger:latest"
+                "REFORGER_SERVER_IMAGE", "ghcr.io/acemod/arma-reforger:latest"
             ),
             steamcmd_image=os.environ.get("STEAMCMD_IMAGE", "steamcmd/steamcmd:latest"),
             public_address=os.environ.get("PUBLIC_ADDRESS", "").strip(),
