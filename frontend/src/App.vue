@@ -19,10 +19,10 @@ async function logout() {
       <router-link class="navbar-brand fw-semibold" to="/">⬢ Reforger Server Manager</router-link>
       <ul class="navbar-nav me-auto">
         <li class="nav-item">
-          <router-link class="nav-link" active-class="active" to="/">Instances</router-link>
+          <router-link class="nav-link" active-class="active" exact-active-class="active" to="/">Templates</router-link>
         </li>
         <li class="nav-item">
-          <router-link class="nav-link" active-class="active" to="/templates">Templates</router-link>
+          <router-link class="nav-link" active-class="active" to="/instances">Instances</router-link>
         </li>
         <li class="nav-item">
           <router-link class="nav-link" active-class="active" to="/downloads">Downloads</router-link>
