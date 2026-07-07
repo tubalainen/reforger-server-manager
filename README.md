@@ -18,7 +18,7 @@ Docker image: `ghcr.io/tubalainen/reforger-server-manager:latest`
 - [x] Single `docker-compose.yaml` + single `.env` deployment, built-in login
 - [x] One-click SteamCMD download of server files — **Stable** (app `1874900`) or
       **Experimental** (app `1890870`) — with live progress bars and streaming logs
-- [ ] Server templates: pick a scenario straight from the
+- [x] Server templates: pick a scenario straight from the
       [Workshop](https://reforger.armaplatform.com/workshop), auto-resolve all mod
       dependencies, add extra mods, tune settings, save — and download the resulting
       `config.json`

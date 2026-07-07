@@ -3,6 +3,7 @@ import { api } from './api'
 import Login from './views/Login.vue'
 import Instances from './views/Instances.vue'
 import Templates from './views/Templates.vue'
+import TemplateWizard from './views/TemplateWizard.vue'
 import Downloads from './views/Downloads.vue'
 
 const router = createRouter({
@@ -11,6 +12,8 @@ const router = createRouter({
     { path: '/login', name: 'login', component: Login, meta: { public: true } },
     { path: '/', name: 'instances', component: Instances },
     { path: '/templates', name: 'templates', component: Templates },
+    { path: '/templates/new', name: 'template-new', component: TemplateWizard },
+    { path: '/templates/:id/edit', name: 'template-edit', component: TemplateWizard, props: true },
     { path: '/downloads', name: 'downloads', component: Downloads },
   ],
 })

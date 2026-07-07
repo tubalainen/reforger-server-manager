@@ -15,6 +15,8 @@ import auth
 import config
 import models
 import serverfiles_api
+import templates_api
+import workshop_api
 from services import docker_service
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -47,6 +49,8 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title=config.APP_NAME, version=config.APP_VERSION, lifespan=lifespan)
 app.include_router(auth.router)
 app.include_router(serverfiles_api.router)
+app.include_router(workshop_api.router)
+app.include_router(templates_api.router)
 
 
 @app.get("/api/health")

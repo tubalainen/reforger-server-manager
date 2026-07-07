@@ -17,6 +17,9 @@ serverfiles/
 # Local reference material (never push)
 docs/local/
 
+# Local dev helper (not shipped)
+dev-server.py
+
 # IDE / OS
 .claude/
 .vscode/

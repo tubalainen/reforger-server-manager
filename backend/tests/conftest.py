@@ -38,6 +38,20 @@ def client(monkeypatch):
         yield c
 
 
+@pytest.fixture(autouse=True)
+def _clean_db():
+    """Each test starts with empty tables (the SQLite file is shared)."""
+    import models
+    from sqlmodel import Session, delete
+
+    models.init_db()
+    with Session(models.get_engine()) as session:
+        session.exec(delete(models.Template))
+        session.exec(delete(models.Instance))
+        session.commit()
+    yield
+
+
 @pytest.fixture()
 def logged_in(client):
     client.post(
