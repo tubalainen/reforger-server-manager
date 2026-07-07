@@ -29,6 +29,29 @@ def test_create_leases_distinct_ports(logged_in):
     assert pb["branch"] == "experimental"
 
 
+def test_create_with_custom_ports(logged_in):
+    tid = _template(logged_in)
+    r = logged_in.post("/api/instances", json={
+        "name": "custom", "template_id": tid, "branch": "stable",
+        "game_port": 7780, "a2s_port": 7781, "rcon_port": 7782,
+    })
+    assert r.status_code == 201
+    body = r.json()
+    assert (body["game_port"], body["a2s_port"], body["rcon_port"]) == (7780, 7781, 7782)
+
+
+def test_create_custom_port_conflict(logged_in):
+    tid = _template(logged_in)
+    logged_in.post("/api/instances", json={
+        "name": "a", "template_id": tid, "game_port": 7790, "a2s_port": 7791, "rcon_port": 7792,
+    })
+    r = logged_in.post("/api/instances", json={
+        "name": "b", "template_id": tid, "game_port": 7790, "a2s_port": 8001, "rcon_port": 8002,
+    })
+    assert r.status_code == 409
+    assert "already used" in r.json()["detail"]
+
+
 def test_create_duplicate_name_conflict(logged_in):
     tid = _template(logged_in)
     logged_in.post("/api/instances", json={"name": "dup", "template_id": tid})

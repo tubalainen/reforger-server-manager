@@ -8,7 +8,11 @@ const instances = ref([])
 const templates = ref([])
 const error = ref('')
 const showCreate = ref(false)
-const create = reactive({ name: '', template_id: null, branch: 'stable', busy: false, error: '' })
+const create = reactive({
+  name: '', template_id: null, branch: 'stable',
+  customPorts: false, game_port: null, a2s_port: null, rcon_port: null,
+  busy: false, error: '',
+})
 let poll = null
 
 const statusBadge = {
@@ -46,10 +50,13 @@ async function submitCreate() {
   create.busy = true
   create.error = ''
   try {
-    await api('/api/instances', {
-      method: 'POST',
-      body: { name: create.name, template_id: create.template_id, branch: create.branch },
-    })
+    const body = { name: create.name, template_id: create.template_id, branch: create.branch }
+    if (create.customPorts) {
+      body.game_port = create.game_port
+      body.a2s_port = create.a2s_port
+      body.rcon_port = create.rcon_port
+    }
+    await api('/api/instances', { method: 'POST', body })
     showCreate.value = false
     await load()
   } catch (e) {
@@ -188,12 +195,33 @@ onUnmounted(() => clearInterval(poll))
                   <option v-for="t in templates" :key="t.id" :value="t.id">{{ t.name }}</option>
                 </select>
               </div>
-              <div class="mb-1">
+              <div class="mb-3">
                 <label class="form-label">Branch</label>
                 <select v-model="create.branch" class="form-select">
                   <option value="stable">Stable (1874900)</option>
                   <option value="experimental">Experimental (1890870)</option>
                 </select>
+              </div>
+              <div class="form-check mb-2">
+                <input id="customPorts" v-model="create.customPorts" class="form-check-input" type="checkbox" />
+                <label for="customPorts" class="form-check-label">
+                  Set network ports manually
+                  <small class="text-secondary d-block">Otherwise assigned automatically from the configured ranges</small>
+                </label>
+              </div>
+              <div v-if="create.customPorts" class="row g-2">
+                <div class="col-4">
+                  <label class="form-label small">Game (UDP)</label>
+                  <input v-model.number="create.game_port" type="number" class="form-control" placeholder="2001" />
+                </div>
+                <div class="col-4">
+                  <label class="form-label small">A2S (UDP)</label>
+                  <input v-model.number="create.a2s_port" type="number" class="form-control" placeholder="17777" />
+                </div>
+                <div class="col-4">
+                  <label class="form-label small">RCON (UDP)</label>
+                  <input v-model.number="create.rcon_port" type="number" class="form-control" placeholder="19999" />
+                </div>
               </div>
             </template>
           </div>
