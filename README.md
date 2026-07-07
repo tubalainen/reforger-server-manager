@@ -38,7 +38,8 @@ Docker image: `ghcr.io/tubalainen/reforger-server-manager:latest`
 Only the manager lives in the compose file. Server instances and SteamCMD download jobs
 are sibling containers the manager creates through the Docker API, attached to the same
 Docker network and labeled so they survive manager restarts. Server files are downloaded
-once per branch into shared volumes and mounted read-only into each instance.
+once per branch into local folders (`./serverfiles/stable`, `./serverfiles/experimental`)
+and mounted read-only into each instance.
 
 ## Quick start
 
@@ -47,7 +48,7 @@ git clone https://github.com/tubalainen/reforger-server-manager.git
 cd reforger-server-manager
 cp .env.example .env
 # edit .env: set ADMIN_PASSWORD, SESSION_SECRET and DOCKER_GID (stat -c '%g' /var/run/docker.sock)
-mkdir -p data && sudo chown -R 1000:1000 data
+mkdir -p data serverfiles/stable serverfiles/experimental && sudo chown -R 1000:1000 data
 docker compose up -d
 ```
 
