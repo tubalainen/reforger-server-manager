@@ -18,6 +18,7 @@ serverfiles/
 docs/local/
 
 # IDE / OS
+.claude/
 .vscode/
 .idea/
 Thumbs.db

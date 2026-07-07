@@ -1,28 +1,168 @@
+<script setup>
+import { onMounted, onUnmounted, reactive, nextTick } from 'vue'
+import { api } from '../api'
+
+const state = reactive({ branches: [], docker: true, error: '' })
+const logs = reactive({})
+const sockets = {}
+const logPanes = {}
+
+const badge = { stable: 'text-bg-success', experimental: 'text-bg-warning' }
+
+function fmtBytes(n) {
+  if (!n) return ''
+  return (n / 1e9).toFixed(2) + ' GB'
+}
+
+function fmtDate(ts) {
+  return ts ? new Date(ts * 1000).toLocaleString() : ''
+}
+
+function branchState(name) {
+  return state.branches.find((b) => b.branch === name)
+}
+
+async function refresh() {
+  try {
+    const data = await api('/api/serverfiles')
+    state.docker = data.docker
+    state.branches = data.branches
+    state.error = ''
+    for (const b of data.branches) {
+      if (b.job?.status === 'running') connect(b.branch)
+    }
+  } catch (e) {
+    state.error = e.message
+  }
+}
+
+function scrollLog(branch) {
+  nextTick(() => {
+    const el = logPanes[branch]
+    if (el) el.scrollTop = el.scrollHeight
+  })
+}
+
+function connect(branch) {
+  if (sockets[branch]) return
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+  const ws = new WebSocket(`${proto}://${location.host}/api/serverfiles/${branch}/ws`)
+  sockets[branch] = ws
+  ws.onmessage = (msg) => {
+    const ev = JSON.parse(msg.data)
+    const b = branchState(branch)
+    if (!b) return
+    if (ev.type === 'snapshot') {
+      Object.assign(b, ev.state)
+      logs[branch] = ev.log || []
+      scrollLog(branch)
+    } else if (ev.type === 'log') {
+      const lines = (logs[branch] ||= [])
+      lines.push(ev.line)
+      if (lines.length > 500) lines.shift()
+      scrollLog(branch)
+    } else if (ev.type === 'progress') {
+      if (b.job) Object.assign(b.job, ev)
+    } else if (ev.type === 'status') {
+      b.job = ev.job
+      if (ev.installed) b.installed = ev.installed
+    }
+  }
+  ws.onclose = () => {
+    delete sockets[branch]
+    refresh()
+  }
+}
+
+async function startDownload(branch) {
+  const b = branchState(branch)
+  try {
+    b.job = await api(`/api/serverfiles/${branch}/download`, { method: 'POST' })
+    logs[branch] = []
+    connect(branch)
+  } catch (e) {
+    state.error = e.message
+  }
+}
+
+onMounted(refresh)
+onUnmounted(() => {
+  for (const ws of Object.values(sockets)) ws.close()
+})
+</script>
+
 <template>
   <div class="container">
     <h1 class="h3 mb-3">Server files</h1>
+
+    <div v-if="!state.docker" class="alert alert-danger">
+      The Docker daemon is not reachable from the manager — check that
+      <code>/var/run/docker.sock</code> is mounted. Downloads are disabled.
+    </div>
+    <div v-if="state.error" class="alert alert-warning py-2">{{ state.error }}</div>
+
     <div class="row g-3">
-      <div v-for="branch in branches" :key="branch.id" class="col-12 col-lg-6">
+      <div v-for="b in state.branches" :key="b.branch" class="col-12 col-lg-6">
         <div class="card h-100">
           <div class="card-body">
             <div class="d-flex justify-content-between align-items-center mb-2">
-              <h2 class="h5 mb-0">{{ branch.label }}</h2>
-              <span class="badge" :class="branch.badge">app {{ branch.appId }}</span>
+              <h2 class="h5 mb-0">{{ b.label }}</h2>
+              <span class="badge" :class="badge[b.branch]">app {{ b.app_id }}</span>
             </div>
-            <p class="text-secondary small">
-              Not installed. SteamCMD download with live progress arrives in the next milestone.
+
+            <p v-if="b.installed" class="text-secondary small mb-2">
+              Installed — build {{ b.installed.build_id }}
+              <template v-if="b.installed.size_bytes"> · {{ fmtBytes(b.installed.size_bytes) }}</template>
+              <template v-if="b.installed.last_updated"> · updated {{ fmtDate(b.installed.last_updated) }}</template>
             </p>
-            <button class="btn btn-outline-primary" disabled>Download server files</button>
+            <p v-else class="text-secondary small mb-2">Not installed.</p>
+
+            <div v-if="b.job && b.job.status === 'running'" class="mb-2">
+              <div class="d-flex justify-content-between small mb-1">
+                <span class="text-capitalize">{{ b.job.phase }}</span>
+                <span>
+                  {{ b.job.percent.toFixed(1) }}%
+                  <template v-if="b.job.bytes_total">
+                    ({{ fmtBytes(b.job.bytes_done) }} / {{ fmtBytes(b.job.bytes_total) }})
+                  </template>
+                </span>
+              </div>
+              <div class="progress" style="height: 0.75rem">
+                <div
+                  class="progress-bar progress-bar-striped progress-bar-animated"
+                  :style="{ width: b.job.percent + '%' }"
+                ></div>
+              </div>
+            </div>
+
+            <div v-if="b.job && b.job.status === 'error'" class="alert alert-danger py-2 small mb-2">
+              {{ b.job.error }}
+            </div>
+            <div v-if="b.job && b.job.status === 'success'" class="alert alert-success py-2 small mb-2">
+              Download completed.
+            </div>
+
+            <button
+              class="btn btn-primary"
+              :disabled="!state.docker || (b.job && b.job.status === 'running')"
+              @click="startDownload(b.branch)"
+            >
+              <span
+                v-if="b.job && b.job.status === 'running'"
+                class="spinner-border spinner-border-sm me-1"
+              ></span>
+              {{ b.installed ? 'Update server files' : 'Download server files' }}
+            </button>
+
+            <pre
+              v-if="logs[b.branch]?.length"
+              :ref="(el) => (logPanes[b.branch] = el)"
+              class="mt-3 p-2 bg-black text-light rounded small mb-0"
+              style="max-height: 16rem; overflow-y: auto; white-space: pre-wrap"
+            >{{ logs[b.branch].join('\n') }}</pre>
           </div>
         </div>
       </div>
     </div>
   </div>
 </template>
-
-<script setup>
-const branches = [
-  { id: 'stable', label: 'Stable', appId: '1874900', badge: 'text-bg-success' },
-  { id: 'experimental', label: 'Experimental', appId: '1890870', badge: 'text-bg-warning' },
-]
-</script>

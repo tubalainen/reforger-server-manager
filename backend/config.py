@@ -4,11 +4,16 @@ import secrets
 from dataclasses import dataclass
 
 APP_NAME = "Reforger Server Manager"
-APP_VERSION = "0.0.4"
+APP_VERSION = "0.1.0"
 
 # Steam app IDs for the Arma Reforger Dedicated Server
 STEAM_APPID_STABLE = "1874900"
 STEAM_APPID_EXPERIMENTAL = "1890870"
+
+BRANCHES = {
+    "stable": {"app_id": STEAM_APPID_STABLE, "label": "Stable"},
+    "experimental": {"app_id": STEAM_APPID_EXPERIMENTAL, "label": "Experimental"},
+}
 
 
 def _port_range(raw: str | None, fallback: tuple[int, int]) -> tuple[int, int]:
@@ -30,6 +35,8 @@ class Settings:
     session_secret: str
     session_ttl_hours: int
     data_dir: str
+    serverfiles_dir: str
+    steamcmd_timeout_minutes: int
     static_dir: str
     docker_network: str
     reforger_server_image: str
@@ -53,6 +60,8 @@ class Settings:
             session_secret_generated=generated,
             session_ttl_hours=int(os.environ.get("SESSION_TTL_HOURS", "168")),
             data_dir=os.environ.get("DATA_DIR", "./data"),
+            serverfiles_dir=os.environ.get("SERVERFILES_DIR", "/serverfiles"),
+            steamcmd_timeout_minutes=int(os.environ.get("STEAMCMD_TIMEOUT_MINUTES", "60")),
             static_dir=os.environ.get("STATIC_DIR", ""),
             docker_network=os.environ.get("DOCKER_NETWORK", "reforger-net"),
             reforger_server_image=os.environ.get(
