@@ -7,6 +7,14 @@ services:
     restart: unless-stopped
     env_file: .env
     ports:
+      # The web GUI. Server instances do NOT need port entries here: the
+      # manager creates each Arma server as a *sibling* container on the host
+      # Docker daemon and publishes its game/A2S/RCON UDP ports directly to
+      # the host (0.0.0.0) via the Docker API. Open these ranges in your host
+      # firewall so players can connect (defaults, configurable in .env):
+      #   game  GAME_PORT_RANGE  2001-2020/udp
+      #   A2S   A2S_PORT_RANGE   17777-17796/udp   (server browser query)
+      #   RCON  RCON_PORT_RANGE  19999-20018/udp   (only if used remotely)
       - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-7780}:8080"
     volumes:
       # Manager state: SQLite DB, per-instance configs and profiles.

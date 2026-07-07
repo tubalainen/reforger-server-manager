@@ -103,6 +103,28 @@ async function toggleAutoRestart() {
   }
 }
 
+const editingPorts = ref(false)
+const portForm = ref({ game_port: null, a2s_port: null, rcon_port: null })
+function openPortEditor() {
+  portForm.value = {
+    game_port: inst.value.game_port,
+    a2s_port: inst.value.a2s_port,
+    rcon_port: inst.value.rcon_port,
+  }
+  editingPorts.value = true
+}
+async function savePorts() {
+  try {
+    inst.value = await api(`/api/instances/${props.id}/ports`, {
+      method: 'PUT',
+      body: portForm.value,
+    })
+    editingPorts.value = false
+  } catch (e) {
+    error.value = e.message
+  }
+}
+
 onMounted(async () => {
   await loadInstance()
   await loadStats()
@@ -191,6 +213,34 @@ onUnmounted(() => {
                 <div class="col-sm-6"><span class="text-secondary">A2S port:</span> {{ inst.a2s_port }}/udp</div>
                 <div class="col-sm-6"><span class="text-secondary">RCON port:</span> {{ inst.rcon_port }}/udp</div>
                 <div class="col-sm-6"><span class="text-secondary">Desired:</span> {{ inst.desired_state }}</div>
+              </div>
+
+              <div class="mt-2">
+                <button
+                  v-if="!editingPorts"
+                  class="btn btn-sm btn-outline-secondary"
+                  :disabled="inst.status === 'running'"
+                  :title="inst.status === 'running' ? 'Stop the server to edit ports' : ''"
+                  @click="openPortEditor"
+                >Edit ports</button>
+                <div v-else class="row g-2 align-items-end mt-1">
+                  <div class="col-4">
+                    <label class="form-label small mb-0">Game</label>
+                    <input v-model.number="portForm.game_port" type="number" class="form-control form-control-sm" />
+                  </div>
+                  <div class="col-4">
+                    <label class="form-label small mb-0">A2S</label>
+                    <input v-model.number="portForm.a2s_port" type="number" class="form-control form-control-sm" />
+                  </div>
+                  <div class="col-4">
+                    <label class="form-label small mb-0">RCON</label>
+                    <input v-model.number="portForm.rcon_port" type="number" class="form-control form-control-sm" />
+                  </div>
+                  <div class="col-12 d-flex gap-2 mt-2">
+                    <button class="btn btn-sm btn-primary" @click="savePorts">Save ports</button>
+                    <button class="btn btn-sm btn-outline-secondary" @click="editingPorts = false">Cancel</button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
