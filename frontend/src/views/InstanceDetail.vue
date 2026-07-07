@@ -199,8 +199,8 @@ onUnmounted(() => {
           <div class="card h-100">
             <div class="card-body d-flex align-items-center justify-content-between">
               <div>
-                <div class="fw-semibold small">Auto-restart on crash</div>
-                <div class="text-secondary small">Restarts if the container exits</div>
+                <div class="fw-semibold small">Keep running</div>
+                <div class="text-secondary small">Auto-restart on crash and on Docker/host restart</div>
               </div>
               <div class="form-check form-switch">
                 <input

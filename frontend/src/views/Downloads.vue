@@ -20,6 +20,17 @@ async function checkUpdate(branch) {
   }
 }
 
+async function removeFiles(branch) {
+  if (!confirm(`Delete all ${branch} server files? You'll need to download them again before running a ${branch} server.`)) return
+  try {
+    await api(`/api/serverfiles/${branch}`, { method: 'DELETE' })
+    delete updateInfo[branch]
+    await refresh()
+  } catch (e) {
+    state.error = e.message
+  }
+}
+
 const badge = { stable: 'text-bg-success', experimental: 'text-bg-warning' }
 
 function fmtBytes(n) {
@@ -188,6 +199,14 @@ onUnmounted(() => {
                 @click="checkUpdate(b.branch)"
               >
                 {{ checking[b.branch] ? 'Checking…' : 'Check for updates' }}
+              </button>
+              <button
+                v-if="b.installed"
+                class="btn btn-outline-danger ms-auto"
+                :disabled="!state.docker || (b.job && b.job.status === 'running')"
+                @click="removeFiles(b.branch)"
+              >
+                Remove
               </button>
             </div>
 

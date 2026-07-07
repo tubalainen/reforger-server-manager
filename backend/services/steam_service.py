@@ -165,6 +165,32 @@ class SteamService:
                 pass
         return parse_latest_build(output)
 
+    def remove_files(self, branch: str) -> None:
+        """Wipe a branch's downloaded server files so it can be re-downloaded.
+
+        The manager mounts serverfiles read-only, so a short cleanup sibling
+        container (steamcmd image, rw mount) does the delete. Raises
+        RuntimeError on failure.
+        """
+        host_dir = docker_service.host_path_for(
+            f"{config.settings.serverfiles_dir}/{branch}"
+        )
+        Path(f"{config.settings.serverfiles_dir}/{branch}").mkdir(parents=True, exist_ok=True)
+        try:
+            docker_service.get_client().containers.run(
+                config.settings.steamcmd_image,
+                entrypoint="/bin/sh",
+                command=["-c", "rm -rf /serverfiles/* /serverfiles/.[!.]* 2>/dev/null; true"],
+                remove=True,
+                volumes={host_dir: {"bind": "/serverfiles", "mode": "rw"}},
+                labels={docker_service.LABEL_MANAGED: "true"},
+            )
+        except DockerException as exc:
+            raise RuntimeError(f"Could not remove server files: {exc}") from exc
+        # Clear any cached install/job state for the branch
+        self.jobs.pop(branch, None)
+        logger.info("Removed %s server files", branch)
+
     def update_status(self, branch: str) -> dict:
         """Installed vs latest build id, and whether an update is available."""
         installed = self.installed_info(branch)

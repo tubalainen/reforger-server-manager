@@ -45,6 +45,42 @@ def test_check_update_unknown_branch_404(logged_in):
     assert logged_in.get("/api/serverfiles/nightly/check-update").status_code == 404
 
 
+def test_remove_serverfiles_unknown_branch_404(logged_in):
+    assert logged_in.delete("/api/serverfiles/nightly").status_code == 404
+
+
+def test_remove_serverfiles_calls_steam(logged_in, monkeypatch):
+    from services import instance_service, steam_service
+
+    called = {}
+    monkeypatch.setattr(
+        instance_service, "running_instance_names_for_branch", lambda b: []
+    )
+    monkeypatch.setattr(
+        steam_service.steam, "remove_files", lambda b: called.setdefault("branch", b)
+    )
+    assert logged_in.delete("/api/serverfiles/stable").status_code == 204
+    assert called["branch"] == "stable"
+
+
+def test_remove_serverfiles_blocked_when_running(logged_in, monkeypatch):
+    from services import instance_service
+
+    monkeypatch.setattr(
+        instance_service, "running_instance_names_for_branch", lambda b: ["srv-a"]
+    )
+    r = logged_in.delete("/api/serverfiles/stable")
+    assert r.status_code == 409
+    assert "srv-a" in r.json()["detail"]
+
+
+def test_version_endpoint(client):
+    r = client.get("/api/version")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["version"] and body["repo_url"].startswith("https://github.com/")
+
+
 def test_download_conflict_while_running(logged_in):
     _fake_running_job("stable")
     r = logged_in.post("/api/serverfiles/stable/download")

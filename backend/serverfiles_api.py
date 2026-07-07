@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisco
 
 import auth
 import config
-from services import docker_service
+from services import docker_service, instance_service
 from services.steam_service import steam
 
 router = APIRouter(prefix="/api/serverfiles", tags=["serverfiles"])
@@ -36,6 +36,24 @@ async def serverfiles_status(_user: str = Depends(auth.require_session)):
         "server_image": config.settings.reforger_server_image,
         "branches": [_branch_state(b) for b in config.BRANCHES],
     }
+
+
+@router.delete("/{branch}", status_code=204)
+async def remove_serverfiles(branch: str, _user: str = Depends(auth.require_session)):
+    """Delete a branch's server files so they can be re-downloaded (issue #18)."""
+    _require_branch(branch)
+    running = await asyncio.to_thread(
+        instance_service.running_instance_names_for_branch, branch
+    )
+    if running:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Stop these {branch} instances first: {', '.join(running)}",
+        )
+    try:
+        await asyncio.to_thread(steam.remove_files, branch)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 @router.get("/{branch}/check-update")
