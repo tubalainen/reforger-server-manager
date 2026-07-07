@@ -1,16 +1,26 @@
 <script setup>
+import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from './api'
 import { setAuthed } from './router'
 
 const route = useRoute()
 const router = useRouter()
+const version = ref(null)
 
 async function logout() {
   await api('/api/auth/logout', { method: 'POST' })
   setAuthed(false)
   router.push({ name: 'login' })
 }
+
+onMounted(async () => {
+  try {
+    version.value = await api('/api/version')
+  } catch {
+    /* ignore */
+  }
+})
 </script>
 
 <template>
@@ -28,6 +38,14 @@ async function logout() {
           <router-link class="nav-link" active-class="active" to="/downloads">Downloads</router-link>
         </li>
       </ul>
+      <a
+        v-if="version"
+        :href="version.repo_url"
+        target="_blank"
+        rel="noopener"
+        class="navbar-text small text-secondary me-3 text-decoration-none"
+        :title="'Open ' + version.name + ' on GitHub'"
+      >v{{ version.version }} ↗</a>
       <button class="btn btn-outline-secondary btn-sm" @click="logout">Log out</button>
     </div>
   </nav>

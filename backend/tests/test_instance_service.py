@@ -186,3 +186,5 @@ def test_create_container_uses_acemod_contract(tmp_path, monkeypatch):
     # labels let us rediscover the container after a restart
     assert captured["labels"][docker_service.LABEL_INSTANCE_ID] == "1"
     assert captured["labels"][docker_service.LABEL_ROLE] == docker_service.ROLE_INSTANCE
+    # auto_restart default True -> container survives Docker/host restart (#17)
+    assert captured["restart_policy"] == {"Name": "unless-stopped"}

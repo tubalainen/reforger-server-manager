@@ -75,9 +75,17 @@ app.include_router(templates_api.router)
 app.include_router(instances_api.router)
 
 
+REPO_URL = "https://github.com/tubalainen/reforger-server-manager"
+
+
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "version": config.APP_VERSION}
+
+
+@app.get("/api/version")
+async def version():
+    return {"name": config.APP_NAME, "version": config.APP_VERSION, "repo_url": REPO_URL}
 
 
 # --- SPA serving (only when a built frontend is present, i.e. in the image) ---

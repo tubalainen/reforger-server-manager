@@ -306,7 +306,9 @@ def _create_container(inst: Instance, config_path: Path):
             docker_service.LABEL_INSTANCE_ID: str(inst.id),
         },
         network=config.settings.docker_network,
-        restart_policy={"Name": "no"},
+        # unless-stopped so the server comes back on its own after a Docker
+        # daemon or host restart (issue #17); "no" when auto-restart is off.
+        restart_policy={"Name": "unless-stopped" if inst.auto_restart else "no"},
     )
 
 
@@ -374,6 +376,17 @@ def instance_view(inst: Instance, template_name: str | None) -> dict:
         "server_files_ready": server_files_ready(inst.branch),
         "created_at": inst.created_at.isoformat(),
     }
+
+
+def running_instance_names_for_branch(branch: str) -> list[str]:
+    """Names of instances on this branch whose container is currently running."""
+    names = []
+    with Session(get_engine()) as session:
+        instances = [i for i in _all_instances(session) if i.branch == branch]
+    for inst in instances:
+        if container_status(inst.id) == "running":
+            names.append(inst.name)
+    return names
 
 
 def instance_stats(instance_id: int) -> dict:
@@ -505,6 +518,16 @@ def set_auto_restart(instance_id: int, value: bool) -> None:
         inst.auto_restart = value
         session.add(inst)
         session.commit()
+    # Reflect the change on a live container's Docker restart policy so it
+    # matches "keep running across restarts" immediately (issue #17).
+    container = docker_service.find_instance_container(instance_id)
+    if container:
+        try:
+            container.update(
+                restart_policy={"Name": "unless-stopped" if value else "no"}
+            )
+        except DockerException as exc:
+            logger.warning("Could not update restart policy for %s: %s", instance_id, exc)
 
 
 # --------------------------------------------------------------------------- #
