@@ -43,15 +43,22 @@ def _throttle(request: Request) -> None:
     window.append(now)
 
 
-def require_session(request: Request) -> str:
-    """FastAPI dependency: returns the logged-in username or raises 401."""
-    token = request.cookies.get(COOKIE_NAME)
+def session_username(token: str | None) -> str | None:
+    """Validate a session cookie value; also usable from WebSocket handshakes."""
     if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+        return None
     try:
         return _serializer().loads(token, max_age=config.settings.session_ttl_hours * 3600)
     except (BadSignature, SignatureExpired):
-        raise HTTPException(status_code=401, detail="Session invalid or expired")
+        return None
+
+
+def require_session(request: Request) -> str:
+    """FastAPI dependency: returns the logged-in username or raises 401."""
+    username = session_username(request.cookies.get(COOKIE_NAME))
+    if not username:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return username
 
 
 @router.post("/login")
