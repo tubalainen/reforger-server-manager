@@ -59,6 +59,68 @@ default). The manager:
 Stable and experimental servers can run side by side. Live server logs stream to
 the instance detail page.
 
+## Getting started
+
+Two paths, depending on how comfortable you are with Linux and Docker.
+
+### New to Docker & Linux? (step-by-step)
+
+**1 — Install Docker** on your Linux server with the official one-line convenience
+script:
+
+```bash
+curl -fsSL https://get.docker.com | sudo sh
+```
+
+Then let your user run Docker without `sudo`, and make sure the service starts on
+boot:
+
+```bash
+sudo usermod -aG docker "$USER"      # log out and back in for this to take effect
+sudo systemctl enable --now docker
+```
+
+Verify it works (after logging back in):
+
+```bash
+docker run --rm hello-world
+```
+
+**2 — Run this application:**
+
+```bash
+git clone https://github.com/tubalainen/reforger-server-manager.git
+cd reforger-server-manager
+cp .env.example .env
+# edit .env: at minimum set ADMIN_PASSWORD and SESSION_SECRET
+docker compose up -d
+```
+
+On the server itself, open `http://localhost:7780` and sign in with the credentials
+from `.env`. (By default the GUI binds to `127.0.0.1` — see the security note under
+[Quick start](#quick-start) before exposing it.)
+
+**3 — Open the ports (NAT / port forwarding):**
+
+For players on the internet to reach your server, you must open/forward ports
+through your router (NAT) **and** any firewall on the Linux host, pointing them at
+the Linux server's LAN IP:
+
+- **Game port(s):** UDP `2001–2020` (default `GAME_PORT_RANGE`)
+- **A2S query port(s):** UDP `17777–17796` (default `A2S_PORT_RANGE`)
+- one game + A2S port pair per running server instance
+
+Also set `PUBLIC_ADDRESS` in `.env` to your server's public IP so it advertises
+correctly to the Arma backend. Keep the RCON ports (`19999–20018`) and the web GUI
+(`7780`) **private** — do not forward them to the internet; reach the GUI through a
+TLS reverse proxy or an SSH tunnel instead.
+
+### Already comfortable with Docker? (quick version)
+
+You only need Docker with the Compose plugin. Head to [Quick start](#quick-start)
+below, fill in `.env`, `docker compose up -d`, and forward the UDP game/A2S ports
+listed above. Put a TLS reverse proxy in front of the GUI for VPS use.
+
 ## Quick start
 
 ```bash
