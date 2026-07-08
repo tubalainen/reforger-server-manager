@@ -46,7 +46,11 @@ onMounted(async () => {
         class="navbar-text small text-secondary me-3 text-decoration-none"
         :title="'Open ' + version.name + ' on GitHub'"
       >v{{ version.version }} ↗</a>
-      <button class="btn btn-outline-secondary btn-sm" @click="logout">Log out</button>
+      <button
+        v-if="!version || version.auth_enabled"
+        class="btn btn-outline-secondary btn-sm"
+        @click="logout"
+      >Log out</button>
     </div>
   </nav>
   <router-view />

@@ -154,6 +154,11 @@ front for VPS use, or set `WEB_BIND=0.0.0.0` at your own risk (login is still re
 > **Security note:** the manager mounts `/var/run/docker.sock`, which is root-equivalent
 > on the host — that is what lets it create server containers. Treat the web GUI
 > credentials accordingly and firewall the port.
+>
+> The built-in login can be turned off with `AUTH_ENABLED=false` so a reverse proxy
+> (NGINX, Caddy, Authelia, …) can enforce authentication instead. Only do this when
+> such a proxy is actually in front of the app — with it off and no proxy, the GUI
+> (and thus Docker) is completely open.
 
 ## Development
 

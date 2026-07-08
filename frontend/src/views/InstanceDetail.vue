@@ -193,6 +193,25 @@ async function saveTemplate() {
   }
 }
 
+// --- rename / change branch (issue #27) ---
+const editingBasics = ref(false)
+const basicsForm = ref({ name: '', branch: 'stable' })
+function openBasicsEditor() {
+  basicsForm.value = { name: inst.value.name, branch: inst.value.branch }
+  editingBasics.value = true
+}
+async function saveBasics() {
+  try {
+    inst.value = await api(`/api/instances/${props.id}`, {
+      method: 'PUT',
+      body: { name: basicsForm.value.name, branch: basicsForm.value.branch },
+    })
+    editingBasics.value = false
+  } catch (e) {
+    error.value = e.message
+  }
+}
+
 onMounted(async () => {
   await loadInstance()
   await loadStats()
@@ -331,6 +350,36 @@ onUnmounted(() => {
                   <div class="d-flex gap-2 mt-2">
                     <button class="btn btn-sm btn-primary" @click="saveTemplate">Save template</button>
                     <button class="btn btn-sm btn-outline-secondary" @click="editingTemplate = false">Cancel</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="mt-2">
+                <button
+                  v-if="!editingBasics"
+                  class="btn btn-sm btn-outline-secondary"
+                  @click="openBasicsEditor"
+                >Edit name / branch</button>
+                <div v-else class="row g-2 align-items-end mt-1">
+                  <div class="col-sm-7">
+                    <label class="form-label small mb-0">Name</label>
+                    <input v-model.trim="basicsForm.name" class="form-control form-control-sm" />
+                  </div>
+                  <div class="col-sm-5">
+                    <label class="form-label small mb-0">Branch</label>
+                    <select
+                      v-model="basicsForm.branch"
+                      class="form-select form-select-sm"
+                      :disabled="inst.status === 'running'"
+                      :title="inst.status === 'running' ? 'Stop the server to change its branch' : ''"
+                    >
+                      <option value="stable">Stable</option>
+                      <option value="experimental">Experimental</option>
+                    </select>
+                  </div>
+                  <div class="col-12 d-flex gap-2 mt-2">
+                    <button class="btn btn-sm btn-primary" :disabled="!basicsForm.name" @click="saveBasics">Save</button>
+                    <button class="btn btn-sm btn-outline-secondary" @click="editingBasics = false">Cancel</button>
                   </div>
                 </div>
               </div>

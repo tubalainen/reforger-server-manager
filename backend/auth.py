@@ -15,6 +15,10 @@ import config
 
 COOKIE_NAME = "rsm_session"
 
+# Username attributed to requests when the built-in login is disabled
+# (AUTH_ENABLED=false) and a reverse proxy is expected to enforce auth (#37).
+ANONYMOUS_USER = "anonymous"
+
 # Naive in-memory brute-force throttle: max N login attempts per IP per window.
 _LOGIN_WINDOW_SECONDS = 60
 _LOGIN_MAX_ATTEMPTS = 10
@@ -44,7 +48,15 @@ def _throttle(request: Request) -> None:
 
 
 def session_username(token: str | None) -> str | None:
-    """Validate a session cookie value; also usable from WebSocket handshakes."""
+    """Validate a session cookie value; also usable from WebSocket handshakes.
+
+    When the built-in login is disabled (AUTH_ENABLED=false), every request is
+    treated as the anonymous user — the reverse proxy in front is responsible
+    for authentication. This single gate covers HTTP (require_session) and the
+    WebSocket handshakes that call session_username directly.
+    """
+    if not config.settings.auth_enabled:
+        return ANONYMOUS_USER
     if not token:
         return None
     try:

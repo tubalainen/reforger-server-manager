@@ -45,6 +45,11 @@ class SetTemplate(BaseModel):
     template_id: int
 
 
+class EditInstance(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    branch: str | None = None
+
+
 @router.get("")
 async def list_instances(_user: str = Depends(auth.require_session)):
     return await asyncio.to_thread(instance_service.list_views)
@@ -110,6 +115,19 @@ async def stop(instance_id: int, _user: str = Depends(auth.require_session)):
 @router.post("/{instance_id}/restart")
 async def restart(instance_id: int, _user: str = Depends(auth.require_session)):
     await asyncio.to_thread(_action, instance_service.restart_instance, instance_id)
+    return await asyncio.to_thread(_view, instance_id)
+
+
+@router.put("/{instance_id}")
+async def edit_instance(
+    instance_id: int, body: EditInstance, _user: str = Depends(auth.require_session)
+):
+    try:
+        await asyncio.to_thread(
+            instance_service.edit_instance, instance_id, body.name, body.branch
+        )
+    except InstanceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     return await asyncio.to_thread(_view, instance_id)
 
 

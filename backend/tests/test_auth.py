@@ -43,3 +43,21 @@ def test_health_is_public(client):
     body = r.json()
     assert body["status"] == "ok"
     assert body["version"]
+
+
+def test_version_reports_auth_enabled(client):
+    assert client.get("/api/version").json()["auth_enabled"] is True
+
+
+def test_auth_disabled_bypasses_login(client, monkeypatch):
+    import config
+
+    # AUTH_ENABLED=false -> protected endpoints work with no session cookie,
+    # every caller is the anonymous user (a reverse proxy owns auth) (#37).
+    monkeypatch.setattr(config.settings, "auth_enabled", False)
+    me = client.get("/api/auth/me")
+    assert me.status_code == 200
+    assert me.json()["username"] == "anonymous"
+    # a normally-protected data endpoint is reachable too
+    assert client.get("/api/instances").status_code == 200
+    assert client.get("/api/version").json()["auth_enabled"] is False

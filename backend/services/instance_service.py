@@ -306,6 +306,46 @@ def instances_using_template(template_id: int) -> list[dict]:
     ]
 
 
+def edit_instance(
+    instance_id: int, name: str | None = None, branch: str | None = None
+) -> None:
+    """Edit an instance's name and/or branch after creation (issue #27).
+
+    Renaming is allowed anytime (the container is keyed by id, not name).
+    Changing branch swaps the mounted server files + Steam app id, so it is
+    only allowed while stopped and rebuilds the container on next start.
+    """
+    with Session(get_engine()) as session:
+        inst = session.get(Instance, instance_id)
+        if not inst:
+            raise InstanceError("Instance not found")
+        branch_changing = branch is not None and branch != inst.branch
+        if branch_changing:
+            if branch not in config.BRANCHES:
+                raise InstanceError(f"Unknown branch '{branch}'")
+            if container_status(instance_id) == "running":
+                raise InstanceError("Stop the instance before changing its branch")
+        if name is not None and name != inst.name:
+            clash = session.exec(
+                select(Instance).where(Instance.name == name, Instance.id != instance_id)
+            ).first()
+            if clash:
+                raise InstanceError(f"An instance named '{name}' already exists")
+            inst.name = name
+        if branch_changing:
+            inst.branch = branch
+        session.add(inst)
+        session.commit()
+    if branch_changing:
+        # Recreate the container for the new branch's files/app id on next start.
+        container = docker_service.find_instance_container(instance_id)
+        if container:
+            try:
+                container.remove(force=True)
+            except DockerException as exc:
+                logger.warning("Could not remove container for %s: %s", instance_id, exc)
+
+
 def _template_config(session: Session, inst: Instance) -> str:
     template = session.get(Template, inst.template_id)
     if not template:
