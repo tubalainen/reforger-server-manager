@@ -25,8 +25,9 @@ class CreateInstance(BaseModel):
     rcon_port: int | None = Field(default=None, ge=1, le=65535)
 
 
-class AutoRestart(BaseModel):
-    auto_restart: bool
+class RestartSettings(BaseModel):
+    auto_restart: bool | None = None
+    auto_start: bool | None = None
 
 
 class UpdatePorts(BaseModel):
@@ -118,21 +119,18 @@ async def update_ports(
     return await asyncio.to_thread(_view, instance_id)
 
 
-@router.put("/{instance_id}/auto-restart")
-async def auto_restart(
-    instance_id: int, body: AutoRestart, _user: str = Depends(auth.require_session)
+@router.put("/{instance_id}/restart-settings")
+async def restart_settings(
+    instance_id: int, body: RestartSettings, _user: str = Depends(auth.require_session)
 ):
-    await asyncio.to_thread(
-        _action_value, instance_service.set_auto_restart, instance_id, body.auto_restart
-    )
-    return await asyncio.to_thread(_view, instance_id)
-
-
-def _action_value(fn, instance_id: int, value):
     try:
-        fn(instance_id, value)
+        await asyncio.to_thread(
+            instance_service.set_restart_settings,
+            instance_id, body.auto_restart, body.auto_start,
+        )
     except InstanceError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+    return await asyncio.to_thread(_view, instance_id)
 
 
 @router.delete("/{instance_id}", status_code=204)

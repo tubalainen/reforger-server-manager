@@ -39,6 +39,13 @@ def test_render_without_public_address_leaves_it():
     assert "publicAddress" not in cfg or cfg["publicAddress"] == ""
 
 
+def test_restart_policy_mapping():
+    assert instance_service._restart_policy(_inst(auto_start=True, auto_restart=True)) == "unless-stopped"
+    assert instance_service._restart_policy(_inst(auto_start=True, auto_restart=False)) == "unless-stopped"
+    assert instance_service._restart_policy(_inst(auto_start=False, auto_restart=True)) == "on-failure"
+    assert instance_service._restart_policy(_inst(auto_start=False, auto_restart=False)) == "no"
+
+
 def test_parse_server_status_reads_latest_line():
     log = (
         "some boot noise\n"
