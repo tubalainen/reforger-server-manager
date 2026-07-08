@@ -48,6 +48,18 @@ def test_duplicate_name_conflict(logged_in):
     assert logged_in.post("/api/templates", json=_spec("Dupe")).status_code == 409
 
 
+def test_launch_params_persist_and_roundtrip(logged_in):
+    spec = _spec("Launchy")
+    spec["launch"] = {"max_fps": 60, "no_backend": True, "auto_reload_scenario": 300}
+    r = logged_in.post("/api/templates", json=spec)
+    assert r.status_code == 201
+    tid = r.json()["id"]
+    got = logged_in.get(f"/api/templates/{tid}").json()["spec"]["launch"]
+    assert got["max_fps"] == 60
+    assert got["no_backend"] is True
+    assert got["auto_reload_scenario"] == 300
+
+
 def test_preview_without_saving(logged_in):
     r = logged_in.post("/api/templates/preview", json=_spec())
     assert r.status_code == 200

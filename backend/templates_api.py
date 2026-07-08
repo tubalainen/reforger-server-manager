@@ -15,11 +15,13 @@ router = APIRouter(prefix="/api/templates", tags=["templates"])
 
 
 def _out(t: Template) -> dict:
+    spec = template_service.spec_from_config(t.config_json)
+    spec["launch"] = json.loads(t.launch_params_json or "{}")
     return {
         "id": t.id,
         "name": t.name,
         "description": t.description,
-        "spec": template_service.spec_from_config(t.config_json),
+        "spec": spec,
         "created_at": t.created_at.isoformat(),
         "updated_at": t.updated_at.isoformat(),
     }
@@ -42,7 +44,10 @@ async def create_template(spec: TemplateSpec, _user: str = Depends(auth.require_
     with Session(get_engine()) as session:
         if session.exec(select(Template).where(Template.name == spec.name)).first():
             raise HTTPException(status_code=409, detail=f"A template named '{spec.name}' already exists")
-        t = Template(name=spec.name, description=spec.description, config_json=config_json)
+        t = Template(
+            name=spec.name, description=spec.description, config_json=config_json,
+            launch_params_json=spec.launch.model_dump_json(),
+        )
         session.add(t)
         session.commit()
         session.refresh(t)
@@ -74,6 +79,7 @@ async def update_template(
         t.name = spec.name
         t.description = spec.description
         t.config_json = template_service.render_config_json(spec)
+        t.launch_params_json = spec.launch.model_dump_json()
         t.updated_at = datetime.now(timezone.utc)
         session.add(t)
         session.commit()

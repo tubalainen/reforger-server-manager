@@ -120,3 +120,38 @@ def test_persistence_omitted_when_disabled():
 def test_rcon_permission_pattern_validated():
     with pytest.raises(ValidationError):
         _spec(rcon_permission="superuser")
+
+
+def test_launch_params_render():
+    from services.template_service import LaunchParams
+
+    lp = LaunchParams(
+        max_fps=60, auto_reload_scenario=600, spatial_map_resolution=500,
+        no_backend=True, log_voting=True, freeze_check_mode="crash",
+        short_worker_count=12, extra_args="-someCustom 1",
+    )
+    params, max_fps = lp.render()
+    assert max_fps == 60  # goes to ARMA_MAX_FPS, not ARMA_PARAMS
+    assert "-maxFPS" not in params
+    assert "-autoreload 600" in params
+    assert "-nwkResolution 500" in params
+    assert "-jobsysShortWorkerCount 12" in params
+    assert "-noBackend" in params and "-logVoting" in params
+    assert "-freezeCheckMode crash" in params
+    assert "-someCustom 1" in params
+
+
+def test_launch_params_empty_render():
+    from services.template_service import LaunchParams
+
+    params, max_fps = LaunchParams().render()
+    assert params == "" and max_fps is None
+
+
+def test_launch_params_bounds():
+    from services.template_service import LaunchParams
+
+    with pytest.raises(ValidationError):
+        LaunchParams(spatial_map_resolution=50)   # below 100
+    with pytest.raises(ValidationError):
+        LaunchParams(max_fps=5)

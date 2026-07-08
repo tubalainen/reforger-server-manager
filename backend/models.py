@@ -22,6 +22,7 @@ class Template(SQLModel, table=True):
     name: str = Field(index=True, unique=True)
     description: str = ""
     config_json: str
+    launch_params_json: str = "{}"  # engine launch params (issue #20)
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
 
@@ -69,12 +70,19 @@ def _migrate(engine) -> None:
     from sqlalchemy import text
 
     with engine.connect() as conn:
-        cols = {row[1] for row in conn.execute(text("PRAGMA table_info(instance)"))}
+        icols = {row[1] for row in conn.execute(text("PRAGMA table_info(instance)"))}
         # auto_start split out from auto_restart (issue #26); default from
         # auto_restart so existing "keep running" servers keep both behaviours
-        if "auto_start" not in cols:
+        if "auto_start" not in icols:
             conn.execute(text(
                 "ALTER TABLE instance ADD COLUMN auto_start BOOLEAN NOT NULL DEFAULT 1"
             ))
             conn.execute(text("UPDATE instance SET auto_start = auto_restart"))
+            conn.commit()
+        # engine launch parameters per template (issue #20)
+        tcols = {row[1] for row in conn.execute(text("PRAGMA table_info(template)"))}
+        if "launch_params_json" not in tcols:
+            conn.execute(text(
+                "ALTER TABLE template ADD COLUMN launch_params_json VARCHAR NOT NULL DEFAULT '{}'"
+            ))
             conn.commit()

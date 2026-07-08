@@ -195,3 +195,30 @@ def test_create_container_uses_acemod_contract(tmp_path, monkeypatch):
     assert captured["labels"][docker_service.LABEL_ROLE] == docker_service.ROLE_INSTANCE
     # auto_restart default True -> container survives Docker/host restart (#17)
     assert captured["restart_policy"] == {"Name": "unless-stopped"}
+
+
+def test_create_container_applies_launch_params(tmp_path, monkeypatch):
+    import config
+    from services import docker_service
+    from services.template_service import LaunchParams
+
+    monkeypatch.setattr(config.settings, "data_dir", str(tmp_path))
+    monkeypatch.setattr(config.settings, "serverfiles_dir", str(tmp_path / "sf"))
+    monkeypatch.setattr(docker_service, "host_path_for", lambda p: p)
+
+    captured = {}
+
+    class FakeContainers:
+        def create(self, image, **kw):
+            captured.update(kw)
+            return type("C", (), {"id": "x" * 16})()
+
+    monkeypatch.setattr(docker_service, "get_client",
+                        lambda: type("Cl", (), {"containers": FakeContainers()})())
+
+    launch = LaunchParams(max_fps=90, no_backend=True, auto_reload_scenario=300)
+    instance_service._create_container(_inst(), tmp_path / "server.json", launch)
+    env = captured["environment"]
+    assert env["ARMA_MAX_FPS"] == "90"
+    assert "-noBackend" in env["ARMA_PARAMS"]
+    assert "-autoreload 300" in env["ARMA_PARAMS"]

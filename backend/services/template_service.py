@@ -19,6 +19,91 @@ class ModEntry(BaseModel):
     version: str | None = None
 
 
+class LaunchParams(BaseModel):
+    """Engine command-line launch parameters (Longbow's Advanced panel).
+
+    Rendered to the server image's ARMA_PARAMS (+ ARMA_MAX_FPS). Every field is
+    optional: None / False means the argument is omitted. Arg names are the
+    exact Enfusion server args used by Longbow.
+    """
+
+    # valued args (-arg value); None -> omitted
+    max_fps: int | None = Field(default=None, ge=10, le=1000)          # -> ARMA_MAX_FPS
+    network_dynamic_simulation: int | None = None                       # -nds
+    spatial_map_resolution: int | None = Field(default=None, ge=100, le=1000)  # -nwkResolution
+    staggering_budget: int | None = None                                # -staggeringBudget
+    streaming_budget: int | None = None                                 # -streamingBudget
+    streams_delta: int | None = None                                    # -streamsDelta
+    auto_reload_scenario: int | None = Field(default=None, ge=0)        # -autoreload (seconds)
+    rpl_timeout_ms: int | None = None                                   # -rpl-timeout-ms
+    freeze_check: int | None = None                                     # -freezeCheck
+    freeze_check_mode: str | None = None                                # -freezeCheckMode
+    debugger_address: str | None = None                                 # -debugger
+    debugger_port: int | None = Field(default=None, ge=1, le=65535)     # -debuggerPort
+    load_session_save: str | None = None                                # -loadSessionSave
+    short_worker_count: int | None = Field(default=None, ge=1)          # -jobsysShortWorkerCount
+    long_worker_count: int | None = Field(default=None, ge=1)           # -jobsysLongWorkerCount
+
+    # switch args (-arg); False -> omitted
+    verify_and_repair_addons: bool = False    # -addonsRepair
+    auto_shutdown: bool = False               # -autoShutdown
+    log_voting: bool = False                  # -logVoting
+    ai_partial_sim: bool = False              # -aiPartialSim
+    force_recreate_database: bool = False     # -createDB
+    disable_shaders_build: bool = False       # -disableShadersBuild
+    generate_shaders: bool = False            # -generateShaders
+    rpl_encode_as_long_jobs: bool = False     # -rplEncodeAsLongJobs
+    force_disable_night_grain: bool = False   # -forceDisableNightGrain
+    no_backend: bool = False                  # -noBackend
+
+    # escape hatch for any arg not modelled above
+    extra_args: str = ""
+
+    # field -> exact engine arg for valued (excludes max_fps: it uses ARMA_MAX_FPS)
+    _VALUED = {
+        "network_dynamic_simulation": "nds",
+        "spatial_map_resolution": "nwkResolution",
+        "staggering_budget": "staggeringBudget",
+        "streaming_budget": "streamingBudget",
+        "streams_delta": "streamsDelta",
+        "auto_reload_scenario": "autoreload",
+        "rpl_timeout_ms": "rpl-timeout-ms",
+        "freeze_check": "freezeCheck",
+        "freeze_check_mode": "freezeCheckMode",
+        "debugger_address": "debugger",
+        "debugger_port": "debuggerPort",
+        "load_session_save": "loadSessionSave",
+        "short_worker_count": "jobsysShortWorkerCount",
+        "long_worker_count": "jobsysLongWorkerCount",
+    }
+    _SWITCHES = {
+        "verify_and_repair_addons": "addonsRepair",
+        "auto_shutdown": "autoShutdown",
+        "log_voting": "logVoting",
+        "ai_partial_sim": "aiPartialSim",
+        "force_recreate_database": "createDB",
+        "disable_shaders_build": "disableShadersBuild",
+        "generate_shaders": "generateShaders",
+        "rpl_encode_as_long_jobs": "rplEncodeAsLongJobs",
+        "force_disable_night_grain": "forceDisableNightGrain",
+        "no_backend": "noBackend",
+    }
+
+    def render(self) -> tuple[str, int | None]:
+        """Return (ARMA_PARAMS string, max_fps or None for ARMA_MAX_FPS)."""
+        parts: list[str] = []
+        for field, arg in self._VALUED.items():
+            value = getattr(self, field)
+            if value is not None and str(value) != "":
+                parts.append(f"-{arg} {value}")
+        for field, arg in self._SWITCHES.items():
+            if getattr(self, field):
+                parts.append(f"-{arg}")
+        if self.extra_args.strip():
+            parts.append(self.extra_args.strip())
+        return " ".join(parts), self.max_fps
+
+
 class TemplateSpec(BaseModel):
     """The structured input the wizard collects; renders to config.json."""
 
@@ -26,6 +111,7 @@ class TemplateSpec(BaseModel):
     description: str = ""
     scenario_id: str = Field(min_length=1)
     mods: list[ModEntry] = []
+    launch: LaunchParams = Field(default_factory=LaunchParams)
 
     # game settings
     game_name: str = "Arma Reforger Server"
