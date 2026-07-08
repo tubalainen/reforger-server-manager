@@ -4,7 +4,7 @@ import secrets
 from dataclasses import dataclass
 
 APP_NAME = "Reforger Server Manager"
-APP_VERSION = "0.17.1"
+APP_VERSION = "0.17.2"
 
 # Steam app IDs for the Arma Reforger Dedicated Server
 STEAM_APPID_STABLE = "1874900"
