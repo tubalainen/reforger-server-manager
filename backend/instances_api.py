@@ -30,6 +30,11 @@ class RestartSettings(BaseModel):
     auto_start: bool | None = None
 
 
+class RestartSchedule(BaseModel):
+    # Daily restart times as 24-hour "HH:MM"; empty list clears the schedule.
+    times: list[str] = Field(default_factory=list)
+
+
 class UpdatePorts(BaseModel):
     game_port: int | None = Field(default=None, ge=1, le=65535)
     a2s_port: int | None = Field(default=None, ge=1, le=65535)
@@ -100,8 +105,7 @@ async def stop(instance_id: int, _user: str = Depends(auth.require_session)):
 
 @router.post("/{instance_id}/restart")
 async def restart(instance_id: int, _user: str = Depends(auth.require_session)):
-    await asyncio.to_thread(_action, instance_service.stop_instance, instance_id)
-    await asyncio.to_thread(_action, instance_service.start_instance, instance_id)
+    await asyncio.to_thread(_action, instance_service.restart_instance, instance_id)
     return await asyncio.to_thread(_view, instance_id)
 
 
@@ -127,6 +131,19 @@ async def restart_settings(
         await asyncio.to_thread(
             instance_service.set_restart_settings,
             instance_id, body.auto_restart, body.auto_start,
+        )
+    except InstanceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return await asyncio.to_thread(_view, instance_id)
+
+
+@router.put("/{instance_id}/schedule")
+async def restart_schedule(
+    instance_id: int, body: RestartSchedule, _user: str = Depends(auth.require_session)
+):
+    try:
+        await asyncio.to_thread(
+            instance_service.set_restart_schedule, instance_id, body.times
         )
     except InstanceError as exc:
         raise HTTPException(status_code=409, detail=str(exc))

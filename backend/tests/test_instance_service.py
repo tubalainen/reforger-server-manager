@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -195,6 +196,62 @@ def test_create_container_uses_acemod_contract(tmp_path, monkeypatch):
     assert captured["labels"][docker_service.LABEL_ROLE] == docker_service.ROLE_INSTANCE
     # auto_restart default True -> container survives Docker/host restart (#17)
     assert captured["restart_policy"] == {"Name": "unless-stopped"}
+
+
+# --------------------------------------------------------------------------- #
+# Scheduled restarts
+# --------------------------------------------------------------------------- #
+
+def test_normalise_times_sorts_dedupes_and_pads():
+    assert instance_service._normalise_times(["4:00", "16:30", "04:00"]) == ["04:00", "16:30"]
+
+
+@pytest.mark.parametrize("bad", ["24:00", "12:60", "noon", "1200", "", "12:5"])
+def test_normalise_times_rejects_malformed(bad):
+    with pytest.raises(instance_service.InstanceError):
+        instance_service._normalise_times([bad])
+
+
+def test_schedule_times_reads_and_survives_garbage():
+    assert instance_service.schedule_times(_inst()) == []  # default: no schedule
+    good = _inst(restart_schedule_json=json.dumps({"times": ["04:00", "16:00"]}))
+    assert instance_service.schedule_times(good) == ["04:00", "16:00"]
+    assert instance_service.schedule_times(_inst(restart_schedule_json="not json")) == []
+
+
+def test_due_scheduled_restart_fires_once_per_window():
+    times = ["04:00", "16:00"]
+    grace = instance_service.SCHEDULE_CATCHUP_GRACE_SECONDS
+
+    # Just before 04:00 — nothing due.
+    assert instance_service._due_scheduled_restart(
+        times, datetime(2026, 7, 8, 3, 59), None, grace
+    ) is None
+
+    # At 04:00 with no prior service — the 04:00 occurrence is due.
+    now = datetime(2026, 7, 8, 4, 0, 10)
+    due = instance_service._due_scheduled_restart(times, now, None, grace)
+    assert due == datetime(2026, 7, 8, 4, 0)
+
+    # Already serviced this window — not due again.
+    assert instance_service._due_scheduled_restart(times, now, due, grace) is None
+
+
+def test_due_scheduled_restart_skips_stale_window():
+    # 04:00 schedule, but it is now 06:00 (2h late) — beyond the 1h grace, so
+    # a manager that was down does not restart a recovered server on boot.
+    assert instance_service._due_scheduled_restart(
+        ["04:00"], datetime(2026, 7, 8, 6, 0), None,
+        instance_service.SCHEDULE_CATCHUP_GRACE_SECONDS,
+    ) is None
+
+
+def test_due_scheduled_restart_picks_latest_of_several():
+    # Both 04:00 and 05:00 are past and within grace at 05:10 — pick the latest.
+    due = instance_service._due_scheduled_restart(
+        ["04:00", "05:00"], datetime(2026, 7, 8, 5, 10), None, 3600
+    )
+    assert due == datetime(2026, 7, 8, 5, 0)
 
 
 def test_create_container_applies_launch_params(tmp_path, monkeypatch):

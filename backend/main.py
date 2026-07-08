@@ -54,11 +54,13 @@ async def lifespan(_app: FastAPI):
 
 
 async def _crash_monitor():
-    """Restart crashed instances (every 15s) and prune old logs (hourly)."""
+    """Restart crashed instances, apply scheduled restarts (every 15s), and
+    prune old logs (hourly)."""
     ticks = 0
     while True:
         try:
             await asyncio.to_thread(instance_service.reconcile_and_recover)
+            await asyncio.to_thread(instance_service.apply_scheduled_restarts)
             if ticks % 240 == 0:  # ~hourly at a 15s cadence
                 await asyncio.to_thread(instance_service.prune_old_logs)
         except Exception as exc:  # never let the monitor die silently

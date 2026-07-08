@@ -41,6 +41,11 @@ class Instance(SQLModel, table=True):
     desired_state: str = "stopped"  # running | stopped
     auto_restart: bool = True   # restart the server if it crashes
     auto_start: bool = True     # start the server after a Docker/host restart
+    # Scheduled daily restarts (issue: roadmap). JSON {"times": ["04:00", ...]}
+    # in the container's local time; "" disables. last_scheduled_restart tracks
+    # the most recently serviced occurrence so a restart fires once per window.
+    restart_schedule_json: str = ""
+    last_scheduled_restart: datetime | None = None
     created_at: datetime = Field(default_factory=_utcnow)
 
 
@@ -78,6 +83,17 @@ def _migrate(engine) -> None:
                 "ALTER TABLE instance ADD COLUMN auto_start BOOLEAN NOT NULL DEFAULT 1"
             ))
             conn.execute(text("UPDATE instance SET auto_start = auto_restart"))
+            conn.commit()
+        # scheduled daily restarts: schedule + last-serviced marker
+        if "restart_schedule_json" not in icols:
+            conn.execute(text(
+                "ALTER TABLE instance ADD COLUMN restart_schedule_json VARCHAR NOT NULL DEFAULT ''"
+            ))
+            conn.commit()
+        if "last_scheduled_restart" not in icols:
+            conn.execute(text(
+                "ALTER TABLE instance ADD COLUMN last_scheduled_restart DATETIME"
+            ))
             conn.commit()
         # engine launch parameters per template (issue #20)
         tcols = {row[1] for row in conn.execute(text("PRAGMA table_info(template)"))}
