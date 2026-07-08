@@ -49,9 +49,67 @@ const spec = reactive({
   rcon_password: '',
   rcon_permission: 'admin',
   rcon_max_clients: 16,
+  launch: {
+    max_fps: null,
+    network_dynamic_simulation: null,
+    spatial_map_resolution: null,
+    staggering_budget: null,
+    streaming_budget: null,
+    streams_delta: null,
+    auto_reload_scenario: null,
+    rpl_timeout_ms: null,
+    freeze_check: null,
+    freeze_check_mode: null,
+    debugger_address: null,
+    debugger_port: null,
+    load_session_save: null,
+    short_worker_count: null,
+    long_worker_count: null,
+    verify_and_repair_addons: false,
+    auto_shutdown: false,
+    log_voting: false,
+    ai_partial_sim: false,
+    force_recreate_database: false,
+    disable_shaders_build: false,
+    generate_shaders: false,
+    rpl_encode_as_long_jobs: false,
+    force_disable_night_grain: false,
+    no_backend: false,
+    extra_args: '',
+  },
 })
 
 const showAdvanced = ref(false)
+const showLaunch = ref(false)
+
+// Launch-parameter field definitions, rendered generically to keep the
+// template compact. type: 'num' | 'text' | 'switch' | 'select'.
+const launchNumFields = [
+  ['max_fps', 'Max FPS'],
+  ['auto_reload_scenario', 'Auto-reload scenario (s)'],
+  ['spatial_map_resolution', 'Spatial map resolution (100–1000)'],
+  ['network_dynamic_simulation', 'Network dynamic simulation'],
+  ['staggering_budget', 'Staggering budget'],
+  ['streaming_budget', 'Streaming budget'],
+  ['streams_delta', 'Streams delta'],
+  ['rpl_timeout_ms', 'RPL timeout (ms)'],
+  ['freeze_check', 'Freeze check (s)'],
+  ['short_worker_count', 'Short worker count'],
+  ['long_worker_count', 'Long worker count'],
+  ['debugger_port', 'Debugger port'],
+]
+const launchSwitchFields = [
+  ['verify_and_repair_addons', 'Verify & repair addons'],
+  ['auto_shutdown', 'Auto shutdown'],
+  ['log_voting', 'Log voting'],
+  ['ai_partial_sim', 'AI partial simulation'],
+  ['force_recreate_database', 'Force recreate database'],
+  ['disable_shaders_build', 'Disable shaders generation'],
+  ['generate_shaders', 'Force generate shaders'],
+  ['rpl_encode_as_long_jobs', 'RPL encode as long jobs'],
+  ['force_disable_night_grain', 'Force disable night grain'],
+  ['no_backend', 'No backend'],
+]
 
 // Display metadata that isn't part of the spec but helps the user
 const chosenScenario = ref(null) // {scenario_id, name, from_asset}
@@ -198,7 +256,10 @@ onMounted(async () => {
   if (editing.value) {
     try {
       const t = await api(`/api/templates/${props.id}`)
+      const launchDefaults = { ...spec.launch }
       Object.assign(spec, t.spec)
+      // merge launch onto defaults so older templates (empty launch) keep keys
+      spec.launch = { ...launchDefaults, ...(t.spec.launch || {}) }
       spec.name = t.name
       spec.description = t.description
       if (spec.scenario_id) {
@@ -516,6 +577,47 @@ onMounted(async () => {
                   <input v-model.number="spec.rcon_max_clients" type="number" min="1" max="16" class="form-control" />
                 </div>
               </div>
+            </div>
+          </div>
+
+          <button class="btn btn-link px-0 mt-3" @click="showLaunch = !showLaunch">
+            {{ showLaunch ? '▾ Hide' : '▸ Show' }} engine launch parameters
+          </button>
+          <div v-show="showLaunch" class="border-top pt-3">
+            <p class="text-secondary small">
+              Command-line parameters passed to the server engine (blank = engine default).
+            </p>
+            <div class="row g-3">
+              <div v-for="[key, label] in launchNumFields" :key="key" class="col-6 col-md-3">
+                <label class="form-label small">{{ label }}</label>
+                <input v-model.number="spec.launch[key]" type="number" class="form-control form-control-sm" placeholder="default" />
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small">Freeze check mode</label>
+                <select v-model="spec.launch.freeze_check_mode" class="form-select form-select-sm">
+                  <option :value="null">default</option>
+                  <option value="crash">crash</option>
+                  <option value="disabled">disabled</option>
+                </select>
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small">Debugger address</label>
+                <input v-model="spec.launch.debugger_address" class="form-control form-control-sm" placeholder="(off)" />
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small">Load session save</label>
+                <input v-model="spec.launch.load_session_save" class="form-control form-control-sm" placeholder="(latest)" />
+              </div>
+            </div>
+            <div class="d-flex gap-4 flex-wrap mt-3">
+              <div v-for="[key, label] in launchSwitchFields" :key="key" class="form-check">
+                <input :id="'lp_' + key" v-model="spec.launch[key]" class="form-check-input" type="checkbox" />
+                <label :for="'lp_' + key" class="form-check-label small">{{ label }}</label>
+              </div>
+            </div>
+            <div class="mt-3">
+              <label class="form-label small">Extra launch arguments <small class="text-secondary">(raw, appended verbatim)</small></label>
+              <input v-model="spec.launch.extra_args" class="form-control form-control-sm" placeholder="-someArg value" />
             </div>
           </div>
         </div>

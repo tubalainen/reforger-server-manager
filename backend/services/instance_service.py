@@ -22,7 +22,7 @@ from sqlmodel import Session, select
 import config
 from models import Instance, Template, get_engine
 from services import docker_service, ports
-from services.template_service import spec_from_config
+from services.template_service import LaunchParams, spec_from_config
 
 logger = logging.getLogger("manager.instance")
 
@@ -259,6 +259,15 @@ def _template_config(session: Session, inst: Instance) -> str:
     return template.config_json
 
 
+def _template_launch(session: Session, inst: Instance) -> LaunchParams:
+    template = session.get(Template, inst.template_id)
+    raw = (template.launch_params_json if template else None) or "{}"
+    try:
+        return LaunchParams.model_validate_json(raw)
+    except ValueError:
+        return LaunchParams()
+
+
 def start_instance(instance_id: int) -> None:
     if not docker_service.ping():
         raise InstanceError("Docker daemon is not reachable")
@@ -272,13 +281,14 @@ def start_instance(instance_id: int) -> None:
                 "download them on the Downloads tab first"
             )
         template_config = _template_config(session, inst)
+        launch = _template_launch(session, inst)
 
         # Reuse an existing container if present, else create one.
         container = docker_service.find_instance_container(inst.id)
         if container is None:
             self_config_path = _write_config(inst, template_config)
             try:
-                container = _create_container(inst, self_config_path)
+                container = _create_container(inst, self_config_path, launch)
             except ImageNotFound as exc:
                 raise InstanceError(
                     f"Server image '{config.settings.reforger_server_image}' not found — "
@@ -301,7 +311,7 @@ def start_instance(instance_id: int) -> None:
         logger.info("Started instance %s (container %s)", inst.name, inst.container_id)
 
 
-def _create_container(inst: Instance, config_path: Path):
+def _create_container(inst: Instance, config_path: Path, launch: "LaunchParams | None" = None):
     """Create (not start) the sibling server container for an instance."""
     idir = _instance_dir(inst)
     serverfiles_host = docker_service.host_path_for(
@@ -331,6 +341,12 @@ def _create_container(inst: Instance, config_path: Path):
     }
     if config.settings.public_address:
         environment["SERVER_PUBLIC_ADDRESS"] = config.settings.public_address
+    if launch is not None:
+        arma_params, max_fps = launch.render()
+        if arma_params:
+            environment["ARMA_PARAMS"] = arma_params
+        if max_fps is not None:
+            environment["ARMA_MAX_FPS"] = str(max_fps)
 
     return docker_service.get_client().containers.create(
         config.settings.reforger_server_image,
