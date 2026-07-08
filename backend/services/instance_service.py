@@ -29,22 +29,32 @@ logger = logging.getLogger("manager.instance")
 
 # The server prints a periodic status line, e.g.:
 #   FPS: 60.0, frame time (...), Mem: 1190747 kB, Player: 0, AI: 0, ...
-SERVER_STATUS_RE = re.compile(
-    r"FPS:\s*([\d.]+),.*?Mem:\s*(\d+)\s*kB,\s*Player:\s*(\d+)"
-)
+# The exact shape and field order vary between server builds (and "Player:" is
+# sometimes "Players:"), so match each field independently rather than as one
+# rigid pattern — otherwise a small format change silently zeroes the WebGUI.
+_FPS_RE = re.compile(r"FPS:\s*([\d.]+)")
+_MEM_RE = re.compile(r"Mem:\s*(\d+)\s*kB")
+_PLAYERS_RE = re.compile(r"Players?:\s*(\d+)")
 
 
 def parse_server_status(log_text: str) -> dict | None:
-    """Return the most recent {fps, mem_kb, players} from server log output."""
-    last = None
-    for m in SERVER_STATUS_RE.finditer(log_text):
-        last = m
-    if not last:
+    """Return the most recent {fps, mem_kb, players} from server log output.
+
+    The most recent line carrying an FPS reading wins; memory and player count
+    are filled in from that same line when present (else None).
+    """
+    target = None
+    for line in log_text.splitlines():
+        if _FPS_RE.search(line):
+            target = line
+    if target is None:
         return None
+    mem = _MEM_RE.search(target)
+    players = _PLAYERS_RE.search(target)
     return {
-        "fps": float(last.group(1)),
-        "mem_kb": int(last.group(2)),
-        "players": int(last.group(3)),
+        "fps": float(_FPS_RE.search(target).group(1)),
+        "mem_kb": int(mem.group(1)) if mem else None,
+        "players": int(players.group(1)) if players else None,
     }
 
 
@@ -70,11 +80,10 @@ def _docker_cpu_mem(container) -> dict:
     except (KeyError, ZeroDivisionError, TypeError):
         return {}
 
-# Container-internal ports (fixed); host ports are the leased ones, mapped 1:1
-CONTAINER_GAME_PORT = 2001
-CONTAINER_A2S_PORT = 17777
-CONTAINER_RCON_PORT = 19999
-
+# Ports are published 1:1 — the host port equals the container bind port equals
+# the advertised public port, which is what Reforger's networking (and the A2S
+# server-browser query) requires. The server binds these exact ports inside the
+# container (config.json + SERVER_BIND_PORT), and Docker publishes them unchanged.
 CONFIG_FILENAME = "server.json"
 
 # The dedicated-server binary the image launches from /reforger (WORKDIR).
@@ -253,6 +262,50 @@ def update_ports(
             logger.warning("Could not remove container for %s: %s", instance_id, exc)
 
 
+def set_instance_template(instance_id: int, template_id: int) -> None:
+    """Repoint a stopped instance at a different template (issue #31).
+
+    The container bakes its rendered config at creation, so any existing
+    container is removed here and recreated from the new template on next start
+    (same mechanism as a port change). Blocked while the server is running.
+    """
+    if container_status(instance_id) == "running":
+        raise InstanceError("Stop the instance before changing its template")
+    with Session(get_engine()) as session:
+        inst = session.get(Instance, instance_id)
+        if not inst:
+            raise InstanceError("Instance not found")
+        if not session.get(Template, template_id):
+            raise InstanceError("Template not found")
+        inst.template_id = template_id
+        session.add(inst)
+        session.commit()
+    container = docker_service.find_instance_container(instance_id)
+    if container:
+        try:
+            container.remove(force=True)  # recreated from the new template on next start
+        except DockerException as exc:
+            logger.warning("Could not remove container for %s: %s", instance_id, exc)
+
+
+def instances_using_template(template_id: int) -> list[dict]:
+    """Instances bound to a template, as [{id, name, status}] (issue #31).
+
+    Used to block deleting a template that instances still reference.
+    """
+    with Session(get_engine()) as session:
+        insts = [i for i in _all_instances(session) if i.template_id == template_id]
+    docker_up = docker_service.ping()
+    return [
+        {
+            "id": i.id,
+            "name": i.name,
+            "status": container_status(i.id) if docker_up else "unknown",
+        }
+        for i in insts
+    ]
+
+
 def _template_config(session: Session, inst: Instance) -> str:
     template = session.get(Template, inst.template_id)
     if not template:
@@ -326,10 +379,14 @@ def _create_container(inst: Instance, config_path: Path, launch: "LaunchParams |
         docker_service.host_path_for(str(idir / "profile")): {"bind": "/home/profile", "mode": "rw"},
         docker_service.host_path_for(str(idir / "workshop")): {"bind": "/reforger/workshop", "mode": "rw"},
     }
+    # Publish each UDP port unchanged (host == container). The game port used to
+    # be remapped to a fixed internal 2001, but A2S/RCON had no matching override,
+    # so the server bound the host port number inside the container while Docker
+    # forwarded a *different* internal port — breaking A2S/server-browser queries.
     port_bindings = {
-        f"{CONTAINER_GAME_PORT}/udp": inst.game_port,
-        f"{CONTAINER_A2S_PORT}/udp": inst.a2s_port,
-        f"{CONTAINER_RCON_PORT}/udp": inst.rcon_port,
+        f"{inst.game_port}/udp": inst.game_port,
+        f"{inst.a2s_port}/udp": inst.a2s_port,
+        f"{inst.rcon_port}/udp": inst.rcon_port,
     }
     environment = {
         "STEAM_APPID": config.BRANCHES[inst.branch]["app_id"],
@@ -337,7 +394,7 @@ def _create_container(inst: Instance, config_path: Path, launch: "LaunchParams |
         # tab and mounted at /reforger. Downloading is gated in start_instance.
         "SKIP_INSTALL": "true",
         "ARMA_CONFIG": CONFIG_FILENAME,
-        "SERVER_BIND_PORT": str(CONTAINER_GAME_PORT),
+        "SERVER_BIND_PORT": str(inst.game_port),
         "SERVER_PUBLIC_PORT": str(inst.game_port),
     }
     if config.settings.public_address:

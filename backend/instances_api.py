@@ -41,6 +41,10 @@ class UpdatePorts(BaseModel):
     rcon_port: int | None = Field(default=None, ge=1, le=65535)
 
 
+class SetTemplate(BaseModel):
+    template_id: int
+
+
 @router.get("")
 async def list_instances(_user: str = Depends(auth.require_session)):
     return await asyncio.to_thread(instance_service.list_views)
@@ -117,6 +121,19 @@ async def update_ports(
         await asyncio.to_thread(
             instance_service.update_ports,
             instance_id, body.game_port, body.a2s_port, body.rcon_port,
+        )
+    except InstanceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return await asyncio.to_thread(_view, instance_id)
+
+
+@router.put("/{instance_id}/template")
+async def set_template(
+    instance_id: int, body: SetTemplate, _user: str = Depends(auth.require_session)
+):
+    try:
+        await asyncio.to_thread(
+            instance_service.set_instance_template, instance_id, body.template_id
         )
     except InstanceError as exc:
         raise HTTPException(status_code=409, detail=str(exc))

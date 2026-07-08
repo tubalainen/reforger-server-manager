@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, onUnmounted, ref, nextTick } from 'vue'
+import { computed, onMounted, onUnmounted, ref, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
 
@@ -147,10 +147,57 @@ async function savePorts() {
   }
 }
 
+// --- template swap (issue #31) ---
+const templates = ref([])
+async function loadTemplates() {
+  try {
+    templates.value = await api('/api/templates')
+  } catch {
+    /* ignore; swap UI just won't populate */
+  }
+}
+const editingTemplate = ref(false)
+const templateForm = ref(null)
+function openTemplateEditor() {
+  templateForm.value = inst.value.template_id
+  editingTemplate.value = true
+}
+const currentTemplate = computed(() =>
+  templates.value.find((t) => t.id === inst.value?.template_id),
+)
+const selectedTemplate = computed(() =>
+  templates.value.find((t) => t.id === templateForm.value),
+)
+// Warn when the new template writes to a different persistent save (issue #31)
+const hiveWarning = computed(() => {
+  const cur = currentTemplate.value
+  const next = selectedTemplate.value
+  if (!cur || !next || next.id === cur.id) return ''
+  if (cur.persistence && next.persistence && cur.hive_id !== next.hive_id)
+    return `hiveId changes (${cur.hive_id} → ${next.hive_id}): this instance will use a different persistent save.`
+  if (cur.persistence && !next.persistence)
+    return 'the new template has persistence disabled — existing saved game data will no longer load.'
+  if (!cur.persistence && next.persistence)
+    return `the new template enables persistence (hiveId ${next.hive_id}) — a new save will be created.`
+  return ''
+})
+async function saveTemplate() {
+  try {
+    inst.value = await api(`/api/instances/${props.id}/template`, {
+      method: 'PUT',
+      body: { template_id: templateForm.value },
+    })
+    editingTemplate.value = false
+  } catch (e) {
+    error.value = e.message
+  }
+}
+
 onMounted(async () => {
   await loadInstance()
   await loadStats()
   await loadLogFiles()
+  await loadTemplates()
   connectLogs()
   poll = setInterval(() => {
     loadInstance()
@@ -261,6 +308,29 @@ onUnmounted(() => {
                   <div class="col-12 d-flex gap-2 mt-2">
                     <button class="btn btn-sm btn-primary" @click="savePorts">Save ports</button>
                     <button class="btn btn-sm btn-outline-secondary" @click="editingPorts = false">Cancel</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="mt-2">
+                <button
+                  v-if="!editingTemplate"
+                  class="btn btn-sm btn-outline-secondary"
+                  :disabled="inst.status === 'running'"
+                  :title="inst.status === 'running' ? 'Stop the server to change its template' : ''"
+                  @click="openTemplateEditor"
+                >Change template</button>
+                <div v-else class="mt-1">
+                  <label class="form-label small mb-0">Template</label>
+                  <select v-model.number="templateForm" class="form-select form-select-sm">
+                    <option v-for="t in templates" :key="t.id" :value="t.id">{{ t.name }}</option>
+                  </select>
+                  <div v-if="hiveWarning" class="alert alert-warning py-1 px-2 small mt-2 mb-0">
+                    ⚠ {{ hiveWarning }}
+                  </div>
+                  <div class="d-flex gap-2 mt-2">
+                    <button class="btn btn-sm btn-primary" @click="saveTemplate">Save template</button>
+                    <button class="btn btn-sm btn-outline-secondary" @click="editingTemplate = false">Cancel</button>
                   </div>
                 </div>
               </div>
