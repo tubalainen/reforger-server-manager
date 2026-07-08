@@ -33,7 +33,13 @@ async def lifespan(_app: FastAPI):
         logger.warning(
             "SESSION_SECRET not set — generated a random one; all sessions reset on restart"
         )
-    if not config.settings.admin_password or config.settings.admin_password == "change-me-now":
+    if not config.settings.auth_enabled:
+        logger.warning(
+            "AUTH_ENABLED=false — the built-in login is DISABLED. The GUI (which "
+            "controls Docker) is unauthenticated; only run this behind a reverse "
+            "proxy that enforces authentication."
+        )
+    elif not config.settings.admin_password or config.settings.admin_password == "change-me-now":
         logger.warning("ADMIN_PASSWORD is unset or still the example value — change it in .env")
     models.init_db()
     monitor_task = None
@@ -87,7 +93,12 @@ async def health():
 
 @app.get("/api/version")
 async def version():
-    return {"name": config.APP_NAME, "version": config.APP_VERSION, "repo_url": REPO_URL}
+    return {
+        "name": config.APP_NAME,
+        "version": config.APP_VERSION,
+        "repo_url": REPO_URL,
+        "auth_enabled": config.settings.auth_enabled,
+    }
 
 
 # --- SPA serving (only when a built frontend is present, i.e. in the image) ---

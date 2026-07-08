@@ -149,6 +149,32 @@ def test_schedule_rejects_bad_time(logged_in):
     assert "Invalid time" in r.json()["detail"]
 
 
+def test_edit_name_and_branch(logged_in):
+    tid = _template(logged_in)
+    iid = logged_in.post("/api/instances", json={"name": "orig", "template_id": tid}).json()["id"]
+    r = logged_in.put(f"/api/instances/{iid}", json={"name": "renamed", "branch": "experimental"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["name"] == "renamed" and body["branch"] == "experimental"
+
+
+def test_edit_name_conflict(logged_in):
+    tid = _template(logged_in)
+    logged_in.post("/api/instances", json={"name": "taken", "template_id": tid})
+    iid = logged_in.post("/api/instances", json={"name": "other", "template_id": tid}).json()["id"]
+    r = logged_in.put(f"/api/instances/{iid}", json={"name": "taken"})
+    assert r.status_code == 409
+    assert "already exists" in r.json()["detail"]
+
+
+def test_edit_unknown_branch_conflict(logged_in):
+    tid = _template(logged_in)
+    iid = logged_in.post("/api/instances", json={"name": "b", "template_id": tid}).json()["id"]
+    r = logged_in.put(f"/api/instances/{iid}", json={"branch": "nightly"})
+    assert r.status_code == 409
+    assert "Unknown branch" in r.json()["detail"]
+
+
 def test_repoint_instance_template(logged_in):
     t1 = _template(logged_in, "t-one")
     t2 = _template(logged_in, "t-two")
