@@ -27,7 +27,7 @@ const spec = reactive({
   mods_required_by_default: false,
   battleye: true,
   server_max_view_distance: 1600,
-  server_min_grass_distance: 0,
+  server_min_grass_distance: 50,
   network_view_distance: 1500,
   disable_third_person: false,
   fast_validation: true,
@@ -470,8 +470,8 @@ onMounted(async () => {
 
           <div v-show="showAdvanced" class="row g-3 border-top pt-3">
             <div class="col-md-4">
-              <label class="form-label">Min grass distance</label>
-              <input v-model.number="spec.server_min_grass_distance" type="number" min="0" max="150" class="form-control" />
+              <label class="form-label">Min grass distance <small class="text-secondary">(≥ 50)</small></label>
+              <input v-model.number="spec.server_min_grass_distance" type="number" min="50" max="150" class="form-control" />
             </div>
             <div class="col-md-4">
               <label class="form-label">Player save interval (s)</label>

@@ -127,7 +127,8 @@ class TemplateSpec(BaseModel):
     # gameProperties
     battleye: bool = True
     server_max_view_distance: int = Field(default=1600, ge=500, le=12000)
-    server_min_grass_distance: int = Field(default=0, ge=0, le=150)
+    # The server's JSON schema requires >= 50 for this field (see issue #28).
+    server_min_grass_distance: int = Field(default=50, ge=50, le=150)
     network_view_distance: int = Field(default=1500, ge=500, le=5000)
     disable_third_person: bool = False
     fast_validation: bool = True
@@ -200,7 +201,6 @@ class TemplateSpec(BaseModel):
             },
             "operating": {
                 "lobbyPlayerSynchronise": self.lobby_player_synchronise,
-                "disableNavmeshStreaming": self.disable_navmesh_streaming,
                 "disableServerShutdown": self.disable_server_shutdown,
                 "disableCrashReporter": self.disable_crash_reporter,
                 "disableAI": self.disable_ai,
@@ -210,6 +210,10 @@ class TemplateSpec(BaseModel):
                 "joinQueue": {"maxSize": self.join_queue_max_size},
             },
         }
+        # disableNavmeshStreaming is a string ARRAY (not a bool): an empty
+        # array disables streaming for all navmeshes; omit it when off (#28).
+        if self.disable_navmesh_streaming:
+            config["operating"]["disableNavmeshStreaming"] = []
         if self.persistence_enabled:
             config["game"]["gameProperties"]["persistence"] = {
                 "autoSaveInterval": self.auto_save_interval,
@@ -223,6 +227,8 @@ class TemplateSpec(BaseModel):
                 "port": 19999,
                 "password": self.rcon_password,
                 "permission": self.rcon_permission,
+                "blacklist": [],
+                "whitelist": [],
                 "maxClients": self.rcon_max_clients,
             }
         return config
@@ -257,7 +263,7 @@ def spec_from_config(config_json: str) -> dict:
         "mods_required_by_default": game.get("modsRequiredByDefault", False),
         "battleye": props.get("battlEye", True),
         "server_max_view_distance": props.get("serverMaxViewDistance", 1600),
-        "server_min_grass_distance": props.get("serverMinGrassDistance", 0),
+        "server_min_grass_distance": max(50, props.get("serverMinGrassDistance", 50)),
         "network_view_distance": props.get("networkViewDistance", 1500),
         "disable_third_person": props.get("disableThirdPerson", False),
         "fast_validation": props.get("fastValidation", True),
@@ -265,7 +271,8 @@ def spec_from_config(config_json: str) -> dict:
         "von_disable_direct_speech_ui": props.get("VONDisableDirectSpeechUI", False),
         "von_can_transmit_cross_faction": props.get("VONCanTransmitCrossFaction", False),
         "lobby_player_synchronise": operating.get("lobbyPlayerSynchronise", True),
-        "disable_navmesh_streaming": operating.get("disableNavmeshStreaming", False),
+        # array present (even empty) = navmesh streaming disabled
+        "disable_navmesh_streaming": "disableNavmeshStreaming" in operating,
         "disable_server_shutdown": operating.get("disableServerShutdown", False),
         "disable_crash_reporter": operating.get("disableCrashReporter", False),
         "disable_ai": operating.get("disableAI", False),

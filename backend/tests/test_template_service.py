@@ -56,18 +56,42 @@ def test_roundtrip_config_to_spec():
     assert restored["mods"][0]["modId"] == "591AF5BDA9F7CE8B"
 
 
+def test_grass_distance_valid_by_default():
+    # regression for #28: server schema requires serverMinGrassDistance >= 50
+    cfg = _spec().to_config()
+    assert cfg["game"]["gameProperties"]["serverMinGrassDistance"] >= 50
+    with pytest.raises(ValidationError):
+        _spec(server_min_grass_distance=0)
+
+
+def test_navmesh_streaming_is_array_or_omitted():
+    # regression for #28: disableNavmeshStreaming must be an array, not a bool
+    off = _spec(disable_navmesh_streaming=False).to_config()
+    assert "disableNavmeshStreaming" not in off["operating"]
+    on = _spec(disable_navmesh_streaming=True).to_config()
+    assert on["operating"]["disableNavmeshStreaming"] == []
+    # round-trips back to the toggle
+    assert spec_from_config(json.dumps(on))["disable_navmesh_streaming"] is True
+    assert spec_from_config(json.dumps(off))["disable_navmesh_streaming"] is False
+
+
+def test_rcon_includes_blacklist_whitelist_arrays():
+    cfg = _spec(rcon_password="x").to_config()
+    assert cfg["rcon"]["blacklist"] == [] and cfg["rcon"]["whitelist"] == []
+
+
 def test_advanced_options_render_and_roundtrip():
     cfg = _spec(
         disable_third_person=True, fast_validation=False, ai_limit=64,
         von_can_transmit_cross_faction=True, disable_server_shutdown=True,
-        player_save_time=300, server_min_grass_distance=50,
+        player_save_time=300, server_min_grass_distance=75,
     ).to_config()
     props = cfg["game"]["gameProperties"]
     op = cfg["operating"]
     assert props["disableThirdPerson"] is True
     assert props["fastValidation"] is False
     assert props["VONCanTransmitCrossFaction"] is True
-    assert props["serverMinGrassDistance"] == 50
+    assert props["serverMinGrassDistance"] == 75
     assert op["aiLimit"] == 64
     assert op["disableServerShutdown"] is True
     assert op["playerSaveTime"] == 300
