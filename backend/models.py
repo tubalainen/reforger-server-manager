@@ -38,7 +38,8 @@ class Instance(SQLModel, table=True):
     rcon_port: int
     container_id: str = ""
     desired_state: str = "stopped"  # running | stopped
-    auto_restart: bool = True
+    auto_restart: bool = True   # restart the server if it crashes
+    auto_start: bool = True     # start the server after a Docker/host restart
     created_at: datetime = Field(default_factory=_utcnow)
 
 
@@ -58,4 +59,22 @@ def get_engine():
 
 
 def init_db() -> None:
-    SQLModel.metadata.create_all(get_engine())
+    engine = get_engine()
+    SQLModel.metadata.create_all(engine)
+    _migrate(engine)
+
+
+def _migrate(engine) -> None:
+    """Lightweight additive migrations for existing SQLite databases."""
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        cols = {row[1] for row in conn.execute(text("PRAGMA table_info(instance)"))}
+        # auto_start split out from auto_restart (issue #26); default from
+        # auto_restart so existing "keep running" servers keep both behaviours
+        if "auto_start" not in cols:
+            conn.execute(text(
+                "ALTER TABLE instance ADD COLUMN auto_start BOOLEAN NOT NULL DEFAULT 1"
+            ))
+            conn.execute(text("UPDATE instance SET auto_start = auto_restart"))
+            conn.commit()

@@ -346,10 +346,24 @@ def _create_container(inst: Instance, config_path: Path):
             docker_service.LABEL_INSTANCE_ID: str(inst.id),
         },
         network=config.settings.docker_network,
-        # unless-stopped so the server comes back on its own after a Docker
-        # daemon or host restart (issue #17); "no" when auto-restart is off.
-        restart_policy={"Name": "unless-stopped" if inst.auto_restart else "no"},
+        restart_policy={"Name": _restart_policy(inst)},
     )
+
+
+def _restart_policy(inst: Instance) -> str:
+    """Map the two toggles to a Docker restart policy (issue #26).
+
+    - auto_start  -> 'unless-stopped': Docker restarts it on daemon/host
+      restart (and, inherently, on crash).
+    - auto_restart only -> 'on-failure': restarts on a crash but not on a
+      clean daemon restart.
+    - neither -> 'no'.
+    """
+    if inst.auto_start:
+        return "unless-stopped"
+    if inst.auto_restart:
+        return "on-failure"
+    return "no"
 
 
 def stop_instance(instance_id: int) -> None:
@@ -412,6 +426,7 @@ def instance_view(inst: Instance, template_name: str | None) -> dict:
         "rcon_port": inst.rcon_port,
         "desired_state": inst.desired_state,
         "auto_restart": inst.auto_restart,
+        "auto_start": inst.auto_start,
         "status": status,
         "server_files_ready": server_files_ready(inst.branch),
         "created_at": inst.created_at.isoformat(),
@@ -593,22 +608,26 @@ def list_views() -> list[dict]:
         return [instance_view(i, names.get(i.template_id)) for i in instances]
 
 
-def set_auto_restart(instance_id: int, value: bool) -> None:
+def set_restart_settings(
+    instance_id: int, auto_restart: bool | None, auto_start: bool | None
+) -> None:
+    """Update the crash-restart and/or start-on-boot toggles (issue #26)."""
     with Session(get_engine()) as session:
         inst = session.get(Instance, instance_id)
         if not inst:
             raise InstanceError("Instance not found")
-        inst.auto_restart = value
+        if auto_restart is not None:
+            inst.auto_restart = auto_restart
+        if auto_start is not None:
+            inst.auto_start = auto_start
+        policy = _restart_policy(inst)
         session.add(inst)
         session.commit()
-    # Reflect the change on a live container's Docker restart policy so it
-    # matches "keep running across restarts" immediately (issue #17).
+    # Apply the new policy to a live container immediately.
     container = docker_service.find_instance_container(instance_id)
     if container:
         try:
-            container.update(
-                restart_policy={"Name": "unless-stopped" if value else "no"}
-            )
+            container.update(restart_policy={"Name": policy})
         except DockerException as exc:
             logger.warning("Could not update restart policy for %s: %s", instance_id, exc)
 
@@ -627,14 +646,16 @@ def reconcile_and_recover() -> None:
     with Session(get_engine()) as session:
         instances = _all_instances(session)
     for inst in instances:
-        if inst.desired_state != "running" or not inst.auto_restart:
+        # Backs up Docker's restart policy: recover a server that should be
+        # running if either toggle asks us to (crash-restart or start-on-boot).
+        if inst.desired_state != "running" or not (inst.auto_restart or inst.auto_start):
             continue
         if not server_files_ready(inst.branch):
             continue  # can't run without server files; don't spam restart attempts
         status = container_status(inst.id)
         if status in ("exited", "absent", "created"):
-            logger.info("Auto-restarting instance %s (was %s)", inst.name, status)
+            logger.info("Recovering instance %s (was %s)", inst.name, status)
             try:
                 start_instance(inst.id)
             except InstanceError as exc:
-                logger.warning("Auto-restart of %s failed: %s", inst.name, exc)
+                logger.warning("Recovery of %s failed: %s", inst.name, exc)

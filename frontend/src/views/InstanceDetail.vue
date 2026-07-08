@@ -92,11 +92,11 @@ async function action(verb) {
   }
 }
 
-async function toggleAutoRestart() {
+async function setRestartSetting(field) {
   try {
-    inst.value = await api(`/api/instances/${props.id}/auto-restart`, {
+    inst.value = await api(`/api/instances/${props.id}/restart-settings`, {
       method: 'PUT',
-      body: { auto_restart: !inst.value.auto_restart },
+      body: { [field]: !inst.value[field] },
     })
   } catch (e) {
     error.value = e.message
@@ -247,19 +247,36 @@ onUnmounted(() => {
         </div>
         <div class="col-md-4">
           <div class="card h-100">
-            <div class="card-body d-flex align-items-center justify-content-between">
-              <div>
-                <div class="fw-semibold small">Keep running</div>
-                <div class="text-secondary small">Auto-restart on crash and on Docker/host restart</div>
+            <div class="card-body">
+              <div class="d-flex align-items-center justify-content-between mb-2">
+                <div>
+                  <div class="fw-semibold small">Auto-restart on crash</div>
+                  <div class="text-secondary small">Restart if the server process exits</div>
+                </div>
+                <div class="form-check form-switch mb-0">
+                  <input
+                    class="form-check-input"
+                    type="checkbox"
+                    role="switch"
+                    :checked="inst.auto_restart"
+                    @change="setRestartSetting('auto_restart')"
+                  />
+                </div>
               </div>
-              <div class="form-check form-switch">
-                <input
-                  class="form-check-input"
-                  type="checkbox"
-                  role="switch"
-                  :checked="inst.auto_restart"
-                  @change="toggleAutoRestart"
-                />
+              <div class="d-flex align-items-center justify-content-between">
+                <div>
+                  <div class="fw-semibold small">Auto-start on host/Docker restart</div>
+                  <div class="text-secondary small">Bring the server back after a reboot</div>
+                </div>
+                <div class="form-check form-switch mb-0">
+                  <input
+                    class="form-check-input"
+                    type="checkbox"
+                    role="switch"
+                    :checked="inst.auto_start"
+                    @change="setRestartSetting('auto_start')"
+                  />
+                </div>
               </div>
             </div>
           </div>
