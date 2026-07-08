@@ -86,13 +86,21 @@ Verify it works (after logging back in):
 docker run --rm hello-world
 ```
 
-**2 — Run this application:**
+**2 — Run this application.** You don't need the source code — just a folder with
+the `docker-compose.yaml` and a `.env` file. Create a folder and download both:
 
 ```bash
-git clone https://github.com/tubalainen/reforger-server-manager.git
-cd reforger-server-manager
-cp .env.example .env
+mkdir reforger-server-manager && cd reforger-server-manager
+
+# grab the compose file and an example .env into this folder
+curl -fsSLO https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/docker-compose.yaml
+curl -fsSL  https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/.env.example -o .env
+
 # edit .env: at minimum set ADMIN_PASSWORD and SESSION_SECRET
+nano .env
+
+# pull the published image and start
+docker compose pull
 docker compose up -d
 ```
 
@@ -123,11 +131,15 @@ listed above. Put a TLS reverse proxy in front of the GUI for VPS use.
 
 ## Quick start
 
+You only need the `docker-compose.yaml` and a `.env` — not the source. Create a
+folder, drop both in, edit `.env`, then pull and start:
+
 ```bash
-git clone https://github.com/tubalainen/reforger-server-manager.git
-cd reforger-server-manager
-cp .env.example .env
+mkdir reforger-server-manager && cd reforger-server-manager
+curl -fsSLO https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/docker-compose.yaml
+curl -fsSL  https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/.env.example -o .env
 # edit .env: set ADMIN_PASSWORD and SESSION_SECRET
+docker compose pull
 docker compose up -d
 ```
 
