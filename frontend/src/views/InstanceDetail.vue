@@ -363,7 +363,13 @@ onUnmounted(() => {
                 <div v-else class="row g-2 align-items-end mt-1">
                   <div class="col-sm-7">
                     <label class="form-label small mb-0">Name</label>
-                    <input v-model.trim="basicsForm.name" class="form-control form-control-sm" />
+                    <input
+                      v-model.trim="basicsForm.name"
+                      class="form-control form-control-sm"
+                      autocomplete="off"
+                      autocorrect="off"
+                      spellcheck="false"
+                    />
                   </div>
                   <div class="col-sm-5">
                     <label class="form-label small mb-0">Branch</label>

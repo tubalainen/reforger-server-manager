@@ -228,7 +228,14 @@ onUnmounted(() => clearInterval(poll))
             <template v-else>
               <div class="mb-3">
                 <label class="form-label">Instance name</label>
-                <input v-model="create.name" class="form-control" placeholder="e.g. conflict-1" />
+                <input
+                  v-model="create.name"
+                  class="form-control"
+                  placeholder="e.g. conflict-1"
+                  autocomplete="off"
+                  autocorrect="off"
+                  spellcheck="false"
+                />
               </div>
               <div class="mb-3">
                 <label class="form-label">Template</label>
