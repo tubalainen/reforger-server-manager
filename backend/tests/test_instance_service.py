@@ -62,6 +62,22 @@ def test_parse_server_status_none_when_absent():
     assert instance_service.parse_server_status("no status here") is None
 
 
+def test_parse_server_status_tolerates_variants():
+    # plural "Players:", reordered fields, and a line with FPS but no player/mem
+    log = (
+        "FPS: 20.0 (starting up)\n"  # newer line, FPS only -> mem/players None
+    )
+    s = instance_service.parse_server_status(log)
+    assert s == {"fps": 20.0, "mem_kb": None, "players": None}
+
+    log2 = "Player: 3, Mem: 500000 kB, FPS: 45.5, AI: 10\n"  # fields reordered
+    s2 = instance_service.parse_server_status(log2)
+    assert s2 == {"fps": 45.5, "mem_kb": 500000, "players": 3}
+
+    log3 = "FPS: 60.0, Mem: 900000 kB, Players: 7\n"  # plural Players
+    assert instance_service.parse_server_status(log3)["players"] == 7
+
+
 def test_list_and_resolve_log_files(tmp_path, monkeypatch):
     import config
 
@@ -184,10 +200,12 @@ def test_create_container_uses_acemod_contract(tmp_path, monkeypatch):
     assert captured["environment"]["STEAM_APPID"] == "1890870"  # experimental
     assert captured["environment"]["SERVER_PUBLIC_PORT"] == "2005"
     assert captured["environment"]["SERVER_PUBLIC_ADDRESS"] == "203.0.113.5"
-    # ports mapped host==container-standard
-    assert captured["ports"]["2001/udp"] == 2005
-    assert captured["ports"]["17777/udp"] == 17780
-    assert captured["ports"]["19999/udp"] == 20002
+    # server binds the same port it is published on (host == container)
+    assert captured["environment"]["SERVER_BIND_PORT"] == "2005"
+    # ports published 1:1 so A2S/RCON queries reach the right internal port
+    assert captured["ports"]["2005/udp"] == 2005
+    assert captured["ports"]["17780/udp"] == 17780
+    assert captured["ports"]["20002/udp"] == 20002
     # volumes: shared serverfiles at /reforger + per-instance dirs
     binds = {v["bind"] for v in captured["volumes"].values()}
     assert binds == {"/reforger", "/reforger/Configs", "/home/profile", "/reforger/workshop"}

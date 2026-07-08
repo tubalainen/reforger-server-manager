@@ -149,6 +149,24 @@ def test_schedule_rejects_bad_time(logged_in):
     assert "Invalid time" in r.json()["detail"]
 
 
+def test_repoint_instance_template(logged_in):
+    t1 = _template(logged_in, "t-one")
+    t2 = _template(logged_in, "t-two")
+    iid = logged_in.post("/api/instances", json={"name": "swap", "template_id": t1}).json()["id"]
+    # swap to the second template (instance is stopped: docker mocked down)
+    r = logged_in.put(f"/api/instances/{iid}/template", json={"template_id": t2})
+    assert r.status_code == 200
+    assert r.json()["template_id"] == t2 and r.json()["template_name"] == "t-two"
+
+
+def test_repoint_unknown_template_conflicts(logged_in):
+    tid = _template(logged_in)
+    iid = logged_in.post("/api/instances", json={"name": "swap2", "template_id": tid}).json()["id"]
+    r = logged_in.put(f"/api/instances/{iid}/template", json={"template_id": 9999})
+    assert r.status_code == 409
+    assert "Template not found" in r.json()["detail"]
+
+
 def test_stop_and_delete(logged_in):
     tid = _template(logged_in)
     iid = logged_in.post("/api/instances", json={"name": "s", "template_id": tid}).json()["id"]

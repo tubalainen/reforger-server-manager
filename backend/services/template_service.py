@@ -238,6 +238,22 @@ def render_config_json(spec: TemplateSpec) -> str:
     return json.dumps(spec.to_config(), indent=2)
 
 
+def persistence_summary(config_json: str) -> dict:
+    """{persistence: bool, hive_id: int|None} — the persistent-save target.
+
+    Used to warn when swapping an instance to a template that writes to a
+    different save (a different hiveId), or none at all (issue #31).
+    """
+    try:
+        props = ((json.loads(config_json).get("game") or {}).get("gameProperties") or {})
+    except (ValueError, AttributeError):
+        return {"persistence": False, "hive_id": None}
+    p = props.get("persistence")
+    if not p:
+        return {"persistence": False, "hive_id": None}
+    return {"persistence": True, "hive_id": p.get("hiveId", 0)}
+
+
 def spec_from_config(config_json: str) -> dict:
     """Reconstruct the wizard's editable fields from a saved config.json.
 

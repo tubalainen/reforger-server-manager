@@ -48,6 +48,27 @@ def test_duplicate_name_conflict(logged_in):
     assert logged_in.post("/api/templates", json=_spec("Dupe")).status_code == 409
 
 
+def test_delete_blocked_while_instance_uses_template(logged_in):
+    tid = logged_in.post("/api/templates", json=_spec("InUse")).json()["id"]
+    logged_in.post("/api/instances", json={"name": "bound", "template_id": tid})
+    r = logged_in.delete(f"/api/templates/{tid}")
+    assert r.status_code == 409
+    assert "bound" in r.json()["detail"]  # names the offending instance
+    # still there
+    assert logged_in.get(f"/api/templates/{tid}").status_code == 200
+
+
+def test_list_reports_persistence_and_hive(logged_in):
+    plain = logged_in.post("/api/templates", json=_spec("Plain")).json()["id"]
+    persisted = logged_in.post(
+        "/api/templates",
+        json=_spec("Persisted") | {"persistence_enabled": True, "hive_id": 7},
+    ).json()["id"]
+    rows = {t["id"]: t for t in logged_in.get("/api/templates").json()}
+    assert rows[plain]["persistence"] is False and rows[plain]["hive_id"] is None
+    assert rows[persisted]["persistence"] is True and rows[persisted]["hive_id"] == 7
+
+
 def test_launch_params_persist_and_roundtrip(logged_in):
     spec = _spec("Launchy")
     spec["launch"] = {"max_fps": 60, "no_backend": True, "auto_reload_scenario": 300}

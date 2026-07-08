@@ -8,7 +8,7 @@ from sqlmodel import Session, select
 
 import auth
 from models import Template, get_engine
-from services import template_service
+from services import instance_service, template_service
 from services.template_service import TemplateSpec
 
 router = APIRouter(prefix="/api/templates", tags=["templates"])
@@ -33,7 +33,10 @@ async def list_templates(_user: str = Depends(auth.require_session)):
         rows = session.exec(select(Template).order_by(Template.name)).all()
         return [
             {"id": t.id, "name": t.name, "description": t.description,
-             "updated_at": t.updated_at.isoformat()}
+             "updated_at": t.updated_at.isoformat(),
+             # persistence/hiveId so the instance template-swap UI can warn when
+             # the save target changes (issue #31)
+             **template_service.persistence_summary(t.config_json)}
             for t in rows
         ]
 
@@ -93,6 +96,18 @@ async def delete_template(template_id: int, _user: str = Depends(auth.require_se
         t = session.get(Template, template_id)
         if not t:
             raise HTTPException(status_code=404, detail="Template not found")
+        # Don't orphan instances: block the delete while any still use this
+        # template, and tell the user which ones to repoint or remove (issue #31).
+        used = instance_service.instances_using_template(template_id)
+        if used:
+            listed = ", ".join(f"{u['name']} ({u['status']})" for u in used)
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Can't delete '{t.name}': used by {len(used)} instance(s): "
+                    f"{listed}. Repoint or delete them first."
+                ),
+            )
         session.delete(t)
         session.commit()
 
