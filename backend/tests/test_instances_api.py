@@ -124,6 +124,31 @@ def test_restart_settings_split_toggles(logged_in):
     assert r.json()["auto_restart"] is False and r.json()["auto_start"] is False
 
 
+def test_schedule_set_normalise_and_clear(logged_in):
+    tid = _template(logged_in)
+    iid = logged_in.post("/api/instances", json={"name": "sch", "template_id": tid}).json()["id"]
+    # none by default
+    assert logged_in.get(f"/api/instances/{iid}").json()["restart_times"] == []
+    # set: normalised (padded, sorted, de-duped)
+    r = logged_in.put(f"/api/instances/{iid}/schedule", json={"times": ["16:00", "4:00", "04:00"]})
+    assert r.status_code == 200
+    assert r.json()["restart_times"] == ["04:00", "16:00"]
+    # a next-restart label is surfaced while a schedule is set
+    assert r.json()["next_restart"]
+    # clear with an empty list
+    r = logged_in.put(f"/api/instances/{iid}/schedule", json={"times": []})
+    assert r.status_code == 200 and r.json()["restart_times"] == []
+    assert r.json()["next_restart"] is None
+
+
+def test_schedule_rejects_bad_time(logged_in):
+    tid = _template(logged_in)
+    iid = logged_in.post("/api/instances", json={"name": "schbad", "template_id": tid}).json()["id"]
+    r = logged_in.put(f"/api/instances/{iid}/schedule", json={"times": ["25:00"]})
+    assert r.status_code == 409
+    assert "Invalid time" in r.json()["detail"]
+
+
 def test_stop_and_delete(logged_in):
     tid = _template(logged_in)
     iid = logged_in.post("/api/instances", json={"name": "s", "template_id": tid}).json()["id"]

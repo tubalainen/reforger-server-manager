@@ -103,6 +103,28 @@ async function setRestartSetting(field) {
   }
 }
 
+const newTime = ref('')
+async function saveSchedule(times) {
+  try {
+    inst.value = await api(`/api/instances/${props.id}/schedule`, {
+      method: 'PUT',
+      body: { times },
+    })
+    error.value = ''
+  } catch (e) {
+    error.value = e.message
+  }
+}
+function addTime() {
+  if (!newTime.value) return
+  const times = [...(inst.value.restart_times || []), newTime.value]
+  newTime.value = ''
+  saveSchedule(times)
+}
+function removeTime(t) {
+  saveSchedule((inst.value.restart_times || []).filter((x) => x !== t))
+}
+
 const editingPorts = ref(false)
 const portForm = ref({ game_port: null, a2s_port: null, rcon_port: null })
 function openPortEditor() {
@@ -278,6 +300,50 @@ onUnmounted(() => {
                   />
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scheduled restarts -->
+      <div class="card mb-3">
+        <div class="card-header py-2">
+          <span class="fw-semibold small">Scheduled restarts</span>
+        </div>
+        <div class="card-body">
+          <p class="text-secondary small mb-2">
+            Restart this server automatically at set times each day (server local
+            time). Handy for clearing memory leaks or applying mod updates.
+          </p>
+          <div v-if="inst.restart_times && inst.restart_times.length" class="d-flex flex-wrap gap-2 mb-2">
+            <span
+              v-for="t in inst.restart_times"
+              :key="t"
+              class="badge text-bg-secondary d-inline-flex align-items-center gap-1"
+            >
+              {{ t }}
+              <button
+                type="button"
+                class="btn-close btn-close-white"
+                style="font-size: 0.5rem"
+                aria-label="Remove"
+                @click="removeTime(t)"
+              ></button>
+            </span>
+          </div>
+          <p v-else class="text-secondary small mb-2">No scheduled restarts.</p>
+          <p v-if="inst.next_restart" class="small mb-2">
+            <span class="text-secondary">Next restart:</span>
+            <span class="fw-semibold">{{ inst.next_restart }}</span>
+            <span class="text-secondary">(server time)</span>
+          </p>
+          <div class="row g-2 align-items-end">
+            <div class="col-auto">
+              <label class="form-label small mb-0">Add a daily time</label>
+              <input v-model="newTime" type="time" class="form-control form-control-sm" style="max-width: 9rem" />
+            </div>
+            <div class="col-auto">
+              <button class="btn btn-sm btn-outline-primary" :disabled="!newTime" @click="addTime">Add</button>
             </div>
           </div>
         </div>

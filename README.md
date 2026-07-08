@@ -25,7 +25,7 @@ Docker image: `ghcr.io/tubalainen/reforger-server-manager:latest`
 - [x] Multiple concurrent server instances (stable + experimental side by side), each a
       Docker container spawned and supervised by the manager
 - [x] Live server logs in the browser, crash auto-restart
-- [ ] Scheduled restarts
+- [x] Scheduled restarts — set daily restart times per instance (server local time)
 
 ## Architecture
 

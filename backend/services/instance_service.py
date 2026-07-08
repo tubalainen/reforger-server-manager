@@ -14,6 +14,7 @@ one install instead of each re-downloading. The image still validates on start
 import json
 import logging
 import re
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from docker.errors import DockerException, ImageNotFound, NotFound
@@ -443,6 +444,8 @@ def instance_view(inst: Instance, template_name: str | None) -> dict:
         "desired_state": inst.desired_state,
         "auto_restart": inst.auto_restart,
         "auto_start": inst.auto_start,
+        "restart_times": schedule_times(inst),
+        "next_restart": next_restart_label(inst),
         "status": status,
         "server_files_ready": server_files_ready(inst.branch),
         "created_at": inst.created_at.isoformat(),
@@ -646,6 +649,158 @@ def set_restart_settings(
             container.update(restart_policy={"Name": policy})
         except DockerException as exc:
             logger.warning("Could not update restart policy for %s: %s", instance_id, exc)
+
+
+# --------------------------------------------------------------------------- #
+# Scheduled restarts
+# --------------------------------------------------------------------------- #
+
+# Skip a scheduled restart whose window is more than this far in the past, so a
+# long manager outage doesn't restart a server the moment it comes back up.
+SCHEDULE_CATCHUP_GRACE_SECONDS = 3600
+
+_TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
+
+
+def _normalise_times(raw: list[str]) -> list[str]:
+    """Validate/normalise "HH:MM" daily restart times; sorted, de-duplicated.
+
+    Raises InstanceError on any malformed entry so the user gets a clear 409.
+    """
+    seen: set[tuple[int, int]] = set()
+    for entry in raw:
+        m = _TIME_RE.match((entry or "").strip())
+        if not m:
+            raise InstanceError(f"Invalid time '{entry}' — use 24-hour HH:MM")
+        seen.add((int(m.group(1)), int(m.group(2))))
+    return [f"{h:02d}:{mm:02d}" for h, mm in sorted(seen)]
+
+
+def schedule_times(inst: Instance) -> list[str]:
+    """The instance's configured daily restart times, or [] if none/invalid."""
+    raw = inst.restart_schedule_json or ""
+    if not raw:
+        return []
+    try:
+        times = json.loads(raw).get("times", [])
+        return _normalise_times(times)
+    except (ValueError, InstanceError, AttributeError):
+        return []
+
+
+def set_restart_schedule(instance_id: int, times: list[str]) -> None:
+    """Set (or clear) an instance's daily restart schedule.
+
+    Storing the schedule also stamps last_scheduled_restart to 'now' so an
+    occurrence already past earlier today does not fire immediately.
+    """
+    normalised = _normalise_times(times)
+    with Session(get_engine()) as session:
+        inst = session.get(Instance, instance_id)
+        if not inst:
+            raise InstanceError("Instance not found")
+        if normalised:
+            inst.restart_schedule_json = json.dumps({"times": normalised})
+            inst.last_scheduled_restart = datetime.now()
+        else:
+            inst.restart_schedule_json = ""
+            inst.last_scheduled_restart = None
+        session.add(inst)
+        session.commit()
+    logger.info("Set restart schedule for instance %s: %s", instance_id, normalised or "none")
+
+
+def _due_scheduled_restart(
+    times: list[str], now: datetime, last: datetime | None, grace_seconds: int
+) -> datetime | None:
+    """Return the most recent restart occurrence that is due now, else None.
+
+    An occurrence (today at HH:MM, local time) is due when it is at or before
+    `now`, has not already been serviced (`last` is before it), and `now` is
+    still within `grace_seconds` of it. Pure and side-effect free for testing.
+    """
+    due: datetime | None = None
+    for hhmm in times:
+        hh, mm = int(hhmm[:2]), int(hhmm[3:])
+        occ = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        if occ > now:
+            continue
+        if (now - occ).total_seconds() > grace_seconds:
+            continue
+        if last is not None and last >= occ:
+            continue
+        if due is None or occ > due:
+            due = occ
+    return due
+
+
+def _next_scheduled_restart(times: list[str], now: datetime) -> datetime | None:
+    """The next upcoming restart occurrence (today if still ahead, else the
+    earliest time tomorrow). None when there are no times. Pure for testing."""
+    if not times:
+        return None
+    candidates = []
+    for hhmm in times:
+        hh, mm = int(hhmm[:2]), int(hhmm[3:])
+        occ = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        if occ <= now:
+            occ += timedelta(days=1)
+        candidates.append(occ)
+    return min(candidates)
+
+
+def next_restart_label(inst: Instance, now: datetime | None = None) -> str | None:
+    """Server-local 'YYYY-MM-DD HH:MM' of this instance's next restart, or None.
+
+    Rendered server-side (not as a bare timestamp) so the UI shows it in the
+    server's local time — the same frame the schedule is defined in.
+    """
+    times = schedule_times(inst)
+    nxt = _next_scheduled_restart(times, now or datetime.now())
+    return nxt.strftime("%Y-%m-%d %H:%M") if nxt else None
+
+
+def restart_instance(instance_id: int) -> None:
+    """Stop then start an instance (used by the API and the scheduler)."""
+    stop_instance(instance_id)
+    start_instance(instance_id)
+
+
+def apply_scheduled_restarts() -> None:
+    """Restart instances whose daily schedule has come due. Non-fatal.
+
+    Called from the background monitor. Only instances that should be running
+    (desired_state == 'running') are considered; the occurrence is marked
+    serviced before the restart so a slow stop/start isn't retried next tick.
+    """
+    if not docker_service.ping():
+        return
+    now = datetime.now()
+    with Session(get_engine()) as session:
+        instances = _all_instances(session)
+    for inst in instances:
+        if inst.desired_state != "running":
+            continue
+        times = schedule_times(inst)
+        if not times:
+            continue
+        due = _due_scheduled_restart(
+            times, now, inst.last_scheduled_restart, SCHEDULE_CATCHUP_GRACE_SECONDS
+        )
+        if due is None:
+            continue
+        with Session(get_engine()) as session:
+            fresh = session.get(Instance, inst.id)
+            if not fresh:
+                continue
+            fresh.last_scheduled_restart = now
+            session.add(fresh)
+            session.commit()
+        logger.info("Scheduled restart of instance %s (%02d:%02d)", inst.name, due.hour, due.minute)
+        try:
+            restart_instance(inst.id)
+        except InstanceError as exc:
+            logger.warning("Scheduled restart of %s failed: %s", inst.name, exc)
 
 
 # --------------------------------------------------------------------------- #
