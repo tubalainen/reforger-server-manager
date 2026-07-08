@@ -123,6 +123,18 @@ reference material used in its design:
 - [Bohemia Interactive — Arma Reforger: Server Config](https://community.bistudio.com/wiki/Arma_Reforger:Server_Config) — the `config.json` schema templates render to
 - [Bohemia Interactive — Arma Reforger: Server Hosting](https://community.bistudio.com/wiki/Arma_Reforger:Server_Hosting) — Steam app IDs (stable `1874900`, experimental `1890870`) and hosting guidance
 
+## Disclaimer
+
+This application has been **fully developed using Claude AI** (Anthropic). As such,
+it may contain bugs, defects, or unexpected behaviour. It is provided **"as is",
+without warranty of any kind**, express or implied.
+
+The repository owner accepts **no responsibility or liability** for any damage, data
+loss, downtime, security issues, or other consequences arising from the use,
+misuse, or inability to use this application/setup. **You use it entirely at your
+own risk.** Always review the code, secure your deployment, and keep backups before
+running it in any environment you care about.
+
 ## License
 
 MIT
