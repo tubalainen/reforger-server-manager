@@ -133,9 +133,12 @@ def test_schedule_set_normalise_and_clear(logged_in):
     r = logged_in.put(f"/api/instances/{iid}/schedule", json={"times": ["16:00", "4:00", "04:00"]})
     assert r.status_code == 200
     assert r.json()["restart_times"] == ["04:00", "16:00"]
+    # a next-restart label is surfaced while a schedule is set
+    assert r.json()["next_restart"]
     # clear with an empty list
     r = logged_in.put(f"/api/instances/{iid}/schedule", json={"times": []})
     assert r.status_code == 200 and r.json()["restart_times"] == []
+    assert r.json()["next_restart"] is None
 
 
 def test_schedule_rejects_bad_time(logged_in):

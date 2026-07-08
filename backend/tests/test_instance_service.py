@@ -246,6 +246,31 @@ def test_due_scheduled_restart_skips_stale_window():
     ) is None
 
 
+def test_next_scheduled_restart_today_then_tomorrow():
+    times = ["04:00", "16:00"]
+    # before both -> next is today 04:00
+    assert instance_service._next_scheduled_restart(
+        times, datetime(2026, 7, 8, 2, 0)
+    ) == datetime(2026, 7, 8, 4, 0)
+    # between them -> next is today 16:00
+    assert instance_service._next_scheduled_restart(
+        times, datetime(2026, 7, 8, 10, 0)
+    ) == datetime(2026, 7, 8, 16, 0)
+    # after both -> wraps to tomorrow's earliest (04:00)
+    assert instance_service._next_scheduled_restart(
+        times, datetime(2026, 7, 8, 18, 0)
+    ) == datetime(2026, 7, 9, 4, 0)
+    # no schedule -> None
+    assert instance_service._next_scheduled_restart([], datetime(2026, 7, 8, 18, 0)) is None
+
+
+def test_next_restart_label_formats_server_local():
+    inst = _inst(restart_schedule_json=json.dumps({"times": ["16:00"]}))
+    label = instance_service.next_restart_label(inst, now=datetime(2026, 7, 8, 10, 0))
+    assert label == "2026-07-08 16:00"
+    assert instance_service.next_restart_label(_inst()) is None  # no schedule
+
+
 def test_due_scheduled_restart_picks_latest_of_several():
     # Both 04:00 and 05:00 are past and within grace at 05:10 — pick the latest.
     due = instance_service._due_scheduled_restart(

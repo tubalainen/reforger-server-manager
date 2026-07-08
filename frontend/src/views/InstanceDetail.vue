@@ -332,6 +332,11 @@ onUnmounted(() => {
             </span>
           </div>
           <p v-else class="text-secondary small mb-2">No scheduled restarts.</p>
+          <p v-if="inst.next_restart" class="small mb-2">
+            <span class="text-secondary">Next restart:</span>
+            <span class="fw-semibold">{{ inst.next_restart }}</span>
+            <span class="text-secondary">(server time)</span>
+          </p>
           <div class="row g-2 align-items-end">
             <div class="col-auto">
               <label class="form-label small mb-0">Add a daily time</label>

@@ -14,7 +14,7 @@ one install instead of each re-downloading. The image still validates on start
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from docker.errors import DockerException, ImageNotFound, NotFound
@@ -445,6 +445,7 @@ def instance_view(inst: Instance, template_name: str | None) -> dict:
         "auto_restart": inst.auto_restart,
         "auto_start": inst.auto_start,
         "restart_times": schedule_times(inst),
+        "next_restart": next_restart_label(inst),
         "status": status,
         "server_files_ready": server_files_ready(inst.branch),
         "created_at": inst.created_at.isoformat(),
@@ -731,6 +732,32 @@ def _due_scheduled_restart(
         if due is None or occ > due:
             due = occ
     return due
+
+
+def _next_scheduled_restart(times: list[str], now: datetime) -> datetime | None:
+    """The next upcoming restart occurrence (today if still ahead, else the
+    earliest time tomorrow). None when there are no times. Pure for testing."""
+    if not times:
+        return None
+    candidates = []
+    for hhmm in times:
+        hh, mm = int(hhmm[:2]), int(hhmm[3:])
+        occ = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        if occ <= now:
+            occ += timedelta(days=1)
+        candidates.append(occ)
+    return min(candidates)
+
+
+def next_restart_label(inst: Instance, now: datetime | None = None) -> str | None:
+    """Server-local 'YYYY-MM-DD HH:MM' of this instance's next restart, or None.
+
+    Rendered server-side (not as a bare timestamp) so the UI shows it in the
+    server's local time — the same frame the schedule is defined in.
+    """
+    times = schedule_times(inst)
+    nxt = _next_scheduled_restart(times, now or datetime.now())
+    return nxt.strftime("%Y-%m-%d %H:%M") if nxt else None
 
 
 def restart_instance(instance_id: int) -> None:
