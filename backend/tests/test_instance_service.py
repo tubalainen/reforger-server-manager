@@ -297,6 +297,42 @@ def test_due_scheduled_restart_picks_latest_of_several():
     assert due == datetime(2026, 7, 8, 5, 0)
 
 
+def test_container_ports_match_detects_stale_mapping():
+    inst = _inst()  # game 2005, a2s 17780, rcon 20002
+
+    class FakeContainer:
+        def __init__(self, bindings):
+            self.attrs = {"HostConfig": {"PortBindings": bindings}}
+
+        def reload(self):
+            pass
+
+    current = FakeContainer({
+        "2005/udp": [{"HostIp": "", "HostPort": "2005"}],
+        "17780/udp": [{"HostIp": "", "HostPort": "17780"}],
+        "20002/udp": [{"HostIp": "", "HostPort": "20002"}],
+    })
+    assert instance_service._container_ports_match(current, inst) is True
+
+    # Pre-v0.16 mapping: A2S/RCON forwarded from fixed internal 17777/19999
+    stale = FakeContainer({
+        "2001/udp": [{"HostIp": "", "HostPort": "2005"}],
+        "17777/udp": [{"HostIp": "", "HostPort": "17780"}],
+        "19999/udp": [{"HostIp": "", "HostPort": "20002"}],
+    })
+    assert instance_service._container_ports_match(stale, inst) is False
+
+
+def test_container_ports_match_true_when_unreadable():
+    # A container we can't inspect must never be force-recreated.
+    class Broken:
+        def reload(self):
+            raise instance_service.DockerException("boom")
+        attrs = {}
+
+    assert instance_service._container_ports_match(Broken(), _inst()) is True
+
+
 def test_create_container_applies_launch_params(tmp_path, monkeypatch):
     import config
     from services import docker_service

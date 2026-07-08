@@ -362,6 +362,39 @@ def _template_launch(session: Session, inst: Instance) -> LaunchParams:
         return LaunchParams()
 
 
+def _desired_port_bindings(inst: Instance) -> dict:
+    """The 1:1 UDP publish map (host == container) for this instance's ports."""
+    return {
+        f"{inst.game_port}/udp": inst.game_port,
+        f"{inst.a2s_port}/udp": inst.a2s_port,
+        f"{inst.rcon_port}/udp": inst.rcon_port,
+    }
+
+
+def _container_ports_match(container, inst: Instance) -> bool:
+    """True if the container already publishes this instance's exact ports.
+
+    Docker fixes port bindings at container creation, so an instance whose
+    container predates a port-model change (e.g. the A2S 1:1 fix in v0.16.0)
+    keeps the old, broken mapping until the container is recreated. start_instance
+    uses this to self-heal instead of silently reusing a stale container.
+    On any read failure we return True — never destroy a container we can't inspect.
+    """
+    try:
+        container.reload()
+        bindings = (container.attrs.get("HostConfig") or {}).get("PortBindings") or {}
+    except (DockerException, NotFound, AttributeError):
+        return True
+    actual: dict[str, int] = {}
+    for cport, binds in bindings.items():
+        if binds:
+            try:
+                actual[cport] = int(binds[0].get("HostPort"))
+            except (TypeError, ValueError):
+                pass
+    return actual == _desired_port_bindings(inst)
+
+
 def start_instance(instance_id: int) -> None:
     if not docker_service.ping():
         raise InstanceError("Docker daemon is not reachable")
@@ -377,8 +410,18 @@ def start_instance(instance_id: int) -> None:
         template_config = _template_config(session, inst)
         launch = _template_launch(session, inst)
 
-        # Reuse an existing container if present, else create one.
+        # Reuse an existing container if present, else create one. But if its
+        # published ports no longer match (e.g. an instance created before the
+        # A2S 1:1 port fix), remove it so it is recreated with the right mapping
+        # — Docker port bindings can't be changed on an existing container.
         container = docker_service.find_instance_container(inst.id)
+        if container is not None and not _container_ports_match(container, inst):
+            logger.info("Recreating container for %s: published ports changed", inst.name)
+            try:
+                container.remove(force=True)
+            except DockerException as exc:
+                logger.warning("Could not remove stale container for %s: %s", inst.name, exc)
+            container = None
         if container is None:
             self_config_path = _write_config(inst, template_config)
             try:
@@ -423,11 +466,7 @@ def _create_container(inst: Instance, config_path: Path, launch: "LaunchParams |
     # be remapped to a fixed internal 2001, but A2S/RCON had no matching override,
     # so the server bound the host port number inside the container while Docker
     # forwarded a *different* internal port — breaking A2S/server-browser queries.
-    port_bindings = {
-        f"{inst.game_port}/udp": inst.game_port,
-        f"{inst.a2s_port}/udp": inst.a2s_port,
-        f"{inst.rcon_port}/udp": inst.rcon_port,
-    }
+    port_bindings = _desired_port_bindings(inst)
     environment = {
         "STEAM_APPID": config.BRANCHES[inst.branch]["app_id"],
         # Never self-install: instances run the files fetched on the Downloads
