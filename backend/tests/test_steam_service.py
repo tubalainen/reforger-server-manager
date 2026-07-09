@@ -70,6 +70,19 @@ def test_parse_latest_build_none_when_absent():
     assert parse_latest_build("no branches here") is None
 
 
+def test_download_script_retries_and_detects_success():
+    from services.steam_service import _build_download_script, STEAMCMD_ATTEMPTS
+
+    script = _build_download_script("1874900")
+    # Runs the real steamcmd app_update for the branch's app id...
+    assert "+app_update 1874900 validate" in script
+    # ...inside a bounded retry loop that stops on a full install (issue #48)...
+    assert f"[ $i -le {STEAMCMD_ATTEMPTS} ]" in script
+    assert 'grep -q "fully installed"' in script
+    # ...while still tee-ing output through for the manager's log stream.
+    assert "tee /tmp/steamcmd.log" in script
+
+
 def test_installed_info_missing_manifest():
     assert steam.installed_info("stable") is None
 
