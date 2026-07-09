@@ -89,6 +89,32 @@ def test_preview_without_saving(logged_in):
     assert logged_in.get("/api/templates").json() == []
 
 
+def test_import_config_roundtrips_into_spec(logged_in):
+    # Export a template's config.json, then import it back and confirm the
+    # wizard fields are reconstructed (#35).
+    tid = logged_in.post(
+        "/api/templates", json=_spec("Exported") | {"max_players": 48}
+    ).json()["id"]
+    cfg = logged_in.get(f"/api/templates/{tid}/config.json").json()
+
+    r = logged_in.post("/api/templates/import", json=cfg)
+    assert r.status_code == 200
+    spec = r.json()["spec"]
+    assert spec["max_players"] == 48
+    assert spec["scenario_id"].endswith("23_Campaign.conf")
+    assert spec["mods"][0]["modId"] == "591AF5BDA9F7CE8B"
+
+
+def test_import_config_requires_auth(client):
+    assert client.post("/api/templates/import", json={"game": {}}).status_code == 401
+
+
+def test_import_config_rejects_malformed(logged_in):
+    # "game" must be an object; a string makes the mapping fail -> 400.
+    r = logged_in.post("/api/templates/import", json={"game": "not-an-object"})
+    assert r.status_code == 400
+
+
 def test_invalid_spec_rejected(logged_in):
     bad = _spec()
     bad["scenario_id"] = ""

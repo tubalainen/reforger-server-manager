@@ -40,6 +40,27 @@ _MEM_RE = re.compile(r"Mem:\s*(\d+)\s*kB")
 _PLAYERS_STAT_RE = re.compile(r"Players?:\s*(\d+)")          # -logStats line
 _PLAYERS_CONN_RE = re.compile(r"Players connected:\s*(\d+)")  # NETWORK event line
 
+# When PUBLIC_ADDRESS isn't set, the server's own registration line reveals the
+# public IP the Reforger backend sees (issue #46), e.g.:
+#   BACKEND      : Server registered with address: 203.0.113.7:2001
+_REGISTERED_ADDR_RE = re.compile(
+    r"registered with address:\s*(\d{1,3}(?:\.\d{1,3}){3}):\d+"
+)
+
+
+def parse_public_address(log_text: str) -> str | None:
+    """The public IP the server registered with, scraped from the log (#46).
+
+    Returns the most recent IP seen, or None. Used only as a fallback when
+    PUBLIC_ADDRESS is not configured.
+    """
+    found = None
+    for line in log_text.splitlines():
+        m = _REGISTERED_ADDR_RE.search(line)
+        if m:
+            found = m.group(1)
+    return found
+
 
 def parse_server_status(log_text: str) -> dict | None:
     """Return the most recent {fps, mem_kb, players} from server log output.
@@ -690,6 +711,7 @@ def instance_stats(instance_id: int) -> dict:
     public = config.settings.public_address
     stats: dict = {
         "public_address": public or None,
+        "public_address_detected": False,
         "game_port": game_port,
         "connect": f"{public}:{game_port}" if public else None,
         "status": container_status(instance_id),
@@ -719,6 +741,14 @@ def instance_stats(instance_id: int) -> dict:
             stats["players"] = server["players"]
             stats["server_fps"] = server["fps"]
             stats["server_mem_kb"] = server["mem_kb"]
+        # Fall back to the IP the server registered with when PUBLIC_ADDRESS
+        # isn't set, so the Connect field works without manual config (#46).
+        if not public:
+            detected = parse_public_address(log_text)
+            if detected:
+                stats["public_address"] = detected
+                stats["public_address_detected"] = True
+                stats["connect"] = f"{detected}:{game_port}"
     except DockerException as exc:
         logger.debug("Could not read logs for stats (instance %s): %s", instance_id, exc)
 
@@ -809,6 +839,7 @@ def instances_summary() -> dict:
     for inst in instances:
         status = container_status(inst.id) if docker_up else "unknown"
         players = None
+        address = public  # env-configured PUBLIC_ADDRESS wins
         if status == "running":
             running += 1
             container = docker_service.find_instance_container(inst.id)
@@ -819,6 +850,8 @@ def instances_summary() -> dict:
                     if parsed and parsed["players"] is not None:
                         players = parsed["players"]
                         players_total += players
+                    if not address:  # fall back to the registered public IP (#46)
+                        address = parse_public_address(log_text)
                 except DockerException:
                     pass
         servers.append({
@@ -827,7 +860,7 @@ def instances_summary() -> dict:
             "branch": inst.branch,
             "status": status,
             "players": players,
-            "connect": f"{public}:{inst.game_port}" if public else None,
+            "connect": f"{address}:{inst.game_port}" if address else None,
         })
 
     return {

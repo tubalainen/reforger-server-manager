@@ -99,6 +99,19 @@ def test_parse_server_status_combines_separate_fps_and_player_lines():
     assert s == {"fps": 58.0, "mem_kb": 1000000, "players": 3}
 
 
+def test_parse_public_address_from_registration_line():
+    # The real BACKEND registration line reveals the public IP (#46).
+    log = (
+        "  BACKEND      : Ping Site: frankfurt\n"
+        "  BACKEND      : Server registered with address: 203.0.113.7:2001\n"
+    )
+    assert instance_service.parse_public_address(log) == "203.0.113.7"
+
+
+def test_parse_public_address_none_when_absent():
+    assert instance_service.parse_public_address("no address here") is None
+
+
 def test_inject_stats_logging_adds_arg_and_respects_user_override():
     assert instance_service._inject_stats_logging("").startswith("-logStats ")
     # existing args are preserved alongside the injected -logStats
