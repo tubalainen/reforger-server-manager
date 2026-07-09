@@ -236,13 +236,16 @@ onUnmounted(() => {
     <div v-if="error" class="alert alert-warning py-2">{{ error }}</div>
 
     <div v-if="inst">
-      <div class="d-flex justify-content-between align-items-center mb-2">
-        <h1 class="h3 mb-0">
-          {{ inst.name }}
-          <span class="badge align-middle" :class="statusBadge[inst.status] || 'text-bg-secondary'">
-            {{ inst.status }}
-          </span>
-        </h1>
+      <div class="d-flex justify-content-between align-items-start mb-2">
+        <div>
+          <div class="text-secondary small text-uppercase" style="letter-spacing: .04em">Instance</div>
+          <h1 class="h3 mb-0 d-flex align-items-center flex-wrap gap-2">
+            <span>{{ inst.name }}</span>
+            <span class="badge fs-6 align-middle" :class="statusBadge[inst.status] || 'text-bg-secondary'">
+              {{ inst.status }}
+            </span>
+          </h1>
+        </div>
         <div class="btn-group">
           <button
             v-if="inst.status !== 'running'"
@@ -265,6 +268,12 @@ onUnmounted(() => {
         <div class="card-body py-2">
           <div class="row text-center g-2 small">
             <div class="col-6 col-md-2">
+              <div class="text-secondary">Status</div>
+              <div class="fs-6">
+                <span class="badge" :class="statusBadge[inst.status] || 'text-bg-secondary'">{{ inst.status }}</span>
+              </div>
+            </div>
+            <div class="col-6 col-md-2">
               <div class="text-secondary">Players</div>
               <div class="fs-5 fw-semibold">{{ stats.players ?? '—' }}</div>
             </div>
@@ -280,7 +289,7 @@ onUnmounted(() => {
               <div class="text-secondary">Memory</div>
               <div class="fs-5 fw-semibold">{{ fmtMem(stats.mem_bytes) }}</div>
             </div>
-            <div class="col-12 col-md-4">
+            <div class="col-6 col-md-2">
               <div class="text-secondary">Connect</div>
               <div class="fw-semibold text-truncate">
                 {{ stats.connect || (stats.public_address ? '' : 'set PUBLIC_ADDRESS') || '—' }}
