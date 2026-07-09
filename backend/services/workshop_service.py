@@ -183,25 +183,35 @@ class WorkshopService:
     def resolve_dependencies(self, asset_id: str) -> dict:
         """Resolve an asset + its full recursive dependency tree.
 
-        Returns {asset, mods, missing} where `mods` is a flat, deduped list of
-        {modId, name, version} ready for config.json (the root asset first),
-        and `missing` lists ids that could not be fetched.
+        Returns {asset, root, mods, missing, total_size} where `mods` is a flat,
+        deduped list of {modId, name, version, dependencies:[ids]} ready for
+        config.json (the root asset first), `dependencies` are each mod's direct
+        dependency ids (the graph edges the mod manager needs, #55), `root` is
+        the requested asset's id, and `missing` lists ids that couldn't be
+        fetched.
         """
         root = self.get_asset(asset_id)
         mods: dict[str, dict] = {}
         missing: list[str] = []
         total_size = 0
 
-        def add(entry: dict) -> None:
+        def add(entry: dict, dep_ids: list[str]) -> None:
             mid = entry["id"]
             if mid not in mods:
                 mods[mid] = {
                     "modId": mid,
                     "name": entry.get("name"),
                     "version": entry.get("version"),
+                    "dependencies": dep_ids,
                 }
+            elif dep_ids and not mods[mid]["dependencies"]:
+                # Fill edges once we learn them (a mod first seen as a bare dep).
+                mods[mid]["dependencies"] = dep_ids
 
-        add(root)
+        def dep_ids_of(asset: dict) -> list[str]:
+            return [d["id"] for d in asset.get("dependencies") or [] if d.get("id")]
+
+        add(root, dep_ids_of(root))
         total_size += root.get("size") or 0
 
         # BFS over dependencies; each asset page already lists its direct deps.
@@ -213,17 +223,24 @@ class WorkshopService:
             if dep_id in seen:
                 continue
             seen.add(dep_id)
-            add(dep)
             total_size += dep.get("size") or 0
             try:
                 child = self.get_asset(dep_id)
             except WorkshopError:
                 missing.append(dep_id)
+                add(dep, [])  # keep it listed so the user sees the gap
                 continue
+            add(
+                {"id": dep_id,
+                 "name": dep.get("name") or child.get("name"),
+                 "version": dep.get("version") or child.get("version")},
+                dep_ids_of(child),
+            )
             queue.extend(child.get("dependencies") or [])
 
         return {
             "asset": root,
+            "root": root["id"],
             "mods": list(mods.values()),
             "missing": missing,
             "total_size": total_size,

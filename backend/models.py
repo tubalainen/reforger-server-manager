@@ -23,6 +23,9 @@ class Template(SQLModel, table=True):
     description: str = ""
     config_json: str
     launch_params_json: str = "{}"  # engine launch params (issue #20)
+    # Enriched mod list with dependency metadata the flat config.json can't hold
+    # (explicit vs dependency, edges) — the editing source of truth for mods (#55)
+    mods_json: str = ""
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
 
@@ -100,5 +103,12 @@ def _migrate(engine) -> None:
         if "launch_params_json" not in tcols:
             conn.execute(text(
                 "ALTER TABLE template ADD COLUMN launch_params_json VARCHAR NOT NULL DEFAULT '{}'"
+            ))
+            conn.commit()
+        # enriched mod list w/ dependency metadata (issue #55); empty = fall back
+        # to the flat mods[] in config_json for templates predating this
+        if "mods_json" not in tcols:
+            conn.execute(text(
+                "ALTER TABLE template ADD COLUMN mods_json VARCHAR NOT NULL DEFAULT ''"
             ))
             conn.commit()

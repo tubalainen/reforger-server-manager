@@ -17,6 +17,12 @@ class ModEntry(BaseModel):
     modId: str
     name: str | None = None
     version: str | None = None
+    # Dependency metadata for the mod manager (#55). These never reach the
+    # server's config.json (to_config strips mods to modId/name/version); they
+    # are persisted separately in Template.mods_json for editing.
+    explicit: bool = True          # user/scenario chose it directly (a "root")
+    from_scenario: bool = False    # pulled in by the currently selected scenario
+    dependencies: list[str] = []   # direct dependency modIds (graph edges)
 
 
 class LaunchParams(BaseModel):

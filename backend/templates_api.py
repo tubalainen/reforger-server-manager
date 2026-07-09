@@ -17,6 +17,13 @@ router = APIRouter(prefix="/api/templates", tags=["templates"])
 def _out(t: Template) -> dict:
     spec = template_service.spec_from_config(t.config_json)
     spec["launch"] = json.loads(t.launch_params_json or "{}")
+    # The enriched mod list (dependency metadata) is the editing source of truth
+    # when present; older templates fall back to the flat mods[] from config (#55).
+    if t.mods_json:
+        try:
+            spec["mods"] = json.loads(t.mods_json)
+        except (ValueError, TypeError):
+            pass
     return {
         "id": t.id,
         "name": t.name,
@@ -25,6 +32,11 @@ def _out(t: Template) -> dict:
         "created_at": t.created_at.isoformat(),
         "updated_at": t.updated_at.isoformat(),
     }
+
+
+def _mods_json(spec: TemplateSpec) -> str:
+    """Serialize the enriched mod list (with dependency metadata) for storage."""
+    return json.dumps([m.model_dump() for m in spec.mods])
 
 
 @router.get("")
@@ -50,6 +62,7 @@ async def create_template(spec: TemplateSpec, _user: str = Depends(auth.require_
         t = Template(
             name=spec.name, description=spec.description, config_json=config_json,
             launch_params_json=spec.launch.model_dump_json(),
+            mods_json=_mods_json(spec),
         )
         session.add(t)
         session.commit()
@@ -83,6 +96,7 @@ async def update_template(
         t.description = spec.description
         t.config_json = template_service.render_config_json(spec)
         t.launch_params_json = spec.launch.model_dump_json()
+        t.mods_json = _mods_json(spec)
         t.updated_at = datetime.now(timezone.utc)
         session.add(t)
         session.commit()

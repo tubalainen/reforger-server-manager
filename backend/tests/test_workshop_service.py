@@ -89,6 +89,15 @@ def test_resolve_dependencies_flattens_and_dedupes(monkeypatch):
     assert sorted(ids) == ["AAAAAAAAAAAAAAAA", "BBBBBBBBBBBBBBBB", "CCCCCCCCCCCCCCCC"]
     assert len(ids) == 3  # C deduped
     assert result["missing"] == []
+    # the requested asset is reported as the root (#55)
+    assert result["root"] == "AAAAAAAAAAAAAAAA"
+    # each mod carries its direct dependency edges for the mod manager
+    by_id = {m["modId"]: m for m in result["mods"]}
+    assert sorted(by_id["AAAAAAAAAAAAAAAA"]["dependencies"]) == [
+        "BBBBBBBBBBBBBBBB", "CCCCCCCCCCCCCCCC",
+    ]
+    assert by_id["BBBBBBBBBBBBBBBB"]["dependencies"] == ["CCCCCCCCCCCCCCCC"]
+    assert by_id["CCCCCCCCCCCCCCCC"]["dependencies"] == []
 
 
 def test_resolve_dependencies_reports_missing(monkeypatch):

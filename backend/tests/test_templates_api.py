@@ -81,6 +81,33 @@ def test_launch_params_persist_and_roundtrip(logged_in):
     assert got["auto_reload_scenario"] == 300
 
 
+def test_mods_dependency_metadata_persists(logged_in):
+    # The enriched mod list (explicit/dependency edges) survives save+load, while
+    # config.json still gets the clean flat mods[] (#55).
+    spec = _spec("Modded")
+    spec["mods"] = [
+        {"modId": "AAAAAAAAAAAAAAAA", "name": "ACE", "version": "1.0",
+         "explicit": True, "from_scenario": False,
+         "dependencies": ["BBBBBBBBBBBBBBBB"]},
+        {"modId": "BBBBBBBBBBBBBBBB", "name": "ACE Core", "version": "1.0",
+         "explicit": False, "from_scenario": False, "dependencies": []},
+    ]
+    tid = logged_in.post("/api/templates", json=spec).json()["id"]
+
+    got = logged_in.get(f"/api/templates/{tid}").json()["spec"]["mods"]
+    by_id = {m["modId"]: m for m in got}
+    assert by_id["AAAAAAAAAAAAAAAA"]["explicit"] is True
+    assert by_id["AAAAAAAAAAAAAAAA"]["dependencies"] == ["BBBBBBBBBBBBBBBB"]
+    assert by_id["BBBBBBBBBBBBBBBB"]["explicit"] is False
+
+    # config.json is still the clean flat list the server understands
+    cfg = logged_in.get(f"/api/templates/{tid}/config.json").json()
+    assert cfg["game"]["mods"] == [
+        {"modId": "AAAAAAAAAAAAAAAA", "name": "ACE", "version": "1.0"},
+        {"modId": "BBBBBBBBBBBBBBBB", "name": "ACE Core", "version": "1.0"},
+    ]
+
+
 def test_preview_without_saving(logged_in):
     r = logged_in.post("/api/templates/preview", json=_spec())
     assert r.status_code == 200
