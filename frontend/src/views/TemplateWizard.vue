@@ -2,6 +2,16 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
+import {
+  MODS_FILE_FORMAT,
+  normalizeMods,
+  requiredBy,
+  stillRequiredWithoutExplicit,
+  orphansAfterRemoving,
+  clearScenarioMods,
+  mergeResolved,
+  orderedMods,
+} from '../mods'
 
 const props = defineProps({ id: { type: [String, Number], default: null } })
 const router = useRouter()
@@ -160,27 +170,50 @@ async function pickScenarioAsset(row) {
 function chooseScenario(sc, res) {
   spec.scenario_id = sc.scenario_id
   chosenScenario.value = { ...sc, from_asset: res.asset.name }
-  // auto-add the scenario's mod + full dependency tree
-  mergeMods(res.mods)
+  // Swap in this scenario's mod + full dependency tree, dropping the previous
+  // scenario's mods (but keeping any also required by a user-added mod).
+  spec.mods = mergeResolved(clearScenarioMods(normalizeMods(spec.mods)), res, {
+    fromScenario: true,
+  })
   step.value = 2
 }
 
 // ---- Step 2: mods ----------------------------------------------------------
-function mergeMods(newMods) {
-  const byId = new Map(spec.mods.map((m) => [m.modId, m]))
-  for (const m of newMods) byId.set(m.modId, m)
-  spec.mods = [...byId.values()]
+const modAdd = reactive({ busy: false, error: '' })
+const modNotice = ref('')
+const manualId = ref('')
+const removePrompt = ref(null) // { mod, orphans } when a remove needs confirming
+const modsFileInput = ref(null)
+
+const byModId = (id) => spec.mods.find((m) => m.modId === id)
+
+// The two visual tiers of the enabled list.
+const explicitMods = computed(() => spec.mods.filter((m) => m.explicit))
+const dependencyMods = computed(() => spec.mods.filter((m) => !m.explicit))
+
+function modBadge(m) {
+  if (m.from_scenario) return { text: 'scenario', cls: 'text-bg-info' }
+  if (m.explicit) return { text: 'added', cls: 'text-bg-primary' }
+  return { text: 'dependency', cls: 'text-bg-secondary' }
 }
 
-const modAdd = reactive({ busy: false, error: '' })
+// Names of the explicit mods that pulled in a given dependency (for its tooltip).
+function requiredByNames(id) {
+  return requiredBy(spec.mods, id)
+    .map((m) => m.name || m.modId)
+    .join(', ')
+}
 
-async function addModByRow(row) {
+const isEnabled = (id) => spec.mods.some((m) => m.modId === id && m.explicit)
+
+async function addModById(id) {
   modAdd.busy = true
   modAdd.error = ''
+  modNotice.value = ''
   try {
-    const res = await api(`/api/workshop/resolve/${row.id}`)
-    mergeMods(res.mods)
-    if (res.missing.length) {
+    const res = await api(`/api/workshop/resolve/${id}`)
+    spec.mods = mergeResolved(normalizeMods(spec.mods), res)
+    if (res.missing?.length) {
       modAdd.error = `Added, but ${res.missing.length} dependency(ies) could not be resolved.`
     }
   } catch (e) {
@@ -190,8 +223,99 @@ async function addModByRow(row) {
   }
 }
 
-function removeMod(modId) {
-  spec.mods = spec.mods.filter((m) => m.modId !== modId)
+function addModByRow(row) {
+  return addModById(row.id)
+}
+
+async function addManualMod() {
+  const id = manualId.value.trim()
+  if (!id) return
+  await addModById(id)
+  if (!modAdd.error) manualId.value = ''
+}
+
+function removeMod(id) {
+  modNotice.value = ''
+  const mod = byModId(id)
+  if (!mod) return
+  if (mod.from_scenario) {
+    modNotice.value = `"${mod.name || id}" backs the selected scenario — change the scenario on step 1 to remove it.`
+    return
+  }
+  // Still required by another explicit mod → demote to a dependency, don't drop.
+  if (stillRequiredWithoutExplicit(spec.mods, id)) {
+    const reqs = requiredByNames(id)
+    spec.mods = spec.mods.map((m) =>
+      m.modId === id ? { ...m, explicit: false, from_scenario: false } : m,
+    )
+    modNotice.value = `Kept "${mod.name || id}" as a dependency — still required by ${reqs}.`
+    return
+  }
+  const orphans = orphansAfterRemoving(spec.mods, id)
+  if (!orphans.length) {
+    spec.mods = spec.mods.filter((m) => m.modId !== id)
+  } else {
+    removePrompt.value = { mod, orphans }
+  }
+}
+
+function resolveRemovePrompt(alsoRemoveDeps) {
+  const { mod, orphans } = removePrompt.value
+  const orphanIds = new Set(orphans.map((o) => o.modId))
+  let next = spec.mods.filter((m) => m.modId !== mod.modId)
+  if (alsoRemoveDeps) {
+    next = next.filter((m) => !orphanIds.has(m.modId))
+  } else {
+    // Keep them: promote to explicit so they read as intentional and aren't
+    // re-flagged as orphans later.
+    next = next.map((m) => (orphanIds.has(m.modId) ? { ...m, explicit: true } : m))
+  }
+  spec.mods = next
+  removePrompt.value = null
+}
+
+function moveExplicit(id, dir) {
+  const ex = spec.mods.filter((m) => m.explicit)
+  const i = ex.findIndex((m) => m.modId === id)
+  const j = i + dir
+  if (i < 0 || j < 0 || j >= ex.length) return
+  ;[ex[i], ex[j]] = [ex[j], ex[i]]
+  spec.mods = [...ex, ...spec.mods.filter((m) => !m.explicit)]
+}
+
+// ---- Export / import the enabled mod list as JSON (issue #55) ---------------
+function exportMods() {
+  const payload = { format: MODS_FILE_FORMAT, mods: orderedMods(spec.mods) }
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = (spec.name || 'mods').replace(/[^a-z0-9_-]/gi, '_') + '-mods.json'
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
+
+async function importMods(event) {
+  const file = event.target.files?.[0]
+  if (!file) return
+  modAdd.error = ''
+  modNotice.value = ''
+  try {
+    const parsed = JSON.parse(await file.text())
+    const list = Array.isArray(parsed) ? parsed : parsed.mods
+    if (!Array.isArray(list)) throw new Error('No "mods" array in that file.')
+    if (
+      spec.mods.length &&
+      !confirm(`Replace the current ${spec.mods.length} mod(s) with ${list.length} from this file?`)
+    ) {
+      return
+    }
+    spec.mods = normalizeMods(list)
+    modNotice.value = `Loaded ${spec.mods.length} mod(s) from ${file.name}.`
+  } catch (e) {
+    modAdd.error = `Could not import mods: ${e.message}`
+  } finally {
+    if (modsFileInput.value) modsFileInput.value.value = ''
+  }
 }
 
 // ---- Step 3/4: live config preview ----------------------------------------
@@ -244,6 +368,8 @@ async function importConfigFile(event) {
     Object.assign(spec, imported)
     // config.json carries no launch args, so keep the defaults for those
     spec.launch = { ...launchDefaults, ...(imported.launch || {}) }
+    // config.json has only a flat mods[]; treat each as an explicit pick (#55)
+    spec.mods = normalizeMods(imported.mods)
     // config.json has no template name; suggest one from the in-game name/file
     if (!spec.name) spec.name = imported.game_name || file.name.replace(/\.json$/i, '')
     if (spec.scenario_id) {
@@ -300,6 +426,8 @@ onMounted(async () => {
       Object.assign(spec, t.spec)
       // merge launch onto defaults so older templates (empty launch) keep keys
       spec.launch = { ...launchDefaults, ...(t.spec.launch || {}) }
+      // normalise mods so older templates (flat mods[]) gain the metadata fields
+      spec.mods = normalizeMods(t.spec.mods)
       spec.name = t.name
       spec.description = t.description
       if (spec.scenario_id) {
@@ -430,51 +558,146 @@ onMounted(async () => {
         <!-- STEP 2: MODS -->
         <div v-show="step === 2">
           <p class="text-secondary">
-            Additional mods (dependencies resolve automatically). The scenario's own mods are
-            already included.
+            Search the Workshop and add mods on top of the scenario. Dependencies are pulled
+            in automatically; remove a mod and you'll be asked whether to drop the
+            dependencies it brought along.
           </p>
+
+          <!-- Add mods: Workshop search + manual id -->
           <div class="input-group mb-2">
             <input
               v-model="search.q"
               class="form-control"
-              placeholder="Search mods to add…"
+              placeholder="Search the Workshop for mods to add…"
               @keyup.enter="runSearch"
             />
             <button class="btn btn-primary" :disabled="search.busy" @click="runSearch">
               {{ search.busy ? 'Searching…' : 'Search' }}
             </button>
           </div>
-          <div v-if="modAdd.error" class="alert alert-info py-2 small">{{ modAdd.error }}</div>
-          <div class="list-group mb-4">
+          <div v-if="search.error" class="alert alert-warning py-2 small mb-2">{{ search.error }}</div>
+          <div
+            v-if="search.results.length"
+            class="list-group mb-2"
+            style="max-height: 15rem; overflow-y: auto"
+          >
             <div
               v-for="row in search.results"
               :key="row.id"
-              class="list-group-item d-flex justify-content-between align-items-center"
+              class="list-group-item d-flex justify-content-between align-items-center py-2"
             >
-              <div>
-                <div class="fw-semibold">{{ row.name }}</div>
+              <div class="me-2 text-truncate">
+                <div class="fw-semibold text-truncate">{{ row.name }}</div>
                 <small class="text-secondary">v{{ row.version }} · {{ fmtSize(row.size) }}</small>
               </div>
-              <button class="btn btn-sm btn-outline-primary" :disabled="modAdd.busy"
-                @click="addModByRow(row)">Add</button>
+              <button
+                class="btn btn-sm btn-outline-primary flex-shrink-0"
+                :disabled="modAdd.busy || isEnabled(row.id)"
+                @click="addModByRow(row)"
+              >{{ isEnabled(row.id) ? 'Added' : 'Add' }}</button>
+            </div>
+          </div>
+          <div class="input-group input-group-sm mb-2">
+            <input
+              v-model="manualId"
+              class="form-control"
+              placeholder="…or paste a mod id / Workshop URL"
+              @keyup.enter="addManualMod"
+            />
+            <button class="btn btn-outline-secondary" :disabled="modAdd.busy || !manualId.trim()" @click="addManualMod">
+              Add by id
+            </button>
+          </div>
+
+          <div v-if="modAdd.busy" class="text-secondary small mb-2">
+            <span class="spinner-border spinner-border-sm me-1"></span>Resolving dependencies…
+          </div>
+          <div v-if="modAdd.error" class="alert alert-info py-2 small mb-2">{{ modAdd.error }}</div>
+          <div v-if="modNotice" class="alert alert-secondary py-2 small mb-2">{{ modNotice }}</div>
+
+          <!-- Enabled mods overview -->
+          <div class="d-flex justify-content-between align-items-center mt-3 mb-2">
+            <h2 class="h6 mb-0">Enabled mods ({{ spec.mods.length }})</h2>
+            <div class="btn-group btn-group-sm">
+              <button
+                class="btn btn-outline-secondary"
+                :disabled="!spec.mods.length"
+                title="Save the enabled mod list to a JSON file"
+                @click="exportMods"
+              >Export JSON</button>
+              <label class="btn btn-outline-secondary mb-0" title="Load an enabled mod list from a JSON file">
+                Import JSON
+                <input
+                  ref="modsFileInput"
+                  type="file"
+                  accept=".json,application/json"
+                  class="d-none"
+                  @change="importMods"
+                />
+              </label>
             </div>
           </div>
 
-          <h2 class="h6">Selected mods ({{ spec.mods.length }})</h2>
-          <div v-if="!spec.mods.length" class="text-secondary small">None yet.</div>
-          <ul class="list-group">
+          <div v-if="!spec.mods.length" class="text-secondary small">
+            No mods yet — the scenario runs vanilla. Add mods above.
+          </div>
+
+          <!-- Explicit picks (scenario + user-added): reorderable, removable -->
+          <ul v-if="explicitMods.length" class="list-group mb-2">
             <li
-              v-for="m in spec.mods"
+              v-for="(m, i) in explicitMods"
               :key="m.modId"
               class="list-group-item d-flex justify-content-between align-items-center py-2"
             >
-              <span>
-                {{ m.name || m.modId }}
-                <small class="text-secondary">v{{ m.version || '—' }} · {{ m.modId }}</small>
-              </span>
-              <button class="btn btn-sm btn-outline-danger" @click="removeMod(m.modId)">✕</button>
+              <div class="me-2 text-truncate">
+                <span class="badge me-1" :class="modBadge(m).cls">{{ modBadge(m).text }}</span>
+                <span class="fw-semibold">{{ m.name || m.modId }}</span>
+                <small class="text-secondary d-block">v{{ m.version || '—' }} · {{ m.modId }}</small>
+              </div>
+              <div class="btn-group btn-group-sm flex-shrink-0">
+                <button
+                  class="btn btn-outline-secondary"
+                  :disabled="i === 0"
+                  title="Move up"
+                  @click="moveExplicit(m.modId, -1)"
+                >↑</button>
+                <button
+                  class="btn btn-outline-secondary"
+                  :disabled="i === explicitMods.length - 1"
+                  title="Move down"
+                  @click="moveExplicit(m.modId, 1)"
+                >↓</button>
+                <button
+                  class="btn btn-outline-danger"
+                  :title="m.from_scenario ? 'Change the scenario to remove this' : 'Remove'"
+                  @click="removeMod(m.modId)"
+                >✕</button>
+              </div>
             </li>
           </ul>
+
+          <!-- Auto-added dependencies: read-only, managed via their parents -->
+          <div v-if="dependencyMods.length">
+            <div class="text-secondary small text-uppercase mb-1" style="letter-spacing: .04em">
+              Dependencies · added automatically ({{ dependencyMods.length }})
+            </div>
+            <ul class="list-group">
+              <li
+                v-for="m in dependencyMods"
+                :key="m.modId"
+                class="list-group-item d-flex justify-content-between align-items-center py-1 bg-body-tertiary"
+              >
+                <div class="me-2 text-truncate">
+                  <span class="text-truncate">{{ m.name || m.modId }}</span>
+                  <small class="text-secondary d-block">v{{ m.version || '—' }} · {{ m.modId }}</small>
+                </div>
+                <small
+                  class="text-secondary flex-shrink-0"
+                  :title="'Required by: ' + requiredByNames(m.modId)"
+                >required by {{ requiredBy(spec.mods, m.modId).length }}</small>
+              </li>
+            </ul>
+          </div>
         </div>
 
         <!-- STEP 3: SETTINGS -->
@@ -732,5 +955,47 @@ onMounted(async () => {
         </div>
       </div>
     </div>
+
+    <!-- Remove-with-dependencies prompt (issue #55) -->
+    <div v-if="removePrompt" class="rsm-modal-backdrop" @click.self="removePrompt = null">
+      <div class="card rsm-modal shadow">
+        <div class="card-body">
+          <h2 class="h6">Remove "{{ removePrompt.mod.name || removePrompt.mod.modId }}"?</h2>
+          <p class="small text-secondary mb-2">
+            It brought in {{ removePrompt.orphans.length }} dependency(ies) that nothing else
+            needs anymore:
+          </p>
+          <ul class="small mb-3">
+            <li v-for="o in removePrompt.orphans" :key="o.modId">{{ o.name || o.modId }}</li>
+          </ul>
+          <div class="d-flex flex-wrap gap-2 justify-content-end">
+            <button class="btn btn-sm btn-outline-secondary" @click="removePrompt = null">Cancel</button>
+            <button class="btn btn-sm btn-outline-primary" @click="resolveRemovePrompt(false)">
+              Keep dependencies
+            </button>
+            <button class="btn btn-sm btn-danger" @click="resolveRemovePrompt(true)">
+              Remove them too
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
+
+<style scoped>
+.rsm-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1050;
+  padding: 1rem;
+}
+.rsm-modal {
+  width: 100%;
+  max-width: 32rem;
+}
+</style>
