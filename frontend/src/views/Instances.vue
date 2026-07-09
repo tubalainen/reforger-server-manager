@@ -131,13 +131,13 @@ onUnmounted(() => clearInterval(poll))
               v-for="s in summary.servers"
               :key="s.id"
               :to="{ name: 'instance-detail', params: { id: s.id } }"
-              class="badge rounded-pill text-decoration-none d-inline-flex align-items-center gap-1"
-              :class="statusChip[s.status] || 'text-bg-secondary'"
+              class="text-decoration-none d-inline-flex align-items-center gap-2 border rounded-pill ps-1 pe-2 py-1"
               :title="s.connect || 'PUBLIC_ADDRESS not set'"
             >
-              {{ s.name }}
-              <span v-if="s.status === 'running'">· {{ s.players ?? '—' }}👤</span>
-              <span v-else>· {{ s.status }}</span>
+              <span class="badge rounded-pill" :class="statusChip[s.status] || 'text-bg-secondary'">
+                {{ s.status === 'running' ? (s.players ?? '—') + ' 👤' : s.status }}
+              </span>
+              <span class="small text-body text-truncate" style="max-width: 16rem">{{ s.name }}</span>
             </router-link>
           </div>
         </div>
