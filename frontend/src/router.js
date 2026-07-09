@@ -5,10 +5,16 @@ import Instances from './views/Instances.vue'
 import InstanceDetail from './views/InstanceDetail.vue'
 import Templates from './views/Templates.vue'
 import TemplateWizard from './views/TemplateWizard.vue'
-import Downloads from './views/Downloads.vue'
 
 const router = createRouter({
   history: createWebHistory(),
+  // Scroll to a hashed section (e.g. the Server files block on the Instances
+  // page), else to the top on navigation.
+  scrollBehavior(to, from, savedPosition) {
+    if (to.hash) return { el: to.hash, behavior: 'smooth' }
+    if (savedPosition) return savedPosition
+    return { top: 0 }
+  },
   routes: [
     { path: '/login', name: 'login', component: Login, meta: { public: true } },
     // Templates is the starting point of the workflow, so it is the landing page
@@ -17,7 +23,8 @@ const router = createRouter({
     { path: '/templates/:id/edit', name: 'template-edit', component: TemplateWizard, props: true },
     { path: '/instances', name: 'instances', component: Instances },
     { path: '/instances/:id', name: 'instance-detail', component: InstanceDetail, props: true },
-    { path: '/downloads', name: 'downloads', component: Downloads },
+    // Downloads moved onto the Instances page; keep the old path working.
+    { path: '/downloads', redirect: '/instances' },
   ],
 })
 
