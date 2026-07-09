@@ -36,11 +36,40 @@ PUBLIC_BUILD_RE = re.compile(r'"public"\s*\{[^{}]*?"buildid"\s+"(\d+)"', re.S)
 
 LOG_RING_SIZE = 1000
 
+# A fresh steamcmd image ships a stale binary. On the first run inside a new
+# container it downloads its own update and restarts itself mid-session, after
+# which "app_update" fails with "(Missing configuration)" (issue #48). Running
+# it again — steamcmd now already updated — succeeds, so the download is wrapped
+# in a short retry loop that stops as soon as steamcmd reports a full install.
+STEAMCMD_ATTEMPTS = 3
+
 
 def parse_latest_build(text: str) -> str | None:
     """Extract the public-branch build id from steamcmd app_info_print output."""
     m = PUBLIC_BUILD_RE.search(text)
     return m.group(1) if m else None
+
+
+def _build_download_script(app_id: str) -> str:
+    """Shell wrapper that runs steamcmd with a retry loop (issue #48).
+
+    steamcmd's own exit code is unreliable, so success is detected from its
+    "Success! App '<id>' fully installed" line; output is tee'd through to the
+    container's stdout so the manager still streams progress line by line.
+    """
+    steam_cmd = (
+        f"steamcmd +force_install_dir /serverfiles +login anonymous "
+        f"+app_update {app_id} validate +quit"
+    )
+    return (
+        f'i=1; while [ $i -le {STEAMCMD_ATTEMPTS} ]; do '
+        f'echo "=== SteamCMD attempt $i of {STEAMCMD_ATTEMPTS} ==="; '
+        f'{steam_cmd} 2>&1 | tee /tmp/steamcmd.log; '
+        f'if grep -q "fully installed" /tmp/steamcmd.log; then exit 0; fi; '
+        f'echo "=== SteamCMD attempt $i did not finish installing; retrying ==="; '
+        f'i=$((i+1)); sleep 5; '
+        f'done; exit 1'
+    )
 
 
 def parse_line(line: str) -> dict | None:
@@ -251,17 +280,13 @@ class SteamService:
         host_dir = docker_service.host_path_for(
             f"{config.settings.serverfiles_dir}/{job.branch}"
         )
-        command = [
-            "+force_install_dir", "/serverfiles",
-            "+login", "anonymous",
-            "+app_update", app_id, "validate",
-            "+quit",
-        ]
+        script = _build_download_script(app_id)
         try:
             container = await asyncio.to_thread(
                 docker_service.get_client().containers.run,
                 config.settings.steamcmd_image,
-                command,
+                entrypoint="/bin/sh",
+                command=["-c", script],
                 detach=True,
                 name=f"reforger-steamcmd-{job.branch}-{int(job.started_at)}",
                 volumes={host_dir: {"bind": "/serverfiles", "mode": "rw"}},
