@@ -78,6 +78,54 @@ def test_parse_server_status_tolerates_variants():
     assert instance_service.parse_server_status(log3)["players"] == 7
 
 
+def test_parse_server_status_reads_players_connected_network_line():
+    # Real logs: player count is on its own NETWORK line, not the FPS line (#38).
+    log = (
+        "  NETWORK      : Players connecting: 0\n"
+        "  NETWORK      : Players connected: 1 / 1\n"
+    )
+    s = instance_service.parse_server_status(log)
+    assert s == {"fps": None, "mem_kb": None, "players": 1}
+
+
+def test_parse_server_status_combines_separate_fps_and_player_lines():
+    # FPS from a -logStats line, player count from a later NETWORK line: both win.
+    log = (
+        "DEFAULT : FPS: 58.0, frame time (avg: 17 ms), Mem: 1000000 kB, Player: 0, AI: 0\n"
+        "lots of noise\n"
+        "  NETWORK      : Players connected: 3 / 3\n"
+    )
+    s = instance_service.parse_server_status(log)
+    assert s == {"fps": 58.0, "mem_kb": 1000000, "players": 3}
+
+
+def test_inject_stats_logging_adds_arg_and_respects_user_override():
+    assert instance_service._inject_stats_logging("").startswith("-logStats ")
+    # existing args are preserved alongside the injected -logStats
+    out = instance_service._inject_stats_logging("-nds 3")
+    assert "-logStats" in out and "-nds 3" in out
+    # a user-set -logStats is left exactly as-is (no duplicate)
+    assert instance_service._inject_stats_logging("-logStats 5000") == "-logStats 5000"
+
+
+def test_container_has_stats_logging_detection():
+    class FakeContainer:
+        def __init__(self, env, fail=False):
+            self.attrs = {"Config": {"Env": env}}
+            self._fail = fail
+
+        def reload(self):
+            if self._fail:
+                raise AttributeError("cannot inspect")
+
+    has = instance_service._container_has_stats_logging
+    assert has(FakeContainer(["ARMA_PARAMS=-logStats 10000 -nds 3"])) is True
+    assert has(FakeContainer(["ARMA_PARAMS=-nds 3"])) is False
+    assert has(FakeContainer(["OTHER=x"])) is False
+    # uninspectable container -> True, so we never destroy what we can't read
+    assert has(FakeContainer([], fail=True)) is True
+
+
 def test_list_and_resolve_log_files(tmp_path, monkeypatch):
     import config
 
@@ -202,6 +250,8 @@ def test_create_container_uses_acemod_contract(tmp_path, monkeypatch):
     assert captured["environment"]["SERVER_PUBLIC_ADDRESS"] == "203.0.113.5"
     # server binds the same port it is published on (host == container)
     assert captured["environment"]["SERVER_BIND_PORT"] == "2005"
+    # -logStats is injected so the server emits FPS/player status lines (#38)
+    assert "-logStats" in captured["environment"]["ARMA_PARAMS"]
     # ports published 1:1 so A2S/RCON queries reach the right internal port
     assert captured["ports"]["2005/udp"] == 2005
     assert captured["ports"]["17780/udp"] == 17780

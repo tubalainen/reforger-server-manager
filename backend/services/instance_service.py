@@ -27,35 +27,48 @@ from services.template_service import LaunchParams, spec_from_config
 
 logger = logging.getLogger("manager.instance")
 
-# The server prints a periodic status line, e.g.:
-#   FPS: 60.0, frame time (...), Mem: 1190747 kB, Player: 0, AI: 0, ...
-# The exact shape and field order vary between server builds (and "Player:" is
-# sometimes "Players:"), so match each field independently rather than as one
-# rigid pattern — otherwise a small format change silently zeroes the WebGUI.
+# With -logStats enabled (see STATS_LOG_INTERVAL_MS) the server prints a
+# periodic performance line, e.g.:
+#   FPS: 60.0, frame time (...), Mem: 1190747 kB, Player: 2, AI: 104, ...
+# Player count also shows up on its own NETWORK line on connect/disconnect:
+#   NETWORK      : Players connected: 1 / 1
+# The field order varies between builds (and "Player:" is sometimes "Players:"),
+# so match each field independently and keep the most recent value seen for each
+# — FPS and the player count legitimately arrive on different lines.
 _FPS_RE = re.compile(r"FPS:\s*([\d.]+)")
 _MEM_RE = re.compile(r"Mem:\s*(\d+)\s*kB")
-_PLAYERS_RE = re.compile(r"Players?:\s*(\d+)")
+_PLAYERS_STAT_RE = re.compile(r"Players?:\s*(\d+)")          # -logStats line
+_PLAYERS_CONN_RE = re.compile(r"Players connected:\s*(\d+)")  # NETWORK event line
 
 
 def parse_server_status(log_text: str) -> dict | None:
     """Return the most recent {fps, mem_kb, players} from server log output.
 
-    The most recent line carrying an FPS reading wins; memory and player count
-    are filled in from that same line when present (else None).
+    Each field is tracked independently: the newest FPS reading, the newest
+    memory reading, and the newest player count (from either the -logStats
+    "Player: N" line or a "Players connected: N / M" network line) win. Returns
+    None only when the log carries none of the three.
     """
-    target = None
+    fps = mem_kb = players = None
     for line in log_text.splitlines():
-        if _FPS_RE.search(line):
-            target = line
-    if target is None:
+        m = _FPS_RE.search(line)
+        if m:
+            fps = float(m.group(1))
+        m = _MEM_RE.search(line)
+        if m:
+            mem_kb = int(m.group(1))
+        # "Players connected:" must be tried first — the generic "Players?:"
+        # pattern would not match it, but checking it explicitly keeps intent clear.
+        m = _PLAYERS_CONN_RE.search(line)
+        if m:
+            players = int(m.group(1))
+        else:
+            m = _PLAYERS_STAT_RE.search(line)
+            if m:
+                players = int(m.group(1))
+    if fps is None and mem_kb is None and players is None:
         return None
-    mem = _MEM_RE.search(target)
-    players = _PLAYERS_RE.search(target)
-    return {
-        "fps": float(_FPS_RE.search(target).group(1)),
-        "mem_kb": int(mem.group(1)) if mem else None,
-        "players": int(players.group(1)) if players else None,
-    }
+    return {"fps": fps, "mem_kb": mem_kb, "players": players}
 
 
 def _docker_cpu_mem(container) -> dict:
@@ -85,6 +98,16 @@ def _docker_cpu_mem(container) -> dict:
 # server-browser query) requires. The server binds these exact ports inside the
 # container (config.json + SERVER_BIND_PORT), and Docker publishes them unchanged.
 CONFIG_FILENAME = "server.json"
+
+# The server only prints its periodic FPS/player status line when launched with
+# -logStats <interval-ms> (issue #38). The manager injects it automatically so
+# the GUI status bar has data; a shorter interval keeps a fresh line inside the
+# tail we read, at the cost of slightly noisier logs.
+STATS_LOG_INTERVAL_MS = 10000
+STATS_LOG_ARG = "-logStats"
+# Reforger logs are chatty, so read a generous tail to be sure a periodic stats
+# line (emitted every STATS_LOG_INTERVAL_MS) is inside the window we parse.
+STATS_LOG_TAIL = 400
 
 # The dedicated-server binary the image launches from /reforger (WORKDIR).
 # Its presence is our proof that a branch's server files are installed.
@@ -395,6 +418,23 @@ def _container_ports_match(container, inst: Instance) -> bool:
     return actual == _desired_port_bindings(inst)
 
 
+def _container_has_stats_logging(container) -> bool:
+    """True if the container was created with -logStats (needed for FPS/players).
+
+    Containers created before the #38 fix lack it and would show "—" forever;
+    start_instance recreates them. On any read failure we return True — never
+    destroy a container we cannot inspect.
+    """
+    try:
+        container.reload()
+        env = (container.attrs.get("Config") or {}).get("Env") or []
+    except (DockerException, NotFound, AttributeError):
+        return True
+    return any(
+        e.startswith("ARMA_PARAMS=") and STATS_LOG_ARG in e for e in env
+    )
+
+
 def start_instance(instance_id: int) -> None:
     if not docker_service.ping():
         raise InstanceError("Docker daemon is not reachable")
@@ -410,18 +450,24 @@ def start_instance(instance_id: int) -> None:
         template_config = _template_config(session, inst)
         launch = _template_launch(session, inst)
 
-        # Reuse an existing container if present, else create one. But if its
-        # published ports no longer match (e.g. an instance created before the
-        # A2S 1:1 port fix), remove it so it is recreated with the right mapping
-        # — Docker port bindings can't be changed on an existing container.
+        # Reuse an existing container if present, else create one. But recreate
+        # it when its baked-in settings are stale, since Docker fixes them at
+        # creation: published ports (e.g. predating the A2S 1:1 fix) or a missing
+        # -logStats arg (instances created before the FPS/players fix, #38).
         container = docker_service.find_instance_container(inst.id)
-        if container is not None and not _container_ports_match(container, inst):
-            logger.info("Recreating container for %s: published ports changed", inst.name)
-            try:
-                container.remove(force=True)
-            except DockerException as exc:
-                logger.warning("Could not remove stale container for %s: %s", inst.name, exc)
-            container = None
+        if container is not None:
+            reason = None
+            if not _container_ports_match(container, inst):
+                reason = "published ports changed"
+            elif not _container_has_stats_logging(container):
+                reason = "enabling -logStats (#38)"
+            if reason:
+                logger.info("Recreating container for %s: %s", inst.name, reason)
+                try:
+                    container.remove(force=True)
+                except DockerException as exc:
+                    logger.warning("Could not remove stale container for %s: %s", inst.name, exc)
+                container = None
         if container is None:
             self_config_path = _write_config(inst, template_config)
             try:
@@ -478,12 +524,10 @@ def _create_container(inst: Instance, config_path: Path, launch: "LaunchParams |
     }
     if config.settings.public_address:
         environment["SERVER_PUBLIC_ADDRESS"] = config.settings.public_address
-    if launch is not None:
-        arma_params, max_fps = launch.render()
-        if arma_params:
-            environment["ARMA_PARAMS"] = arma_params
-        if max_fps is not None:
-            environment["ARMA_MAX_FPS"] = str(max_fps)
+    arma_params, max_fps = launch.render() if launch is not None else ("", None)
+    environment["ARMA_PARAMS"] = _inject_stats_logging(arma_params)
+    if max_fps is not None:
+        environment["ARMA_MAX_FPS"] = str(max_fps)
 
     return docker_service.get_client().containers.create(
         config.settings.reforger_server_image,
@@ -501,6 +545,17 @@ def _create_container(inst: Instance, config_path: Path, launch: "LaunchParams |
         network=config.settings.docker_network,
         restart_policy={"Name": _restart_policy(inst)},
     )
+
+
+def _inject_stats_logging(arma_params: str) -> str:
+    """Ensure -logStats is present so the server emits FPS/player lines (#38).
+
+    Left untouched if the template already set it via extra_args, so a user's
+    explicit interval wins.
+    """
+    if STATS_LOG_ARG in arma_params:
+        return arma_params
+    return f"{STATS_LOG_ARG} {STATS_LOG_INTERVAL_MS} {arma_params}".strip()
 
 
 def _restart_policy(inst: Instance) -> str:
@@ -658,7 +713,7 @@ def instance_stats(instance_id: int) -> dict:
         pass
 
     try:
-        log_text = container.logs(tail=100).decode("utf-8", errors="replace")
+        log_text = container.logs(tail=STATS_LOG_TAIL).decode("utf-8", errors="replace")
         server = parse_server_status(log_text)
         if server:
             stats["players"] = server["players"]
@@ -759,9 +814,9 @@ def instances_summary() -> dict:
             container = docker_service.find_instance_container(inst.id)
             if container:
                 try:
-                    log_text = container.logs(tail=80).decode("utf-8", errors="replace")
+                    log_text = container.logs(tail=STATS_LOG_TAIL).decode("utf-8", errors="replace")
                     parsed = parse_server_status(log_text)
-                    if parsed:
+                    if parsed and parsed["players"] is not None:
                         players = parsed["players"]
                         players_total += players
                 except DockerException:
