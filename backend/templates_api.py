@@ -2,7 +2,7 @@
 import json
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from fastapi.responses import Response
 from sqlmodel import Session, select
 
@@ -132,3 +132,22 @@ async def download_config(template_id: int, _user: str = Depends(auth.require_se
 async def preview_config(spec: TemplateSpec, _user: str = Depends(auth.require_session)):
     """Render config.json for a spec without saving (live wizard preview)."""
     return spec.to_config()
+
+
+@router.post("/import")
+async def import_config(
+    config: dict = Body(...), _user: str = Depends(auth.require_session)
+):
+    """Map an uploaded Reforger config.json into editable wizard fields (#35).
+
+    Returns the same {spec} shape the wizard loads when editing a template, so
+    the frontend can pre-fill the form from a config.json (launch args aren't
+    part of config.json, so those stay at their defaults).
+    """
+    try:
+        spec = template_service.spec_from_config(json.dumps(config))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(
+            status_code=400, detail=f"Not a valid Reforger config.json: {exc}"
+        )
+    return {"spec": spec}

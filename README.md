@@ -21,11 +21,13 @@ Docker image: `ghcr.io/tubalainen/reforger-server-manager:latest`
 - [x] Server templates: pick a scenario straight from the
       [Workshop](https://reforger.armaplatform.com/workshop), auto-resolve all mod
       dependencies, add extra mods, tune settings, save — and download the resulting
-      `config.json`
+      `config.json`; or **upload an existing `config.json`** to pre-fill the wizard
 - [x] Multiple concurrent server instances (stable + experimental side by side), each a
       Docker container spawned and supervised by the manager
-- [x] Live server logs in the browser, crash auto-restart
+- [x] Live server logs in the browser (with a clear-window button), crash auto-restart
 - [x] Scheduled restarts — set daily restart times per instance (server local time)
+- [x] Live status per instance (players, FPS, CPU, memory) and a **Connect** address that
+      auto-detects the server's public IP from its log when `PUBLIC_ADDRESS` isn't set
 
 ## Architecture
 

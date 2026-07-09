@@ -219,6 +219,46 @@ watch(
   },
 )
 
+// ---- Import an existing config.json (issue #35) ----------------------------
+const importing = ref(false)
+const importInput = ref(null)
+
+async function importConfigFile(event) {
+  const file = event.target.files?.[0]
+  if (!file) return
+  importing.value = true
+  error.value = ''
+  try {
+    const text = await file.text()
+    let parsed
+    try {
+      parsed = JSON.parse(text)
+    } catch {
+      throw new Error('That file is not valid JSON.')
+    }
+    const { spec: imported } = await api('/api/templates/import', {
+      method: 'POST',
+      body: parsed,
+    })
+    const launchDefaults = { ...spec.launch }
+    Object.assign(spec, imported)
+    // config.json carries no launch args, so keep the defaults for those
+    spec.launch = { ...launchDefaults, ...(imported.launch || {}) }
+    // config.json has no template name; suggest one from the in-game name/file
+    if (!spec.name) spec.name = imported.game_name || file.name.replace(/\.json$/i, '')
+    if (spec.scenario_id) {
+      chosenScenario.value = { scenario_id: spec.scenario_id, name: spec.scenario_id }
+      step.value = 3 // jump to Settings so the imported values can be reviewed
+    }
+    // else stay on step 1 so the user picks a scenario (config had none)
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    importing.value = false
+    if (importInput.value) importInput.value.value = '' // allow re-importing
+  }
+}
+
 // ---- Save ------------------------------------------------------------------
 async function save() {
   error.value = ''
@@ -302,6 +342,33 @@ onMounted(async () => {
       <div class="col-lg-7">
         <!-- STEP 1: SCENARIO -->
         <div v-show="step === 1">
+          <!-- Import an existing config.json to pre-fill the wizard (issue #35) -->
+          <div v-if="!editing" class="card bg-body-tertiary mb-3">
+            <div class="card-body py-2">
+              <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+                <div>
+                  <div class="fw-semibold small">Start from an existing config.json</div>
+                  <div class="text-secondary small">
+                    Upload a Reforger server config (or a template exported from here) to
+                    auto-fill the scenario, mods and settings.
+                  </div>
+                </div>
+                <label class="btn btn-outline-primary btn-sm mb-0">
+                  <span v-if="importing" class="spinner-border spinner-border-sm me-1"></span>
+                  {{ importing ? 'Importing…' : 'Upload config.json' }}
+                  <input
+                    ref="importInput"
+                    type="file"
+                    accept=".json,application/json"
+                    class="d-none"
+                    :disabled="importing"
+                    @change="importConfigFile"
+                  />
+                </label>
+              </div>
+            </div>
+          </div>
+
           <p class="text-secondary">
             Search the Workshop and pick a scenario. Its mod and all dependencies are added
             automatically.

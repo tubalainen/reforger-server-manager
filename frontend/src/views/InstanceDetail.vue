@@ -75,6 +75,10 @@ async function loadInstance() {
   }
 }
 
+function clearLog() {
+  logLines.value = []
+}
+
 function connectLogs() {
   if (ws) ws.close()
   logLines.value = []
@@ -320,8 +324,15 @@ onUnmounted(() => {
                 <div class="col-sm-6"><span class="text-secondary">Desired:</span> {{ inst.desired_state }}</div>
                 <div class="col-sm-6">
                   <span class="text-secondary">Connect:</span>
-                  <template v-if="stats && stats.connect">{{ stats.connect }}</template>
-                  <span v-else class="text-secondary fst-italic" title="Set PUBLIC_ADDRESS in .env to advertise a connect address">set PUBLIC_ADDRESS in .env</span>
+                  <template v-if="stats && stats.connect">
+                    {{ stats.connect }}
+                    <span
+                      v-if="stats.public_address_detected"
+                      class="badge text-bg-secondary ms-1"
+                      title="Auto-detected from the server log; set PUBLIC_ADDRESS in .env to override"
+                    >auto</span>
+                  </template>
+                  <span v-else class="text-secondary fst-italic" title="Set PUBLIC_ADDRESS in .env, or start the server so its public IP can be detected from the log">set PUBLIC_ADDRESS in .env</span>
                 </div>
               </div>
 
@@ -499,9 +510,17 @@ onUnmounted(() => {
       <div class="card">
         <div class="card-header d-flex justify-content-between align-items-center py-2">
           <span class="fw-semibold small">Server log</span>
-          <div class="form-check form-switch mb-0">
-            <input id="follow" v-model="follow" class="form-check-input" type="checkbox" role="switch" />
-            <label for="follow" class="form-check-label small">Follow</label>
+          <div class="d-flex align-items-center gap-3">
+            <div class="form-check form-switch mb-0">
+              <input id="follow" v-model="follow" class="form-check-input" type="checkbox" role="switch" />
+              <label for="follow" class="form-check-label small">Follow</label>
+            </div>
+            <button
+              class="btn btn-sm btn-outline-secondary py-0"
+              :disabled="!logLines.length"
+              title="Clear the log window (new output keeps streaming)"
+              @click="clearLog"
+            >Clear</button>
           </div>
         </div>
         <pre
