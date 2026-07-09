@@ -297,6 +297,22 @@ def test_due_scheduled_restart_picks_latest_of_several():
     assert due == datetime(2026, 7, 8, 5, 0)
 
 
+def test_container_uptime_seconds_parses_docker_timestamp():
+    from datetime import datetime, timedelta, timezone
+
+    started = (datetime.now(timezone.utc) - timedelta(minutes=5)).strftime(
+        "%Y-%m-%dT%H:%M:%S.123456789Z"
+    )
+    c = type("C", (), {"attrs": {"State": {"StartedAt": started}}})()
+    secs = instance_service._container_uptime_seconds(c)
+    assert secs is not None and 290 <= secs <= 310  # ~5 minutes
+
+
+def test_container_uptime_none_when_never_started():
+    c = type("C", (), {"attrs": {"State": {"StartedAt": "0001-01-01T00:00:00Z"}}})()
+    assert instance_service._container_uptime_seconds(c) is None
+
+
 def test_container_ports_match_detects_stale_mapping():
     inst = _inst()  # game 2005, a2s 17780, rcon 20002
 

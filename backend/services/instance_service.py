@@ -14,7 +14,7 @@ one install instead of each re-downloading. The image still validates on start
 import json
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from docker.errors import DockerException, ImageNotFound, NotFound
@@ -599,11 +599,32 @@ def running_instance_names_for_branch(branch: str) -> list[str]:
     return names
 
 
-def instance_stats(instance_id: int) -> dict:
-    """Live status for the top bar: connect info, players/FPS/mem, CPU/mem.
+def _container_uptime_seconds(container) -> int | None:
+    """How long the container has been running, from its Docker StartedAt."""
+    try:
+        started = (container.attrs.get("State") or {}).get("StartedAt")
+    except AttributeError:
+        return None
+    if not started or started.startswith("0001-01-01"):  # never started
+        return None
+    # Docker stamps nanoseconds (up to 9 digits); trim to microseconds for fromisoformat
+    m = re.match(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?", started)
+    if not m:
+        return None
+    iso = m.group(1) + (("." + m.group(2)[:6]) if m.group(2) else "") + "+00:00"
+    try:
+        started_dt = datetime.fromisoformat(iso)
+    except ValueError:
+        return None
+    return max(0, int((datetime.now(timezone.utc) - started_dt).total_seconds()))
 
-    Player/FPS/server-memory come from the server's own periodic status line
-    in the container log; CPU and container memory come from docker stats.
+
+def instance_stats(instance_id: int) -> dict:
+    """Live runtime info for the instance status bar.
+
+    status/uptime come from the Docker container; players/FPS/server-memory come
+    from the server's own periodic status line in the log; CPU and container
+    memory come from docker stats. connect is the advertised address (when set).
     """
     with Session(get_engine()) as session:
         inst = session.get(Instance, instance_id)
@@ -617,6 +638,7 @@ def instance_stats(instance_id: int) -> dict:
         "game_port": game_port,
         "connect": f"{public}:{game_port}" if public else None,
         "status": container_status(instance_id),
+        "uptime_seconds": None,
         "players": None,
         "server_fps": None,
         "server_mem_kb": None,
@@ -628,6 +650,12 @@ def instance_stats(instance_id: int) -> dict:
     container = docker_service.find_instance_container(instance_id)
     if container is None or stats["status"] != "running":
         return stats
+
+    try:
+        container.reload()
+        stats["uptime_seconds"] = _container_uptime_seconds(container)
+    except DockerException:
+        pass
 
     try:
         log_text = container.logs(tail=100).decode("utf-8", errors="replace")
