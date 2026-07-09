@@ -21,6 +21,16 @@ function fmtMem(bytes) {
   return mb >= 1024 ? (mb / 1024).toFixed(2) + ' GB' : mb.toFixed(0) + ' MB'
 }
 
+function fmtUptime(s) {
+  if (s == null) return '—'
+  const d = Math.floor(s / 86400)
+  const h = Math.floor((s % 86400) / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  if (d) return `${d}d ${h}h`
+  if (h) return `${h}h ${m}m`
+  return `${m}m`
+}
+
 async function loadStats() {
   try {
     stats.value = await api(`/api/instances/${props.id}/stats`)
@@ -274,6 +284,10 @@ onUnmounted(() => {
               </div>
             </div>
             <div class="col-6 col-md-2">
+              <div class="text-secondary">Uptime</div>
+              <div class="fs-5 fw-semibold">{{ inst.status === 'running' ? fmtUptime(stats.uptime_seconds) : '—' }}</div>
+            </div>
+            <div class="col-6 col-md-2">
               <div class="text-secondary">Players</div>
               <div class="fs-5 fw-semibold">{{ stats.players ?? '—' }}</div>
             </div>
@@ -288,12 +302,6 @@ onUnmounted(() => {
             <div class="col-6 col-md-2">
               <div class="text-secondary">Memory</div>
               <div class="fs-5 fw-semibold">{{ fmtMem(stats.mem_bytes) }}</div>
-            </div>
-            <div class="col-6 col-md-2">
-              <div class="text-secondary">Connect</div>
-              <div class="fw-semibold text-truncate">
-                {{ stats.connect || (stats.public_address ? '' : 'set PUBLIC_ADDRESS') || '—' }}
-              </div>
             </div>
           </div>
         </div>
@@ -310,6 +318,11 @@ onUnmounted(() => {
                 <div class="col-sm-6"><span class="text-secondary">A2S port:</span> {{ inst.a2s_port }}/udp</div>
                 <div class="col-sm-6"><span class="text-secondary">RCON port:</span> {{ inst.rcon_port }}/udp</div>
                 <div class="col-sm-6"><span class="text-secondary">Desired:</span> {{ inst.desired_state }}</div>
+                <div class="col-sm-6">
+                  <span class="text-secondary">Connect:</span>
+                  <template v-if="stats && stats.connect">{{ stats.connect }}</template>
+                  <span v-else class="text-secondary fst-italic" title="Set PUBLIC_ADDRESS in .env to advertise a connect address">set PUBLIC_ADDRESS in .env</span>
+                </div>
               </div>
 
               <div class="mt-2">
