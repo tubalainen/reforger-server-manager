@@ -429,7 +429,7 @@ def start_instance(instance_id: int) -> None:
             except ImageNotFound as exc:
                 raise InstanceError(
                     f"Server image '{config.settings.reforger_server_image}' not found — "
-                    "pull it or set REFORGER_SERVER_IMAGE"
+                    "pull it on the Downloads tab (or set REFORGER_SERVER_IMAGE)"
                 ) from exc
             except DockerException as exc:
                 raise InstanceError(f"Could not create container: {exc}") from exc

@@ -8,6 +8,10 @@ const updateInfo = reactive({})
 const checking = reactive({})
 const sockets = {}
 const logPanes = {}
+// The reforger runtime image each instance is created from (issue #50).
+const img = reactive({ present: false, job: null, log: [] })
+let imgSocket = null
+const imgLogPane = { el: null }
 
 async function checkUpdate(branch) {
   checking[branch] = true
@@ -53,10 +57,13 @@ async function refresh() {
     state.branches = data.branches
     state.steamcmd_image = data.steamcmd_image
     state.server_image = data.server_image
+    img.present = data.server_image_present
+    img.job = data.server_image_job
     state.error = ''
     for (const b of data.branches) {
       if (b.job?.status === 'running') connect(b.branch)
     }
+    if (img.job?.status === 'running') connectImage()
   } catch (e) {
     state.error = e.message
   }
@@ -111,9 +118,50 @@ async function startDownload(branch) {
   }
 }
 
+function connectImage() {
+  if (imgSocket) return
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+  const ws = new WebSocket(`${proto}://${location.host}/api/serverfiles/image/ws`)
+  imgSocket = ws
+  ws.onmessage = (msg) => {
+    const ev = JSON.parse(msg.data)
+    if (ev.type === 'snapshot') {
+      img.job = ev.job
+      img.present = ev.present
+      img.log = ev.log || []
+    } else if (ev.type === 'log') {
+      img.log.push(ev.line)
+      if (img.log.length > 500) img.log.shift()
+    } else if (ev.type === 'progress') {
+      if (img.job) Object.assign(img.job, ev)
+    } else if (ev.type === 'status') {
+      img.job = ev.job
+      if (ev.present !== null) img.present = ev.present
+    }
+    nextTick(() => {
+      if (imgLogPane.el) imgLogPane.el.scrollTop = imgLogPane.el.scrollHeight
+    })
+  }
+  ws.onclose = () => {
+    imgSocket = null
+    refresh()
+  }
+}
+
+async function pullImage() {
+  try {
+    img.job = await api('/api/serverfiles/image/pull', { method: 'POST' })
+    img.log = []
+    connectImage()
+  } catch (e) {
+    state.error = e.message
+  }
+}
+
 onMounted(refresh)
 onUnmounted(() => {
   for (const ws of Object.values(sockets)) ws.close()
+  if (imgSocket) imgSocket.close()
 })
 </script>
 
@@ -126,6 +174,70 @@ onUnmounted(() => {
       <code>/var/run/docker.sock</code> is mounted. Downloads are disabled.
     </div>
     <div v-if="state.error" class="alert alert-warning py-2">{{ state.error }}</div>
+
+    <!-- Server runtime image: the Docker image instances are created from,
+         separate from the steamcmd server files above (issue #50). -->
+    <div class="card mb-3">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start mb-2 flex-wrap gap-2">
+          <div>
+            <h2 class="h5 mb-1">Server runtime image</h2>
+            <p class="text-secondary small mb-0">
+              Each instance runs from this image — <code>{{ state.server_image }}</code>.
+              It is separate from the server files below and must be pulled once.
+            </p>
+          </div>
+          <span
+            class="badge align-self-center"
+            :class="img.present ? 'text-bg-success' : 'text-bg-secondary'"
+          >{{ img.present ? 'Installed' : 'Not installed' }}</span>
+        </div>
+
+        <div v-if="img.job && img.job.status === 'running'" class="mb-2">
+          <div class="d-flex justify-content-between small mb-1">
+            <span class="text-capitalize">{{ img.job.phase }}</span>
+            <span>
+              {{ img.job.percent.toFixed(1) }}%
+              <template v-if="img.job.bytes_total">
+                ({{ fmtBytes(img.job.bytes_done) }} / {{ fmtBytes(img.job.bytes_total) }})
+              </template>
+            </span>
+          </div>
+          <div class="progress" style="height: 0.75rem">
+            <div
+              class="progress-bar progress-bar-striped progress-bar-animated"
+              :style="{ width: img.job.percent + '%' }"
+            ></div>
+          </div>
+        </div>
+
+        <div v-if="img.job && img.job.status === 'error'" class="alert alert-danger py-2 small mb-2">
+          {{ img.job.error }}
+        </div>
+        <div v-if="img.job && img.job.status === 'success'" class="alert alert-success py-2 small mb-2">
+          Image pulled — you can start your server instances now.
+        </div>
+
+        <button
+          class="btn btn-primary"
+          :disabled="!state.docker || (img.job && img.job.status === 'running')"
+          @click="pullImage"
+        >
+          <span
+            v-if="img.job && img.job.status === 'running'"
+            class="spinner-border spinner-border-sm me-1"
+          ></span>
+          {{ img.present ? 'Re-pull image' : 'Pull image' }}
+        </button>
+
+        <pre
+          v-if="img.log.length"
+          :ref="(el) => (imgLogPane.el = el)"
+          class="mt-3 p-2 bg-black text-light rounded small mb-0"
+          style="max-height: 16rem; overflow-y: auto; white-space: pre-wrap"
+        >{{ img.log.join('\n') }}</pre>
+      </div>
+    </div>
 
     <div class="row g-3">
       <div v-for="b in state.branches" :key="b.branch" class="col-12 col-lg-6">
@@ -222,8 +334,7 @@ onUnmounted(() => {
     </div>
 
     <p class="text-secondary small mt-3 mb-0">
-      SteamCMD image: <code>{{ state.steamcmd_image }}</code> ·
-      Server image: <code>{{ state.server_image }}</code>
+      SteamCMD image: <code>{{ state.steamcmd_image }}</code>
     </p>
   </div>
 </template>
