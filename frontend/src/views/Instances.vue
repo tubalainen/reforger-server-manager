@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
+import Downloads from './Downloads.vue'
 
 const router = useRouter()
 const instances = ref([])
@@ -183,7 +184,7 @@ onUnmounted(() => clearInterval(poll))
 
             <div v-if="!inst.server_files_ready" class="alert alert-warning py-1 px-2 small mb-2">
               {{ inst.branch }} server files not downloaded —
-              <router-link to="/downloads">get them on Downloads</router-link> before starting.
+              <a href="#server-files">get them below</a> before starting.
             </div>
 
             <div class="d-flex gap-2 flex-wrap">
@@ -287,4 +288,7 @@ onUnmounted(() => clearInterval(poll))
       </div>
     </div>
   </div>
+
+  <!-- Server files (formerly the Downloads tab) live at the bottom here now -->
+  <Downloads id="server-files" class="border-top pt-4 mt-4" />
 </template>

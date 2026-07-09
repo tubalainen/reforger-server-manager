@@ -274,7 +274,7 @@ onUnmounted(() => {
 
       <div v-if="!inst.server_files_ready" class="alert alert-warning py-2">
         The {{ inst.branch }} server files are not downloaded yet —
-        <router-link to="/downloads">download them on the Downloads tab</router-link> before starting.
+        <router-link to="/instances#server-files">download them under Server files on the Instances tab</router-link> before starting.
       </div>
 
       <!-- Live status strip -->
