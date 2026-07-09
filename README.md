@@ -160,6 +160,18 @@ front for VPS use, or set `WEB_BIND=0.0.0.0` at your own risk (login is still re
 > such a proxy is actually in front of the app — with it off and no proxy, the GUI
 > (and thus Docker) is completely open.
 
+### First run
+
+On the **Downloads** tab, do both one-time steps before creating a server instance:
+
+1. **Pull the server runtime image** — the Docker image each instance runs from
+   (`REFORGER_SERVER_IMAGE`). `docker compose up` only pulls the manager itself, so the
+   runtime image must be fetched once here.
+2. **Download the server files** for the branch you want (Stable / Experimental) — the
+   ~10 GB of game data mounted into every instance of that branch.
+
+Then head to **Instances** and create your first server from a template.
+
 ## Development
 
 Everything runs in Docker — there is nothing to install on the host:

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisco
 import auth
 import config
 from services import docker_service, instance_service
+from services.image_service import image
 from services.steam_service import steam
 
 router = APIRouter(prefix="/api/serverfiles", tags=["serverfiles"])
@@ -34,8 +35,51 @@ async def serverfiles_status(_user: str = Depends(auth.require_session)):
         "docker": docker_ok,
         "steamcmd_image": config.settings.steamcmd_image,
         "server_image": config.settings.reforger_server_image,
+        "server_image_present": (
+            await asyncio.to_thread(image.present) if docker_ok else False
+        ),
+        "server_image_job": image.job.snapshot() if image.job else None,
         "branches": [_branch_state(b) for b in config.BRANCHES],
     }
+
+
+@router.post("/image/pull", status_code=202)
+async def pull_server_image(_user: str = Depends(auth.require_session)):
+    """Pull the reforger runtime image the instances are created from (#50)."""
+    if not await asyncio.to_thread(docker_service.ping):
+        raise HTTPException(status_code=409, detail="Docker daemon is not reachable")
+    try:
+        job = await image.start()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return job.snapshot()
+
+
+@router.websocket("/image/ws")
+async def image_events(websocket: WebSocket):
+    if not auth.session_username(websocket.cookies.get(auth.COOKIE_NAME)):
+        await websocket.close(code=4401)
+        return
+    await websocket.accept()
+    job = image.job
+    await websocket.send_json({
+        "type": "snapshot",
+        "job": job.snapshot() if job else None,
+        "present": await asyncio.to_thread(image.present),
+        "log": list(job.log) if job else [],
+    })
+    queue = image.subscribe()
+    if queue is None:
+        await websocket.close()
+        return
+    try:
+        while True:
+            event = await queue.get()
+            await websocket.send_json(event)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        image.unsubscribe(queue)
 
 
 @router.delete("/{branch}", status_code=204)
