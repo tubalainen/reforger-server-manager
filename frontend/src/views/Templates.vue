@@ -54,9 +54,14 @@ onMounted(load)
       <div class="card-body">
         <p class="fs-1 mb-2">📋</p>
         <p class="mb-1">No templates yet.</p>
-        <p class="small mb-0">
+        <p class="small mb-2">
           Create one to pick a scenario from the Workshop, auto-resolve its mod
           dependencies, tune settings, and export <code>config.json</code>.
+        </p>
+        <p class="small mb-0">
+          Browse scenarios and mods on the
+          <a href="https://reforger.armaplatform.com/workshop" target="_blank" rel="noopener">
+            Arma Reforger Workshop</a>.
         </p>
       </div>
     </div>
