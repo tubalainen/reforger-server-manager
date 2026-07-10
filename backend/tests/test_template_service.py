@@ -25,6 +25,22 @@ def test_render_produces_valid_config():
     assert cfg["a2s"]["port"] == 17777
 
 
+def test_mod_version_written_only_when_locked():
+    # No lock -> config.json omits "version" so the server follows the latest
+    # Workshop release; a locked version is written verbatim (#60). The picker
+    # metadata (versions/explicit/dependencies) never reaches config.json.
+    spec = _spec(mods=[
+        {"modId": "AAAAAAAAAAAAAAAA", "name": "Dynamic", "versions": ["1.2.0", "1.1.0"]},
+        {"modId": "BBBBBBBBBBBBBBBB", "name": "Pinned", "version": "1.1.0",
+         "versions": ["1.2.0", "1.1.0"]},
+    ])
+    mods = spec.to_config()["game"]["mods"]
+    assert mods == [
+        {"modId": "AAAAAAAAAAAAAAAA", "name": "Dynamic"},
+        {"modId": "BBBBBBBBBBBBBBBB", "name": "Pinned", "version": "1.1.0"},
+    ]
+
+
 def test_rcon_omitted_unless_password_set():
     assert "rcon" not in _spec().to_config()
     assert _spec(rcon_password="secret").to_config()["rcon"]["password"] == "secret"

@@ -206,6 +206,23 @@ function requiredByNames(id) {
 
 const isEnabled = (id) => spec.mods.some((m) => m.modId === id && m.explicit)
 
+// ---- Per-mod version lock (issue #60) ---------------------------------------
+// `m.version` = null means "follow the Workshop's latest release" (config.json
+// omits the version). The picker lists the published history; a locked version
+// no longer in that list (imported/older template) stays selectable.
+function lockOptions(m) {
+  const opts = [...(m.versions || [])]
+  if (m.version && !opts.includes(m.version)) opts.unshift(m.version)
+  return opts
+}
+
+const anyLocked = computed(() => spec.mods.some((m) => m.version))
+
+function unlockAll() {
+  spec.mods = spec.mods.map((m) => ({ ...m, version: null }))
+  modNotice.value = 'All mods now follow the latest Workshop version.'
+}
+
 async function addModById(id) {
   modAdd.busy = true
   modAdd.error = ''
@@ -560,7 +577,8 @@ onMounted(async () => {
           <p class="text-secondary">
             Search the Workshop and add mods on top of the scenario. Dependencies are pulled
             in automatically; remove a mod and you'll be asked whether to drop the
-            dependencies it brought along.
+            dependencies it brought along. Mods follow the latest Workshop release unless
+            you lock a version — only locked versions are written to config.json.
           </p>
 
           <!-- Add mods: Workshop search + manual id -->
@@ -621,6 +639,12 @@ onMounted(async () => {
             <div class="btn-group btn-group-sm">
               <button
                 class="btn btn-outline-secondary"
+                :disabled="!anyLocked"
+                title="Clear every version lock so all mods follow the latest Workshop release"
+                @click="unlockAll"
+              >Unlock all</button>
+              <button
+                class="btn btn-outline-secondary"
                 :disabled="!spec.mods.length"
                 title="Save the enabled mod list to a JSON file"
                 @click="exportMods"
@@ -652,8 +676,16 @@ onMounted(async () => {
               <div class="me-2 text-truncate">
                 <span class="badge me-1" :class="modBadge(m).cls">{{ modBadge(m).text }}</span>
                 <span class="fw-semibold">{{ m.name || m.modId }}</span>
-                <small class="text-secondary d-block">v{{ m.version || '—' }} · {{ m.modId }}</small>
+                <small class="text-secondary d-block">{{ m.modId }}</small>
               </div>
+              <select
+                v-model="m.version"
+                class="form-select form-select-sm w-auto ms-auto me-2 flex-shrink-0"
+                :title="m.version ? 'Locked to v' + m.version : 'Follows the latest Workshop release'"
+              >
+                <option :value="null">latest</option>
+                <option v-for="v in lockOptions(m)" :key="v" :value="v">🔒 v{{ v }}</option>
+              </select>
               <div class="btn-group btn-group-sm flex-shrink-0">
                 <button
                   class="btn btn-outline-secondary"
@@ -689,8 +721,16 @@ onMounted(async () => {
               >
                 <div class="me-2 text-truncate">
                   <span class="text-truncate">{{ m.name || m.modId }}</span>
-                  <small class="text-secondary d-block">v{{ m.version || '—' }} · {{ m.modId }}</small>
+                  <small class="text-secondary d-block">{{ m.modId }}</small>
                 </div>
+                <select
+                  v-model="m.version"
+                  class="form-select form-select-sm w-auto ms-auto me-2 flex-shrink-0"
+                  :title="m.version ? 'Locked to v' + m.version : 'Follows the latest Workshop release'"
+                >
+                  <option :value="null">latest</option>
+                  <option v-for="v in lockOptions(m)" :key="v" :value="v">🔒 v{{ v }}</option>
+                </select>
                 <small
                   class="text-secondary flex-shrink-0"
                   :title="'Required by: ' + requiredByNames(m.modId)"

@@ -25,7 +25,8 @@ Docker image: `ghcr.io/tubalainen/reforger-server-manager:latest`
 - [x] Mod manager: search or paste-by-id to enable mods on top of a scenario —
       dependencies (and sub-dependencies) follow automatically; disabling a mod prompts
       whether to drop the dependencies it brought in; reorder mods and export/import the
-      mod list as JSON
+      mod list as JSON; mods follow the latest Workshop release by default, or **lock any
+      mod to a specific version** (only locked versions are written to `config.json`)
 - [x] Multiple concurrent server instances (stable + experimental side by side), each a
       Docker container spawned and supervised by the manager
 - [x] Live server logs in the browser (with a clear-window button), crash auto-restart
