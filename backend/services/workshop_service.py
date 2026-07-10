@@ -118,9 +118,17 @@ def parse_asset(page_props: dict) -> dict:
                 "size": dep.get("totalFileSize") or 0,
             })
 
+    # Published version history (newest first) so the user can lock a mod to a
+    # specific version instead of following the latest release (#60).
+    versions = [
+        v["version"] for v in asset.get("versions") or []
+        if isinstance(v, dict) and v.get("version")
+    ]
+
     summary = _row_summary(asset)
     summary["scenarios"] = scenarios
     summary["dependencies"] = dependencies
+    summary["versions"] = versions
     return summary
 
 
@@ -184,11 +192,12 @@ class WorkshopService:
         """Resolve an asset + its full recursive dependency tree.
 
         Returns {asset, root, mods, missing, total_size} where `mods` is a flat,
-        deduped list of {modId, name, version, dependencies:[ids]} ready for
-        config.json (the root asset first), `dependencies` are each mod's direct
-        dependency ids (the graph edges the mod manager needs, #55), `root` is
-        the requested asset's id, and `missing` lists ids that couldn't be
-        fetched.
+        deduped list of {modId, name, version, versions, dependencies:[ids]}
+        (the root asset first): `version` is the current Workshop release,
+        `versions` the published history for the version-lock picker (#60),
+        `dependencies` each mod's direct dependency ids (the graph edges the
+        mod manager needs, #55), `root` the requested asset's id, and `missing`
+        lists ids that couldn't be fetched.
         """
         root = self.get_asset(asset_id)
         mods: dict[str, dict] = {}
@@ -202,6 +211,7 @@ class WorkshopService:
                     "modId": mid,
                     "name": entry.get("name"),
                     "version": entry.get("version"),
+                    "versions": entry.get("versions") or [],
                     "dependencies": dep_ids,
                 }
             elif dep_ids and not mods[mid]["dependencies"]:
@@ -233,7 +243,8 @@ class WorkshopService:
             add(
                 {"id": dep_id,
                  "name": dep.get("name") or child.get("name"),
-                 "version": dep.get("version") or child.get("version")},
+                 "version": dep.get("version") or child.get("version"),
+                 "versions": child.get("versions")},
                 dep_ids_of(child),
             )
             queue.extend(child.get("dependencies") or [])

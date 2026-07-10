@@ -16,6 +16,8 @@ DEFAULT_SUPPORTED_PLATFORMS = ["PLATFORM_PC", "PLATFORM_XBL", "PLATFORM_PSN"]
 class ModEntry(BaseModel):
     modId: str
     name: str | None = None
+    # A user-locked version (#60). None = follow the Workshop's latest release:
+    # to_config then omits "version" so the server auto-updates the mod.
     version: str | None = None
     # Dependency metadata for the mod manager (#55). These never reach the
     # server's config.json (to_config strips mods to modId/name/version); they
@@ -23,6 +25,7 @@ class ModEntry(BaseModel):
     explicit: bool = True          # user/scenario chose it directly (a "root")
     from_scenario: bool = False    # pulled in by the currently selected scenario
     dependencies: list[str] = []   # direct dependency modIds (graph edges)
+    versions: list[str] = []       # published Workshop versions (lock picker, #60)
 
 
 class LaunchParams(BaseModel):

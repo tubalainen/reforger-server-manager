@@ -1,10 +1,13 @@
 // Pure helpers for the mod dependency graph (issue #55).
 //
-// A mod entry is { modId, name, version, explicit, from_scenario, dependencies }
-// where `explicit` marks a user/scenario-chosen "root", `dependencies` are the
-// direct dependency modIds (graph edges), and `from_scenario` flags the mod that
-// backs the currently selected scenario. These live only in the manager; the
-// server's config.json gets the flat modId/name/version list.
+// A mod entry is { modId, name, version, versions, explicit, from_scenario,
+// dependencies } where `version` is a user-locked version (null = follow the
+// Workshop's latest release, #60), `versions` is the published version history
+// for the lock picker, `explicit` marks a user/scenario-chosen "root",
+// `dependencies` are the direct dependency modIds (graph edges), and
+// `from_scenario` flags the mod that backs the currently selected scenario.
+// These live only in the manager; the server's config.json gets the flat
+// modId/name list, plus version only where the user locked one.
 
 export const MODS_FILE_FORMAT = 'reforger-server-manager/mods@1'
 
@@ -13,6 +16,7 @@ export function normalizeMod(m) {
     modId: m.modId,
     name: m.name ?? null,
     version: m.version ?? null,
+    versions: Array.isArray(m.versions) ? m.versions.filter(Boolean) : [],
     explicit: m.explicit ?? true,
     from_scenario: m.from_scenario ?? false,
     dependencies: Array.isArray(m.dependencies) ? m.dependencies.filter(Boolean) : [],
@@ -89,9 +93,11 @@ export function clearScenarioMods(mods) {
   return pruneOrphans(mods.filter((m) => !m.from_scenario))
 }
 
-// Merge a resolved add ({ root, mods:[{modId,name,version,dependencies}] }) into
-// the current list. The resolved root becomes explicit; the rest are added as
-// dependencies unless already present (an existing explicit mod stays explicit).
+// Merge a resolved add ({ root, mods:[{modId,name,version,versions,dependencies}] })
+// into the current list. The resolved root becomes explicit; the rest are added
+// as dependencies unless already present (an existing explicit mod stays
+// explicit). The resolved current version is deliberately NOT written into
+// `version` — that field is a user lock (#60) and defaults to "follow latest".
 export function mergeResolved(current, resolved, { fromScenario = false } = {}) {
   const byId = new Map(current.map((m) => [m.modId, { ...m }]))
   const rootId = resolved.root
@@ -100,7 +106,7 @@ export function mergeResolved(current, resolved, { fromScenario = false } = {}) 
     const existing = byId.get(rm.modId)
     if (existing) {
       if (rm.name) existing.name = rm.name
-      if (rm.version) existing.version = rm.version
+      if (rm.versions && rm.versions.length) existing.versions = rm.versions
       if (rm.dependencies && rm.dependencies.length) existing.dependencies = rm.dependencies
       if (isRoot) existing.explicit = true
       if (isRoot && fromScenario) existing.from_scenario = true
@@ -108,7 +114,8 @@ export function mergeResolved(current, resolved, { fromScenario = false } = {}) 
       byId.set(rm.modId, {
         modId: rm.modId,
         name: rm.name ?? null,
-        version: rm.version ?? null,
+        version: null,
+        versions: rm.versions || [],
         explicit: isRoot,
         from_scenario: isRoot && fromScenario,
         dependencies: rm.dependencies || [],

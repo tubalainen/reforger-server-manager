@@ -46,6 +46,8 @@ def test_parse_asset_simple_no_scenarios():
     assert asset["version"] == "1.2.0"
     assert asset["scenarios"] == []
     assert asset["dependencies"] == []
+    # published version history (newest first) feeds the lock picker (#60)
+    assert asset["versions"] == ["1.2.0", "1.1.0", "1.0.3", "1.0.2", "1.0.1", "1.0.0"]
 
 
 def test_parse_asset_with_scenarios_and_deps():
@@ -80,6 +82,7 @@ def test_resolve_dependencies_flattens_and_dedupes(monkeypatch):
                                  {"id": "CCCCCCCCCCCCCCCC", "name": "C", "version": "3.0", "size": 7},
                              ]},
         "CCCCCCCCCCCCCCCC": {"id": "CCCCCCCCCCCCCCCC", "name": "C", "version": "3.0", "size": 7,
+                             "versions": ["3.0", "2.9"],
                              "dependencies": []},
     }
     monkeypatch.setattr(ws.workshop, "get_asset", lambda aid, use_cache=True: graph[aid])
@@ -98,6 +101,9 @@ def test_resolve_dependencies_flattens_and_dedupes(monkeypatch):
     ]
     assert by_id["BBBBBBBBBBBBBBBB"]["dependencies"] == ["CCCCCCCCCCCCCCCC"]
     assert by_id["CCCCCCCCCCCCCCCC"]["dependencies"] == []
+    # version history rides along for the lock picker (#60); absent -> []
+    assert by_id["CCCCCCCCCCCCCCCC"]["versions"] == ["3.0", "2.9"]
+    assert by_id["BBBBBBBBBBBBBBBB"]["versions"] == []
 
 
 def test_resolve_dependencies_reports_missing(monkeypatch):

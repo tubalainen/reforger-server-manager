@@ -88,7 +88,7 @@ def test_mods_dependency_metadata_persists(logged_in):
     spec["mods"] = [
         {"modId": "AAAAAAAAAAAAAAAA", "name": "ACE", "version": "1.0",
          "explicit": True, "from_scenario": False,
-         "dependencies": ["BBBBBBBBBBBBBBBB"]},
+         "dependencies": ["BBBBBBBBBBBBBBBB"], "versions": ["1.1", "1.0"]},
         {"modId": "BBBBBBBBBBBBBBBB", "name": "ACE Core", "version": "1.0",
          "explicit": False, "from_scenario": False, "dependencies": []},
     ]
@@ -98,6 +98,8 @@ def test_mods_dependency_metadata_persists(logged_in):
     by_id = {m["modId"]: m for m in got}
     assert by_id["AAAAAAAAAAAAAAAA"]["explicit"] is True
     assert by_id["AAAAAAAAAAAAAAAA"]["dependencies"] == ["BBBBBBBBBBBBBBBB"]
+    # the version-lock picker's history survives the round trip too (#60)
+    assert by_id["AAAAAAAAAAAAAAAA"]["versions"] == ["1.1", "1.0"]
     assert by_id["BBBBBBBBBBBBBBBB"]["explicit"] is False
 
     # config.json is still the clean flat list the server understands
