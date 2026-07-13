@@ -73,6 +73,7 @@ def test_resolve_dependencies_flattens_and_dedupes(monkeypatch):
     # root A depends on B and C; B depends on C (shared) -> C appears once
     graph = {
         "AAAAAAAAAAAAAAAA": {"id": "AAAAAAAAAAAAAAAA", "name": "A", "version": "1.0", "size": 10,
+                             "scenarios": [{"scenario_id": "{Z}Missions/a.conf", "name": "A"}],
                              "dependencies": [
                                  {"id": "BBBBBBBBBBBBBBBB", "name": "B", "version": "2.0", "size": 5},
                                  {"id": "CCCCCCCCCCCCCCCC", "name": "C", "version": "3.0", "size": 7},
@@ -104,6 +105,11 @@ def test_resolve_dependencies_flattens_and_dedupes(monkeypatch):
     # version history rides along for the lock picker (#60); absent -> []
     assert by_id["CCCCCCCCCCCCCCCC"]["versions"] == ["3.0", "2.9"]
     assert by_id["BBBBBBBBBBBBBBBB"]["versions"] == []
+    # scenario-providing assets are flagged so the UI can warn about a second
+    # scenario added as a mod (#69); content-only deps are not
+    assert by_id["AAAAAAAAAAAAAAAA"]["provides_scenarios"] is True
+    assert by_id["BBBBBBBBBBBBBBBB"]["provides_scenarios"] is False
+    assert by_id["CCCCCCCCCCCCCCCC"]["provides_scenarios"] is False
 
 
 def test_resolve_dependencies_reports_missing(monkeypatch):

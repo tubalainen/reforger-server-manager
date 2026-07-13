@@ -192,9 +192,11 @@ class WorkshopService:
         """Resolve an asset + its full recursive dependency tree.
 
         Returns {asset, root, mods, missing, total_size} where `mods` is a flat,
-        deduped list of {modId, name, version, versions, dependencies:[ids]}
-        (the root asset first): `version` is the current Workshop release,
-        `versions` the published history for the version-lock picker (#60),
+        deduped list of {modId, name, version, versions, provides_scenarios,
+        dependencies:[ids]} (the root asset first): `version` is the current
+        Workshop release, `versions` the published history for the version-lock
+        picker (#60), `provides_scenarios` marks assets that publish their own
+        scenario(s) so the UI can flag a second scenario added as a mod (#69),
         `dependencies` each mod's direct dependency ids (the graph edges the
         mod manager needs, #55), `root` the requested asset's id, and `missing`
         lists ids that couldn't be fetched.
@@ -212,6 +214,7 @@ class WorkshopService:
                     "name": entry.get("name"),
                     "version": entry.get("version"),
                     "versions": entry.get("versions") or [],
+                    "provides_scenarios": bool(entry.get("scenarios")),
                     "dependencies": dep_ids,
                 }
             elif dep_ids and not mods[mid]["dependencies"]:
@@ -244,7 +247,8 @@ class WorkshopService:
                 {"id": dep_id,
                  "name": dep.get("name") or child.get("name"),
                  "version": dep.get("version") or child.get("version"),
-                 "versions": child.get("versions")},
+                 "versions": child.get("versions"),
+                 "scenarios": child.get("scenarios")},
                 dep_ids_of(child),
             )
             queue.extend(child.get("dependencies") or [])
