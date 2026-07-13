@@ -34,6 +34,9 @@ onMounted(async () => {
         <li class="nav-item">
           <router-link class="nav-link" active-class="active" to="/instances">Server Instances</router-link>
         </li>
+        <li class="nav-item">
+          <router-link class="nav-link" active-class="active" to="/guide">User Guide</router-link>
+        </li>
       </ul>
       <a
         v-if="version"

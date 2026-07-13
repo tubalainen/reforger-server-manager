@@ -5,6 +5,7 @@ import Instances from './views/Instances.vue'
 import InstanceDetail from './views/InstanceDetail.vue'
 import Templates from './views/Templates.vue'
 import TemplateWizard from './views/TemplateWizard.vue'
+import Guide from './views/Guide.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -23,6 +24,7 @@ const router = createRouter({
     { path: '/templates/:id/edit', name: 'template-edit', component: TemplateWizard, props: true },
     { path: '/instances', name: 'instances', component: Instances },
     { path: '/instances/:id', name: 'instance-detail', component: InstanceDetail, props: true },
+    { path: '/guide', name: 'guide', component: Guide },
     // Downloads moved onto the Instances page; keep the old path working.
     { path: '/downloads', redirect: '/instances' },
   ],
