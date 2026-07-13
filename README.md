@@ -35,6 +35,8 @@ Docker image: `ghcr.io/tubalainen/reforger-server-manager:latest`
 - [x] Scheduled restarts — set daily restart times per instance (server local time)
 - [x] Live status per instance (players, FPS, CPU, memory) and a **Connect** address that
       auto-detects the server's public IP from its log when `PUBLIC_ADDRESS` isn't set
+- [x] Built-in **User Guide** page: getting-started walkthrough, feature guide, FAQ and
+      links to the official Reforger documentation
 
 ## Architecture
 
