@@ -41,6 +41,14 @@ def test_mod_version_written_only_when_locked():
     ]
 
 
+def test_scenario_name_never_rendered_to_config():
+    # scenario_name is wizard display metadata (#59); the server's config.json
+    # only understands the raw game.scenarioId.
+    cfg_json = render_config_json(_spec(scenario_name="Conflict Everon"))
+    assert "scenario_name" not in cfg_json
+    assert "Conflict Everon" not in cfg_json
+
+
 def test_rcon_omitted_unless_password_set():
     assert "rcon" not in _spec().to_config()
     assert _spec(rcon_password="secret").to_config()["rcon"]["password"] == "secret"

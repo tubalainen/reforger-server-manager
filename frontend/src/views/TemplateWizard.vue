@@ -27,6 +27,7 @@ const spec = reactive({
   name: '',
   description: '',
   scenario_id: '',
+  scenario_name: '',
   mods: [],
   game_name: 'Arma Reforger Server',
   password: '',
@@ -121,9 +122,6 @@ const launchSwitchFields = [
   ['no_backend', 'No backend'],
 ]
 
-// Display metadata that isn't part of the spec but helps the user
-const chosenScenario = ref(null) // {scenario_id, name, from_asset}
-
 // ---- Workshop search (shared by Scenario + Mods steps) --------------------
 const search = reactive({ q: '', busy: false, results: [], error: '' })
 
@@ -167,15 +165,57 @@ async function pickScenarioAsset(row) {
   }
 }
 
+// The mission file name out of a scenarioId — the fallback display name for
+// templates saved before the name was persisted (#59).
+function scenarioFileName(id) {
+  const m = /([^/\\]+)\.conf$/i.exec(id || '')
+  return m ? m[1] : ''
+}
+
+const scenarioDisplayName = computed(
+  () => spec.scenario_name || scenarioFileName(spec.scenario_id) || spec.scenario_id,
+)
+// The Workshop mod backing the current scenario (none for base-game scenarios).
+const scenarioSourceMod = computed(() => spec.mods.find((m) => m.from_scenario) || null)
+
+// Mods that would leave with the current scenario: its own mods plus the
+// dependencies nothing else needs (user-added mods and shared deps survive).
+const scenarioDroppedMods = computed(() => {
+  const current = normalizeMods(spec.mods)
+  const kept = new Set(clearScenarioMods(current).map((m) => m.modId))
+  return current.filter((m) => !kept.has(m.modId))
+})
+
+// Failsafes (#59): replacing or removing the scenario asks first, spelling out
+// which mods go with it.
+const replacePrompt = ref(null) // { sc, res } awaiting confirmation
+const removeScenarioPrompt = ref(false)
+
 function chooseScenario(sc, res) {
+  if (spec.scenario_id && sc.scenario_id !== spec.scenario_id) {
+    replacePrompt.value = { sc, res }
+    return
+  }
+  applyScenario(sc, res)
+}
+
+function applyScenario(sc, res) {
   spec.scenario_id = sc.scenario_id
-  chosenScenario.value = { ...sc, from_asset: res.asset.name }
+  spec.scenario_name = sc.name || ''
   // Swap in this scenario's mod + full dependency tree, dropping the previous
   // scenario's mods (but keeping any also required by a user-added mod).
   spec.mods = mergeResolved(clearScenarioMods(normalizeMods(spec.mods)), res, {
     fromScenario: true,
   })
+  replacePrompt.value = null
   step.value = 2
+}
+
+function removeScenario() {
+  spec.mods = clearScenarioMods(normalizeMods(spec.mods))
+  spec.scenario_id = ''
+  spec.scenario_name = ''
+  removeScenarioPrompt.value = false
 }
 
 // ---- Step 2: mods ----------------------------------------------------------
@@ -390,7 +430,6 @@ async function importConfigFile(event) {
     // config.json has no template name; suggest one from the in-game name/file
     if (!spec.name) spec.name = imported.game_name || file.name.replace(/\.json$/i, '')
     if (spec.scenario_id) {
-      chosenScenario.value = { scenario_id: spec.scenario_id, name: spec.scenario_id }
       step.value = 3 // jump to Settings so the imported values can be reviewed
     }
     // else stay on step 1 so the user picks a scenario (config had none)
@@ -447,9 +486,6 @@ onMounted(async () => {
       spec.mods = normalizeMods(t.spec.mods)
       spec.name = t.name
       spec.description = t.description
-      if (spec.scenario_id) {
-        chosenScenario.value = { scenario_id: spec.scenario_id, name: spec.scenario_id }
-      }
     } catch (e) {
       error.value = e.message
     }
@@ -514,9 +550,31 @@ onMounted(async () => {
             </div>
           </div>
 
+          <!-- Current scenario (#59): what's picked now, with a way to clear it -->
+          <div v-if="spec.scenario_id" class="card border-info-subtle mb-3">
+            <div class="card-body py-2 d-flex flex-wrap justify-content-between align-items-center gap-2">
+              <div class="me-2" style="min-width: 0">
+                <div class="text-secondary small text-uppercase" style="letter-spacing: .04em">
+                  Current scenario
+                </div>
+                <div class="fw-semibold">{{ scenarioDisplayName }}</div>
+                <small class="text-secondary d-block text-break">{{ spec.scenario_id }}</small>
+                <small v-if="scenarioSourceMod" class="text-secondary">
+                  from Workshop mod "{{ scenarioSourceMod.name || scenarioSourceMod.modId }}"
+                </small>
+              </div>
+              <button
+                class="btn btn-outline-danger btn-sm flex-shrink-0"
+                title="Clear the scenario (and the mods it brought in)"
+                @click="removeScenarioPrompt = true"
+              >Remove scenario</button>
+            </div>
+          </div>
+
           <p class="text-secondary">
-            Search the Workshop and pick a scenario. Its mod and all dependencies are added
-            automatically.
+            {{ spec.scenario_id
+              ? 'To replace the scenario, search the Workshop and pick a new one — you\'ll be asked to confirm.'
+              : 'Search the Workshop and pick a scenario. Its mod and all dependencies are added automatically.' }}
           </p>
           <div class="input-group mb-3">
             <input
@@ -986,12 +1044,67 @@ onMounted(async () => {
         <div class="card position-sticky" style="top: 1rem">
           <div class="card-header d-flex justify-content-between align-items-center py-2">
             <span class="small fw-semibold">config.json preview</span>
-            <span v-if="chosenScenario" class="badge text-bg-secondary">scenario set</span>
+            <span v-if="spec.scenario_id" class="badge text-bg-secondary">scenario set</span>
           </div>
           <pre
             class="card-body bg-black text-light small mb-0 rounded-bottom"
             style="max-height: 70vh; overflow: auto; white-space: pre-wrap"
           >{{ preview || '// pick a scenario to see the config' }}</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Replace-scenario confirmation (issue #59) -->
+    <div v-if="replacePrompt" class="rsm-modal-backdrop" @click.self="replacePrompt = null">
+      <div class="card rsm-modal shadow">
+        <div class="card-body">
+          <h2 class="h6">Replace the current scenario?</h2>
+          <p class="small mb-2">
+            <span class="text-secondary">Current:</span> {{ scenarioDisplayName }}<br />
+            <span class="text-secondary">New:</span> {{ replacePrompt.sc.name }}
+            <span class="text-secondary">(from "{{ replacePrompt.res.asset.name }}")</span>
+          </p>
+          <p v-if="scenarioDroppedMods.length" class="small text-secondary mb-1">
+            {{ scenarioDroppedMods.length }} mod(s) that only the current scenario needs will
+            be removed (your own mods and shared dependencies are kept):
+          </p>
+          <ul v-if="scenarioDroppedMods.length" class="small mb-3" style="max-height: 10rem; overflow-y: auto">
+            <li v-for="m in scenarioDroppedMods" :key="m.modId">{{ m.name || m.modId }}</li>
+          </ul>
+          <p class="small text-secondary mb-3">
+            The new scenario adds {{ replacePrompt.res.mods.length }} mod(s) —
+            review them on the Mods step before saving.
+          </p>
+          <div class="d-flex flex-wrap gap-2 justify-content-end">
+            <button class="btn btn-sm btn-outline-secondary" @click="replacePrompt = null">Cancel</button>
+            <button class="btn btn-sm btn-primary" @click="applyScenario(replacePrompt.sc, replacePrompt.res)">
+              Replace scenario
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Remove-scenario confirmation (issue #59) -->
+    <div v-if="removeScenarioPrompt" class="rsm-modal-backdrop" @click.self="removeScenarioPrompt = false">
+      <div class="card rsm-modal shadow">
+        <div class="card-body">
+          <h2 class="h6">Remove "{{ scenarioDisplayName }}"?</h2>
+          <p v-if="scenarioDroppedMods.length" class="small text-secondary mb-1">
+            {{ scenarioDroppedMods.length }} mod(s) it brought in will be removed with it
+            (your own mods and shared dependencies are kept):
+          </p>
+          <ul v-if="scenarioDroppedMods.length" class="small mb-2" style="max-height: 10rem; overflow-y: auto">
+            <li v-for="m in scenarioDroppedMods" :key="m.modId">{{ m.name || m.modId }}</li>
+          </ul>
+          <p class="small text-secondary mb-3">
+            A template needs a scenario, so you'll have to pick a new one before this
+            template can be saved. Nothing changes until you save.
+          </p>
+          <div class="d-flex flex-wrap gap-2 justify-content-end">
+            <button class="btn btn-sm btn-outline-secondary" @click="removeScenarioPrompt = false">Cancel</button>
+            <button class="btn btn-sm btn-danger" @click="removeScenario">Remove scenario</button>
+          </div>
         </div>
       </div>
     </div>

@@ -22,6 +22,9 @@ class Template(SQLModel, table=True):
     name: str = Field(index=True, unique=True)
     description: str = ""
     config_json: str
+    # Display name of the selected scenario (config.json only keeps the raw
+    # scenarioId) so the edit wizard can show what's currently picked (#59)
+    scenario_name: str = ""
     launch_params_json: str = "{}"  # engine launch params (issue #20)
     # Enriched mod list with dependency metadata the flat config.json can't hold
     # (explicit vs dependency, edges) — the editing source of truth for mods (#55)
@@ -110,5 +113,12 @@ def _migrate(engine) -> None:
         if "mods_json" not in tcols:
             conn.execute(text(
                 "ALTER TABLE template ADD COLUMN mods_json VARCHAR NOT NULL DEFAULT ''"
+            ))
+            conn.commit()
+        # scenario display name for the edit wizard (issue #59); empty = show
+        # the raw scenarioId for templates saved before this
+        if "scenario_name" not in tcols:
+            conn.execute(text(
+                "ALTER TABLE template ADD COLUMN scenario_name VARCHAR NOT NULL DEFAULT ''"
             ))
             conn.commit()

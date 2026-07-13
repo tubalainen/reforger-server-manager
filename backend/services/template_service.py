@@ -119,6 +119,9 @@ class TemplateSpec(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str = ""
     scenario_id: str = Field(min_length=1)
+    # Scenario display name for the wizard (#59); config.json only holds the
+    # raw scenarioId, so this is persisted separately and never rendered.
+    scenario_name: str = ""
     mods: list[ModEntry] = []
     launch: LaunchParams = Field(default_factory=LaunchParams)
 
@@ -276,6 +279,8 @@ def spec_from_config(config_json: str) -> dict:
     rcon = cfg.get("rcon", {})
     return {
         "scenario_id": game.get("scenarioId", ""),
+        "scenario_name": "",  # not part of config.json; filled from the DB row
+
         "mods": game.get("mods", []),
         "game_name": game.get("name", ""),
         "password": game.get("password", ""),
