@@ -110,6 +110,26 @@ def test_mods_dependency_metadata_persists(logged_in):
     ]
 
 
+def test_scenario_name_persists_and_roundtrips(logged_in):
+    # The scenario display name survives save+load so the edit wizard can show
+    # the current scenario (#59), but stays out of the server's config.json.
+    spec = _spec("Named scenario") | {"scenario_name": "Conflict Everon"}
+    tid = logged_in.post("/api/templates", json=spec).json()["id"]
+    assert logged_in.get(f"/api/templates/{tid}").json()["spec"]["scenario_name"] == "Conflict Everon"
+
+    cfg = logged_in.get(f"/api/templates/{tid}/config.json").json()
+    assert "scenario_name" not in json.dumps(cfg)
+
+    # replacing the scenario updates the stored name too
+    logged_in.put(
+        f"/api/templates/{tid}",
+        json=spec | {"scenario_id": "{DEAD}Missions/Other.conf", "scenario_name": "Other"},
+    )
+    got = logged_in.get(f"/api/templates/{tid}").json()["spec"]
+    assert got["scenario_id"] == "{DEAD}Missions/Other.conf"
+    assert got["scenario_name"] == "Other"
+
+
 def test_preview_without_saving(logged_in):
     r = logged_in.post("/api/templates/preview", json=_spec())
     assert r.status_code == 200

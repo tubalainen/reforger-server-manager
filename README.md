@@ -21,7 +21,9 @@ Docker image: `ghcr.io/tubalainen/reforger-server-manager:latest`
 - [x] Server templates: pick a scenario straight from the
       [Workshop](https://reforger.armaplatform.com/workshop), auto-resolve all mod
       dependencies, add extra mods, tune settings, save — and download the resulting
-      `config.json`; or **upload an existing `config.json`** to pre-fill the wizard
+      `config.json`; or **upload an existing `config.json`** to pre-fill the wizard;
+      the wizard shows the currently selected scenario and asks before a
+      replace/remove drops the mods it brought in
 - [x] Mod manager: search or paste-by-id to enable mods on top of a scenario —
       dependencies (and sub-dependencies) follow automatically; disabling a mod prompts
       whether to drop the dependencies it brought in; reorder mods and export/import the
