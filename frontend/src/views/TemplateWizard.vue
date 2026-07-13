@@ -246,6 +246,39 @@ function requiredByNames(id) {
 
 const isEnabled = (id) => spec.mods.some((m) => m.modId === id && m.explicit)
 
+// ---- Version-history hydration (issue #60 bug) ------------------------------
+// Templates saved before v0.22 (and mods imported from a config.json or an
+// older mods JSON) carry no published-version history, so the lock picker
+// showed only "latest". Refetch histories from the Workshop in the background
+// whenever the wizard loads an existing mod list; failures are ignored (the
+// picker degrades to "latest" + the locked version, as before).
+const hydratingVersions = ref(false)
+
+async function hydrateVersionHistories() {
+  const ids = spec.mods.map((m) => m.modId)
+  if (!ids.length) return
+  hydratingVersions.value = true
+  const queue = [...ids]
+  async function worker() {
+    while (queue.length) {
+      const id = queue.shift()
+      try {
+        const asset = await api(`/api/workshop/asset/${id}`)
+        // Look the mod up again: the list may have changed while fetching.
+        const mod = spec.mods.find((m) => m.modId === id)
+        if (mod && asset.versions?.length) {
+          mod.versions = asset.versions
+          if (!mod.name) mod.name = asset.name
+        }
+      } catch {
+        /* Workshop unreachable or mod unlisted — keep the picker as-is */
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(4, ids.length) }, worker))
+  hydratingVersions.value = false
+}
+
 // ---- Per-mod version lock (issue #60) ---------------------------------------
 // `m.version` = null means "follow the Workshop's latest release" (config.json
 // omits the version). The picker lists the published history; a locked version
@@ -368,6 +401,7 @@ async function importMods(event) {
     }
     spec.mods = normalizeMods(list)
     modNotice.value = `Loaded ${spec.mods.length} mod(s) from ${file.name}.`
+    hydrateVersionHistories()
   } catch (e) {
     modAdd.error = `Could not import mods: ${e.message}`
   } finally {
@@ -427,6 +461,7 @@ async function importConfigFile(event) {
     spec.launch = { ...launchDefaults, ...(imported.launch || {}) }
     // config.json has only a flat mods[]; treat each as an explicit pick (#55)
     spec.mods = normalizeMods(imported.mods)
+    hydrateVersionHistories()
     // config.json has no template name; suggest one from the in-game name/file
     if (!spec.name) spec.name = imported.game_name || file.name.replace(/\.json$/i, '')
     if (spec.scenario_id) {
@@ -486,6 +521,7 @@ onMounted(async () => {
       spec.mods = normalizeMods(t.spec.mods)
       spec.name = t.name
       spec.description = t.description
+      hydrateVersionHistories() // deliberately not awaited — fills pickers as results land
     } catch (e) {
       error.value = e.message
     }
@@ -693,7 +729,13 @@ onMounted(async () => {
 
           <!-- Enabled mods overview -->
           <div class="d-flex justify-content-between align-items-center mt-3 mb-2">
-            <h2 class="h6 mb-0">Enabled mods ({{ spec.mods.length }})</h2>
+            <h2 class="h6 mb-0">
+              Enabled mods ({{ spec.mods.length }})
+              <small v-if="hydratingVersions" class="text-secondary fw-normal ms-1">
+                <span class="spinner-border spinner-border-sm me-1" style="width: .75rem; height: .75rem"></span>
+                fetching version history…
+              </small>
+            </h2>
             <div class="btn-group btn-group-sm">
               <button
                 class="btn btn-outline-secondary"
