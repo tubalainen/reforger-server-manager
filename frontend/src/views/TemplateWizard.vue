@@ -231,10 +231,37 @@ const byModId = (id) => spec.mods.find((m) => m.modId === id)
 const explicitMods = computed(() => spec.mods.filter((m) => m.explicit))
 const dependencyMods = computed(() => spec.mods.filter((m) => !m.explicit))
 
+// Badge per mod (#69): "scenario" = the mod providing the selected scenario,
+// "scenario dependency" = needed for that scenario to work, "addon" = an extra
+// the user chose on top, "dependency" = pulled in by an addon.
 function modBadge(m) {
-  if (m.from_scenario) return { text: 'scenario', cls: 'text-bg-info' }
-  if (m.explicit) return { text: 'added', cls: 'text-bg-primary' }
-  return { text: 'dependency', cls: 'text-bg-secondary' }
+  if (m.from_scenario) {
+    return {
+      text: 'scenario',
+      cls: 'text-bg-info',
+      title: 'Provides the selected scenario — change the scenario on step 1 to remove it',
+    }
+  }
+  const roots = requiredBy(spec.mods, m.modId)
+  if (roots.some((r) => r.from_scenario)) {
+    return {
+      text: 'scenario dependency',
+      cls: 'text-bg-secondary',
+      title: "Required by the scenario's mod — the scenario won't work without it",
+    }
+  }
+  if (m.explicit) {
+    return {
+      text: 'addon',
+      cls: 'text-bg-primary',
+      title: 'Extra mod chosen on top of the scenario — not needed by the scenario itself',
+    }
+  }
+  return {
+    text: 'dependency',
+    cls: 'text-bg-secondary',
+    title: 'Pulled in automatically because an enabled mod requires it',
+  }
 }
 
 // Names of the explicit mods that pulled in a given dependency (for its tooltip).
@@ -246,12 +273,14 @@ function requiredByNames(id) {
 
 const isEnabled = (id) => spec.mods.some((m) => m.modId === id && m.explicit)
 
-// ---- Version-history hydration (issue #60 bug) ------------------------------
+// ---- Workshop metadata hydration (issues #60, #69) ---------------------------
 // Templates saved before v0.22 (and mods imported from a config.json or an
-// older mods JSON) carry no published-version history, so the lock picker
-// showed only "latest". Refetch histories from the Workshop in the background
-// whenever the wizard loads an existing mod list; failures are ignored (the
-// picker degrades to "latest" + the locked version, as before).
+// older mods JSON) carry no published-version history, no dependency edges and
+// no scenario flag: the lock picker showed only "latest" (#60) and every mod
+// was badged "added" — even the one backing the scenario (#69). Refetch each
+// mod's Workshop detail in the background whenever the wizard loads an
+// existing mod list and fill in what's missing; failures are ignored (the UI
+// degrades to what the saved template already had).
 const hydratingVersions = ref(false)
 
 async function hydrateVersionHistories() {
@@ -266,12 +295,25 @@ async function hydrateVersionHistories() {
         const asset = await api(`/api/workshop/asset/${id}`)
         // Look the mod up again: the list may have changed while fetching.
         const mod = spec.mods.find((m) => m.modId === id)
-        if (mod && asset.versions?.length) {
-          mod.versions = asset.versions
-          if (!mod.name) mod.name = asset.name
+        if (!mod) continue
+        if (asset.versions?.length) mod.versions = asset.versions
+        if (!mod.name) mod.name = asset.name
+        // Imported lists have no graph edges — take the asset's direct deps
+        // so the "scenario dependency" / "required by" markers work (#69).
+        if (!mod.dependencies?.length && asset.dependencies?.length) {
+          mod.dependencies = asset.dependencies.map((d) => d.id).filter(Boolean)
+        }
+        // Recognise the mod backing the current scenario when the flag was
+        // never stored (config.json imports); trust an existing flag if set.
+        if (
+          spec.scenario_id &&
+          !spec.mods.some((m2) => m2.from_scenario) &&
+          asset.scenarios?.some((sc) => sc.scenario_id === spec.scenario_id)
+        ) {
+          mod.from_scenario = true
         }
       } catch {
-        /* Workshop unreachable or mod unlisted — keep the picker as-is */
+        /* Workshop unreachable or mod unlisted — keep the row as-is */
       }
     }
   }
@@ -674,6 +716,13 @@ onMounted(async () => {
             dependencies it brought along. Mods follow the latest Workshop release unless
             you lock a version — only locked versions are written to config.json.
           </p>
+          <p class="text-secondary small">
+            <span class="badge text-bg-info">scenario</span> provides the selected scenario ·
+            <span class="badge text-bg-secondary">scenario dependency</span> needed for the
+            scenario to work ·
+            <span class="badge text-bg-primary">addon</span> extra mod you chose ·
+            <span class="badge text-bg-secondary">dependency</span> pulled in by an addon
+          </p>
 
           <!-- Add mods: Workshop search + manual id -->
           <div class="input-group mb-2">
@@ -774,7 +823,11 @@ onMounted(async () => {
               class="list-group-item d-flex justify-content-between align-items-center py-2"
             >
               <div class="me-2 text-truncate">
-                <span class="badge me-1" :class="modBadge(m).cls">{{ modBadge(m).text }}</span>
+                <span
+                  class="badge me-1"
+                  :class="modBadge(m).cls"
+                  :title="modBadge(m).title"
+                >{{ modBadge(m).text }}</span>
                 <span class="fw-semibold">{{ m.name || m.modId }}</span>
                 <small class="text-secondary d-block">{{ m.modId }}</small>
               </div>

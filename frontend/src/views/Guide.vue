@@ -187,7 +187,10 @@ const faq = [
             Dependencies (and their dependencies) come along automatically and are removed
             again when nothing needs them. Mods follow the latest Workshop release unless
             you lock a version. The mod list can be exported/imported as JSON to share
-            between templates or friends.
+            between templates or friends. Badges show each mod's role:
+            <em>scenario</em> (provides the scenario), <em>scenario dependency</em>
+            (needed for the scenario to work), <em>addon</em> (an extra you chose) and
+            <em>dependency</em> (pulled in by an addon).
           </li>
           <li class="mb-2">
             <strong>Settings:</strong> server name, passwords, player limit and view
