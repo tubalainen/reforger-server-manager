@@ -189,8 +189,10 @@ const faq = [
             you lock a version. The mod list can be exported/imported as JSON to share
             between templates or friends. Badges show each mod's role:
             <em>scenario</em> (provides the scenario), <em>scenario dependency</em>
-            (needed for the scenario to work), <em>addon</em> (an extra you chose) and
-            <em>dependency</em> (pulled in by an addon).
+            (needed for the scenario to work), <em>addon</em> (an extra you chose),
+            <em>dependency</em> (pulled in by an addon) and <em>scenario mod</em> (an addon
+            that carries its own scenario — only the scenario picked on step 1 actually
+            runs, since a server hosts one scenario at a time).
           </li>
           <li class="mb-2">
             <strong>Settings:</strong> server name, passwords, player limit and view

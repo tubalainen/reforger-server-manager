@@ -26,6 +26,9 @@ class ModEntry(BaseModel):
     from_scenario: bool = False    # pulled in by the currently selected scenario
     dependencies: list[str] = []   # direct dependency modIds (graph edges)
     versions: list[str] = []       # published Workshop versions (lock picker, #60)
+    # This asset publishes its own scenario(s). Used to flag a mod that would
+    # add a *second* scenario as a plain addon (#69) — a server runs only one.
+    provides_scenarios: bool = False
 
 
 class LaunchParams(BaseModel):

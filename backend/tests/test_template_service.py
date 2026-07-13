@@ -41,6 +41,18 @@ def test_mod_version_written_only_when_locked():
     ]
 
 
+def test_provides_scenarios_flag_kept_out_of_config():
+    # The flag marks a mod that carries its own scenario (#69) — editing
+    # metadata only; the server's config.json still gets the clean mod entry.
+    spec = _spec(mods=[
+        {"modId": "AAAAAAAAAAAAAAAA", "name": "Overthrow", "provides_scenarios": True},
+    ])
+    assert spec.mods[0].provides_scenarios is True
+    cfg = spec.to_config()
+    assert cfg["game"]["mods"] == [{"modId": "AAAAAAAAAAAAAAAA", "name": "Overthrow"}]
+    assert "provides_scenarios" not in render_config_json(spec)
+
+
 def test_scenario_name_never_rendered_to_config():
     # scenario_name is wizard display metadata (#59); the server's config.json
     # only understands the raw game.scenarioId.

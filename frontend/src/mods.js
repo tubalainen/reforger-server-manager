@@ -19,6 +19,7 @@ export function normalizeMod(m) {
     versions: Array.isArray(m.versions) ? m.versions.filter(Boolean) : [],
     explicit: m.explicit ?? true,
     from_scenario: m.from_scenario ?? false,
+    provides_scenarios: m.provides_scenarios ?? false,
     dependencies: Array.isArray(m.dependencies) ? m.dependencies.filter(Boolean) : [],
   }
 }
@@ -93,7 +94,8 @@ export function clearScenarioMods(mods) {
   return pruneOrphans(mods.filter((m) => !m.from_scenario))
 }
 
-// Merge a resolved add ({ root, mods:[{modId,name,version,versions,dependencies}] })
+// Merge a resolved add ({ root, mods:[{modId,name,version,versions,
+// provides_scenarios,dependencies}] })
 // into the current list. The resolved root becomes explicit; the rest are added
 // as dependencies unless already present (an existing explicit mod stays
 // explicit). The resolved current version is deliberately NOT written into
@@ -108,6 +110,7 @@ export function mergeResolved(current, resolved, { fromScenario = false } = {}) 
       if (rm.name) existing.name = rm.name
       if (rm.versions && rm.versions.length) existing.versions = rm.versions
       if (rm.dependencies && rm.dependencies.length) existing.dependencies = rm.dependencies
+      if (rm.provides_scenarios != null) existing.provides_scenarios = rm.provides_scenarios
       if (isRoot) existing.explicit = true
       if (isRoot && fromScenario) existing.from_scenario = true
     } else {
@@ -118,6 +121,7 @@ export function mergeResolved(current, resolved, { fromScenario = false } = {}) 
         versions: rm.versions || [],
         explicit: isRoot,
         from_scenario: isRoot && fromScenario,
+        provides_scenarios: rm.provides_scenarios ?? false,
         dependencies: rm.dependencies || [],
       })
     }

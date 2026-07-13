@@ -231,9 +231,24 @@ const byModId = (id) => spec.mods.find((m) => m.modId === id)
 const explicitMods = computed(() => spec.mods.filter((m) => m.explicit))
 const dependencyMods = computed(() => spec.mods.filter((m) => !m.explicit))
 
+// Is `m` required (transitively) by the mod backing the selected scenario?
+function requiredByScenario(m) {
+  return requiredBy(spec.mods, m.modId).some((r) => r.from_scenario)
+}
+
+// A user-added mod that publishes its own scenario(s) but isn't the selected
+// one — i.e. a *second* scenario slipped in as a mod (#69). A Reforger server
+// runs a single scenario, so this is flagged, not silently treated as an addon.
+function isExtraScenarioMod(m) {
+  return m.explicit && m.provides_scenarios && !m.from_scenario && !requiredByScenario(m)
+}
+
+const extraScenarioMods = computed(() => spec.mods.filter(isExtraScenarioMod))
+
 // Badge per mod (#69): "scenario" = the mod providing the selected scenario,
-// "scenario dependency" = needed for that scenario to work, "addon" = an extra
-// the user chose on top, "dependency" = pulled in by an addon.
+// "scenario dependency" = needed for that scenario to work, "scenario mod" =
+// an added mod that carries its own (unused) scenario, "addon" = an extra the
+// user chose on top, "dependency" = pulled in by an addon.
 function modBadge(m) {
   if (m.from_scenario) {
     return {
@@ -242,12 +257,21 @@ function modBadge(m) {
       title: 'Provides the selected scenario — change the scenario on step 1 to remove it',
     }
   }
-  const roots = requiredBy(spec.mods, m.modId)
-  if (roots.some((r) => r.from_scenario)) {
+  if (requiredByScenario(m)) {
     return {
       text: 'scenario dependency',
       cls: 'text-bg-secondary',
       title: "Required by the scenario's mod — the scenario won't work without it",
+    }
+  }
+  if (isExtraScenarioMod(m)) {
+    return {
+      text: 'scenario mod',
+      cls: 'text-bg-warning',
+      title:
+        'This mod publishes its own scenario(s). A server runs only the scenario picked on ' +
+        'step 1 — this is enabled for its content, not as a second playable scenario. To ' +
+        'play its scenario, set it on step 1 instead.',
     }
   }
   if (m.explicit) {
@@ -298,6 +322,9 @@ async function hydrateVersionHistories() {
         if (!mod) continue
         if (asset.versions?.length) mod.versions = asset.versions
         if (!mod.name) mod.name = asset.name
+        // Flag mods that publish their own scenario(s) so a second scenario
+        // added as a mod is called out rather than badged a plain addon (#69).
+        mod.provides_scenarios = !!asset.scenarios?.length
         // Imported lists have no graph edges — take the asset's direct deps
         // so the "scenario dependency" / "required by" markers work (#69).
         if (!mod.dependencies?.length && asset.dependencies?.length) {
@@ -347,6 +374,14 @@ async function addModById(id) {
     spec.mods = mergeResolved(normalizeMods(spec.mods), res)
     if (res.missing?.length) {
       modAdd.error = `Added, but ${res.missing.length} dependency(ies) could not be resolved.`
+    }
+    // Warn if the mod just added carries its own scenario (#69).
+    const rootMod = byModId(res.root)
+    if (rootMod && isExtraScenarioMod(rootMod)) {
+      modNotice.value =
+        `"${rootMod.name || rootMod.modId}" publishes its own scenario(s). A server runs only ` +
+        `the scenario picked on step 1, so this is enabled for its content — to play its ` +
+        `scenario, set it on step 1 instead.`
     }
   } catch (e) {
     modAdd.error = e.message
@@ -721,8 +756,26 @@ onMounted(async () => {
             <span class="badge text-bg-secondary">scenario dependency</span> needed for the
             scenario to work ·
             <span class="badge text-bg-primary">addon</span> extra mod you chose ·
-            <span class="badge text-bg-secondary">dependency</span> pulled in by an addon
+            <span class="badge text-bg-secondary">dependency</span> pulled in by an addon ·
+            <span class="badge text-bg-warning">scenario mod</span> an addon that carries its
+            own (unused) scenario
           </p>
+
+          <!-- A second scenario slipped in as a mod (#69): a server runs one. -->
+          <div v-if="extraScenarioMods.length" class="alert alert-warning py-2 small">
+            <template v-if="extraScenarioMods.length === 1">
+              <strong>{{ extraScenarioMods[0].name || extraScenarioMods[0].modId }}</strong>
+              publishes its own scenario. A Reforger server runs only the one scenario picked
+              on step 1, so it stays enabled for its content, not as a second playable
+              scenario. To play it instead, set it as the scenario on step 1.
+            </template>
+            <template v-else>
+              <strong>{{ extraScenarioMods.map((m) => m.name || m.modId).join(', ') }}</strong>
+              publish their own scenarios. A Reforger server runs only the one scenario picked
+              on step 1, so they stay enabled for their content, not as extra playable
+              scenarios. To play one instead, set it as the scenario on step 1.
+            </template>
+          </div>
 
           <!-- Add mods: Workshop search + manual id -->
           <div class="input-group mb-2">
