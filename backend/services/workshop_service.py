@@ -59,6 +59,24 @@ def extract_build_id(html: str) -> str | None:
         return None
 
 
+def asset_kind(tags: list) -> str:
+    """scenario | terrain | addon, from the Workshop's own tags.
+
+    A TERRAIN ships scenarios of its own (a map is playable), which is easy to
+    miss: the Visingsö terrain is tagged only TERRAINS yet publishes both a
+    Conflict and a Game Master scenario. So terrains belong in the scenario
+    picker, and the old "SCENARIO in tags" hint was simply wrong about them.
+    Assets tagged both are called scenarios — that is what they advertise.
+    The authoritative scenario list always comes from the asset detail.
+    """
+    upper = [(t or "").upper() for t in tags]
+    if any("SCENARIO" in t for t in upper):
+        return "scenario"
+    if any("TERRAIN" in t for t in upper):
+        return "terrain"
+    return "addon"
+
+
 def _row_summary(row: dict) -> dict:
     """Slim a search/detail asset row down to what the UI needs."""
     tags = [t.get("name") if isinstance(t, dict) else t for t in row.get("tags") or []]
@@ -72,8 +90,7 @@ def _row_summary(row: dict) -> dict:
         "rating": row.get("averageRating"),
         "author": (row.get("author") or {}).get("username"),
         "tags": tags,
-        # Heuristic hint for the scenario picker; authoritative list is on detail
-        "has_scenarios": any("SCENARIO" in (t or "").upper() for t in tags),
+        "kind": asset_kind(tags),
     }
 
 

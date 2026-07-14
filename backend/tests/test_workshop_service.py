@@ -35,8 +35,20 @@ def test_parse_search_fixture():
     assert result["count"] > 0
     assert len(result["rows"]) > 0
     row = result["rows"][0]
-    assert set(row) >= {"id", "name", "type", "version", "size", "tags", "has_scenarios"}
+    assert set(row) >= {"id", "name", "type", "version", "size", "tags", "kind"}
     assert all(len(r["id"]) == 16 for r in result["rows"])
+
+
+def test_asset_kind_calls_a_terrain_a_terrain():
+    # A terrain publishes scenarios of its own — the Visingsö map is tagged only
+    # TERRAINS yet ships a Conflict and a Game Master scenario — so it belongs in
+    # the scenario picker. The old "SCENARIO in tags" hint said otherwise.
+    assert ws.asset_kind(["TERRAINS"]) == "terrain"
+    assert ws.asset_kind(["SCENARIOS_MP", "SCENARIOS_SP"]) == "scenario"
+    # advertises scenarios AND ships a map: call it what it advertises
+    assert ws.asset_kind(["SCENARIOS_MP", "TERRAINS"]) == "scenario"
+    assert ws.asset_kind(["CHARACTERS", "WEAPONS"]) == "addon"
+    assert ws.asset_kind([]) == "addon"
 
 
 def test_parse_asset_simple_no_scenarios():
