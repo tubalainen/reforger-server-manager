@@ -1,6 +1,6 @@
 """Template CRUD + config.json export (auth-gated)."""
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from fastapi.responses import Response
@@ -103,7 +103,7 @@ async def update_template(
         t.scenario_player_count = spec.scenario_player_count
         t.launch_params_json = spec.launch.model_dump_json()
         t.mods_json = _mods_json(spec)
-        t.updated_at = datetime.now(timezone.utc)
+        t.updated_at = datetime.now(UTC)
         session.add(t)
         session.commit()
         session.refresh(t)
@@ -169,5 +169,5 @@ async def import_config(
     except (ValueError, TypeError, AttributeError) as exc:
         raise HTTPException(
             status_code=400, detail=f"Not a valid Reforger config.json: {exc}"
-        )
+        ) from exc
     return {"spec": spec}

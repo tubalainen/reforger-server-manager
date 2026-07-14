@@ -74,7 +74,7 @@ async def create_instance(body: CreateInstance, _user: str = Depends(auth.requir
             body.game_port, body.a2s_port, body.rcon_port,
         )
     except InstanceError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return await asyncio.to_thread(_view, inst.id)
 
 
@@ -95,14 +95,14 @@ async def stats(instance_id: int, _user: str = Depends(auth.require_session)):
     try:
         return await asyncio.to_thread(instance_service.instance_stats, instance_id)
     except InstanceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 def _action(fn, instance_id: int):
     try:
         fn(instance_id)
     except InstanceError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/{instance_id}/start")
@@ -132,7 +132,7 @@ async def edit_instance(
             instance_service.edit_instance, instance_id, body.name, body.branch
         )
     except InstanceError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return await asyncio.to_thread(_view, instance_id)
 
 
@@ -146,7 +146,7 @@ async def update_ports(
             instance_id, body.game_port, body.a2s_port, body.rcon_port,
         )
     except InstanceError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return await asyncio.to_thread(_view, instance_id)
 
 
@@ -159,7 +159,7 @@ async def set_template(
             instance_service.set_instance_template, instance_id, body.template_id
         )
     except InstanceError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return await asyncio.to_thread(_view, instance_id)
 
 
@@ -173,7 +173,7 @@ async def restart_settings(
             instance_id, body.auto_restart, body.auto_start,
         )
     except InstanceError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return await asyncio.to_thread(_view, instance_id)
 
 
@@ -186,7 +186,7 @@ async def restart_schedule(
             instance_service.set_restart_schedule, instance_id, body.times
         )
     except InstanceError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return await asyncio.to_thread(_view, instance_id)
 
 
@@ -201,7 +201,7 @@ async def instance_data(instance_id: int, _user: str = Depends(auth.require_sess
     try:
         return await asyncio.to_thread(instance_service.instance_data, instance_id)
     except InstanceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/{instance_id}/data/clear")
@@ -214,7 +214,7 @@ async def clear_instance_data(
             instance_service.clear_instance_data, instance_id, body.targets
         )
     except InstanceError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/{instance_id}/logfiles")
@@ -231,7 +231,7 @@ async def download_logfile(
             instance_service.resolve_log_file, instance_id, path
         )
     except InstanceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return FileResponse(target, filename=target.name, media_type="text/plain")
 
 

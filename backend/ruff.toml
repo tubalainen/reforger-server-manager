@@ -1,0 +1,15 @@
+# Lint config for the backend. Deliberately small: the point is to catch the
+# things review keeps missing (unused imports/variables, shadowing), not to
+# relitigate style.
+line-length = 100
+target-version = "py312"
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = [
+    "E501",  # long lines: the comments here explain WHY, and are worth the width
+    "B008",  # FastAPI's Depends() in defaults is the documented idiom
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["E402"]  # tests set env vars before importing config, by design

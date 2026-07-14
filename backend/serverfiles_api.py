@@ -51,7 +51,7 @@ async def pull_server_image(_user: str = Depends(auth.require_session)):
     try:
         job = await image.start()
     except RuntimeError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return job.snapshot()
 
 
@@ -97,7 +97,7 @@ async def remove_serverfiles(branch: str, _user: str = Depends(auth.require_sess
     try:
         await asyncio.to_thread(steam.remove_files, branch)
     except RuntimeError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/{branch}/check-update")
@@ -115,7 +115,7 @@ async def start_download(branch: str, _user: str = Depends(auth.require_session)
     try:
         job = await steam.start(branch)
     except RuntimeError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return job.snapshot()
 
 

@@ -1,6 +1,10 @@
-fastapi>=0.115
-uvicorn[standard]>=0.30
-itsdangerous>=2.2
-sqlmodel>=0.0.22
-docker>=7.1
-httpx>=0.27
+# Compatible-release pins (~=): patch/minor updates are allowed, a new MAJOR/minor
+# that could break us is not. Unpinned ">=" meant the published image was not
+# reproducible — a breaking upstream release would land in it with no code change
+# on our side, and no way to tell which build was affected (#86).
+fastapi~=0.136.1
+uvicorn[standard]~=0.47.0
+itsdangerous~=2.2.0
+sqlmodel~=0.0.39
+docker~=7.1.0
+httpx~=0.28.1

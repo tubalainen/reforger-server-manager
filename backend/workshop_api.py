@@ -18,7 +18,7 @@ async def search(
     try:
         return await asyncio.to_thread(workshop.search, q, page)
     except WorkshopError as exc:
-        raise HTTPException(status_code=502, detail=f"Workshop unavailable: {exc}")
+        raise HTTPException(status_code=502, detail=f"Workshop unavailable: {exc}") from exc
 
 
 @router.get("/asset/{asset_id}")
@@ -28,7 +28,7 @@ async def asset(asset_id: str, _user: str = Depends(auth.require_session)):
     try:
         return await asyncio.to_thread(workshop.get_asset, asset_id)
     except WorkshopError as exc:
-        raise HTTPException(status_code=502, detail=f"Workshop unavailable: {exc}")
+        raise HTTPException(status_code=502, detail=f"Workshop unavailable: {exc}") from exc
 
 
 @router.get("/resolve/{asset_id}")
@@ -39,4 +39,4 @@ async def resolve(asset_id: str, _user: str = Depends(auth.require_session)):
     try:
         return await asyncio.to_thread(workshop.resolve_dependencies, asset_id)
     except WorkshopError as exc:
-        raise HTTPException(status_code=502, detail=f"Workshop unavailable: {exc}")
+        raise HTTPException(status_code=502, detail=f"Workshop unavailable: {exc}") from exc

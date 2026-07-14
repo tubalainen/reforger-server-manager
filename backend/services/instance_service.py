@@ -14,7 +14,7 @@ one install instead of each re-downloading. The image still validates on start
 import json
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from docker.errors import DockerException, ImageNotFound, NotFound
@@ -23,7 +23,7 @@ from sqlmodel import Session, select
 import config
 from models import Instance, Template, get_engine
 from services import docker_service, ports
-from services.template_service import LaunchParams, spec_from_config
+from services.template_service import LaunchParams
 
 logger = logging.getLogger("manager.instance")
 
@@ -773,7 +773,7 @@ def _container_uptime_seconds(container) -> int | None:
     started_dt = _started_at(container)
     if started_dt is None:
         return None
-    return max(0, int((datetime.now(timezone.utc) - started_dt).total_seconds()))
+    return max(0, int((datetime.now(UTC) - started_dt).total_seconds()))
 
 
 _LOG_TS_RE = re.compile(

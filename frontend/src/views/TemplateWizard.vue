@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
+import { formatBytes } from '../format'
 import {
   MODS_FILE_FORMAT,
   normalizeMods,
@@ -141,10 +142,7 @@ async function runSearch() {
   }
 }
 
-function fmtSize(n) {
-  if (!n) return ''
-  return n >= 1e9 ? (n / 1e9).toFixed(2) + ' GB' : (n / 1e6).toFixed(1) + ' MB'
-}
+const fmtSize = (n) => formatBytes(n, { base: 1000, empty: '' })
 
 // ---- Step 1: scenario ------------------------------------------------------
 // Scenarios AND terrains are pickable here: a terrain (map) publishes playable
