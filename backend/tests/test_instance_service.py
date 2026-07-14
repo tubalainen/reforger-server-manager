@@ -112,6 +112,81 @@ def test_parse_public_address_none_when_absent():
     assert instance_service.parse_public_address("no address here") is None
 
 
+STARTUP_LOG = (
+    "  SCRIPT       : Loading mods\n"
+    "  RESOURCES    : Loading world\n"
+)
+ONLINE_LOG = STARTUP_LOG + (
+    "  BACKEND      : Server registered with address: 203.0.113.7:2002\n"
+    "  BACKEND      : Direct Join Code: 12345\n"
+    "  DEFAULT      : Entered online game state.\n"
+    "  WORLD        : Frame start\n"
+)
+
+
+def test_parse_server_state_starting_until_the_server_says_it_is_up():
+    # A running container is not a joinable server: mods and the world load first (#76).
+    assert instance_service.parse_server_state(STARTUP_LOG) == instance_service.STATE_STARTING
+    assert instance_service.parse_server_state(ONLINE_LOG) == instance_service.STATE_ONLINE
+
+
+def test_parse_server_state_online_from_game_state_line_alone():
+    # A private (unlisted) server never registers with the backend, but still
+    # enters the online game state.
+    log = STARTUP_LOG + "  DEFAULT      : Entered online game state.\n"
+    assert instance_service.parse_server_state(log) == instance_service.STATE_ONLINE
+
+
+def test_parse_server_state_online_from_the_periodic_stats_line():
+    # On a long-lived server the one-shot startup lines scroll out of the tail we
+    # read; the -logStats line keeps proving the world is running.
+    log = "  DEFAULT      : FPS: 60.0, Mem: 1190747 kB, Player: 2\n"
+    assert instance_service.parse_server_state(log) == instance_service.STATE_ONLINE
+
+
+class _FakeLogContainer:
+    """Container whose logs honour docker's `since` (as a real daemon does)."""
+
+    def __init__(self, started, previous_run="", current_run=""):
+        self.id = "cid-1"
+        self.attrs = {"State": {"StartedAt": started}}
+        self._previous, self._current = previous_run, current_run
+
+    def logs(self, tail=None, since=None):
+        text = self._current if since else self._previous + self._current
+        return text.encode()
+
+
+def test_current_run_log_ignores_the_previous_run(monkeypatch):
+    # Docker keeps a container's log across restarts. Without anchoring on
+    # StartedAt, a restarting server would look online because the run BEFORE it
+    # was (#76) — and its stale FPS/player numbers would be served as current.
+    instance_service._online_runs.clear()
+    c = _FakeLogContainer(
+        started="2026-07-14T10:00:00.123456789Z",
+        previous_run=ONLINE_LOG,
+        current_run=STARTUP_LOG,
+    )
+    assert instance_service.current_run_log(c) == STARTUP_LOG
+    assert instance_service.server_state(c, instance_service.current_run_log(c)) == (
+        instance_service.STATE_STARTING
+    )
+
+
+def test_server_state_stays_online_once_seen_for_that_run():
+    # The proof lines eventually scroll away; a server that came up stays up
+    # until its container restarts.
+    instance_service._online_runs.clear()
+    c = _FakeLogContainer(started="2026-07-14T10:00:00Z")
+    assert instance_service.server_state(c, ONLINE_LOG) == instance_service.STATE_ONLINE
+    assert instance_service.server_state(c, "  WORLD  : nothing telling here\n") == (
+        instance_service.STATE_ONLINE
+    )
+    # ...but a restart (new StartedAt) is a fresh run and must prove itself again.
+    c.attrs["State"]["StartedAt"] = "2026-07-14T11:30:00Z"
+    assert instance_service.server_state(c, STARTUP_LOG) == instance_service.STATE_STARTING
+
+
 def test_inject_stats_logging_adds_arg_and_respects_user_override():
     assert instance_service._inject_stats_logging("").startswith("-logStats ")
     # existing args are preserved alongside the injected -logStats
