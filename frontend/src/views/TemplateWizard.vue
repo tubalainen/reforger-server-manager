@@ -28,6 +28,7 @@ const spec = reactive({
   description: '',
   scenario_id: '',
   scenario_name: '',
+  scenario_player_count: null,
   mods: [],
   game_name: 'Arma Reforger Server',
   password: '',
@@ -199,9 +200,22 @@ function chooseScenario(sc, res) {
   applyScenario(sc, res)
 }
 
+// A Workshop player count we are willing to act on (the field accepts 1–256).
+function usablePlayerCount(n) {
+  return Number.isInteger(n) && n >= 1 && n <= 256 ? n : null
+}
+
 function applyScenario(sc, res) {
   spec.scenario_id = sc.scenario_id
   spec.scenario_name = sc.name || ''
+  // Size the server for the scenario the Workshop declares it for (#65) —
+  // 64 slots on a 12-player co-op scenario is nobody's intent. The Settings
+  // step keeps the field editable and offers this value back as a reset.
+  spec.scenario_player_count = usablePlayerCount(sc.player_count)
+  if (spec.scenario_player_count) {
+    spec.max_players = spec.scenario_player_count
+    maxPlayersNotice.value = spec.scenario_player_count
+  }
   // Swap in this scenario's mod + full dependency tree, dropping the previous
   // scenario's mods (but keeping any also required by a user-added mod).
   spec.mods = mergeResolved(clearScenarioMods(normalizeMods(spec.mods)), res, {
@@ -215,7 +229,22 @@ function removeScenario() {
   spec.mods = clearScenarioMods(normalizeMods(spec.mods))
   spec.scenario_id = ''
   spec.scenario_name = ''
+  // max_players is left alone: it is the user's setting now, scenario or not.
+  spec.scenario_player_count = null
+  maxPlayersNotice.value = null
   removeScenarioPrompt.value = false
+}
+
+// Set when picking a scenario changed max_players, so the Settings step can say
+// so rather than silently moving a number the user may have typed earlier.
+const maxPlayersNotice = ref(null)
+
+const maxPlayersOverridden = computed(
+  () => !!spec.scenario_player_count && spec.max_players !== spec.scenario_player_count,
+)
+
+function resetMaxPlayers() {
+  spec.max_players = spec.scenario_player_count
 }
 
 // ---- Step 2: mods ----------------------------------------------------------
@@ -332,12 +361,21 @@ async function hydrateVersionHistories() {
         }
         // Recognise the mod backing the current scenario when the flag was
         // never stored (config.json imports); trust an existing flag if set.
+        const ownScenario = asset.scenarios?.find(
+          (sc) => sc.scenario_id === spec.scenario_id,
+        )
         if (
           spec.scenario_id &&
           !spec.mods.some((m2) => m2.from_scenario) &&
-          asset.scenarios?.some((sc) => sc.scenario_id === spec.scenario_id)
+          ownScenario
         ) {
           mod.from_scenario = true
+        }
+        // Learn the scenario's declared player count for templates saved before
+        // it was stored (#65). Only the hint is filled in — max_players is the
+        // user's saved setting and is never rewritten behind their back.
+        if (ownScenario && !spec.scenario_player_count) {
+          spec.scenario_player_count = usablePlayerCount(ownScenario.player_count)
         }
       } catch {
         /* Workshop unreachable or mod unlisted — keep the row as-is */
@@ -670,7 +708,12 @@ onMounted(async () => {
                 <div class="text-secondary small text-uppercase" style="letter-spacing: .04em">
                   Current scenario
                 </div>
-                <div class="fw-semibold">{{ scenarioDisplayName }}</div>
+                <div class="fw-semibold">
+                  {{ scenarioDisplayName }}
+                  <span v-if="spec.scenario_player_count" class="badge text-bg-secondary fw-normal ms-1">
+                    {{ spec.scenario_player_count }} players
+                  </span>
+                </div>
                 <small class="text-secondary d-block text-break">{{ spec.scenario_id }}</small>
                 <small v-if="scenarioSourceMod" class="text-secondary">
                   from Workshop mod "{{ scenarioSourceMod.name || scenarioSourceMod.modId }}"
@@ -948,6 +991,12 @@ onMounted(async () => {
 
         <!-- STEP 3: SETTINGS -->
         <div v-show="step === 3">
+          <!-- Say it out loud when picking a scenario moved a number the user
+               may have set themselves (#65) — never change it silently. -->
+          <div v-if="maxPlayersNotice" class="alert alert-info py-2 small">
+            Max players was set to <strong>{{ maxPlayersNotice }}</strong> to match
+            "{{ scenarioDisplayName }}". Override it below if you want.
+          </div>
           <div class="row g-3">
             <div class="col-12">
               <label class="form-label">Server name (in-game browser)</label>
@@ -964,6 +1013,21 @@ onMounted(async () => {
             <div class="col-md-4">
               <label class="form-label">Max players</label>
               <input v-model.number="spec.max_players" type="number" min="1" max="256" class="form-control" />
+              <!-- Seeded from the scenario's Workshop player count, always overridable (#65) -->
+              <small v-if="spec.scenario_player_count" class="d-block mt-1">
+                <span v-if="maxPlayersOverridden" class="text-warning-emphasis">
+                  "{{ scenarioDisplayName }}" is built for
+                  {{ spec.scenario_player_count }} players.
+                  <a href="#" class="ms-1" @click.prevent="resetMaxPlayers">Use {{ spec.scenario_player_count }}</a>
+                </span>
+                <span v-else class="text-secondary">
+                  Matches the {{ spec.scenario_player_count }} players
+                  "{{ scenarioDisplayName }}" declares. Change it if you want.
+                </span>
+              </small>
+              <small v-else class="d-block mt-1 text-secondary">
+                This scenario declares no player count — pick one yourself.
+              </small>
             </div>
             <div class="col-md-4">
               <label class="form-label">Server view distance</label>

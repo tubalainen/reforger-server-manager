@@ -130,6 +130,38 @@ def test_scenario_name_persists_and_roundtrips(logged_in):
     assert got["scenario_name"] == "Other"
 
 
+def test_scenario_player_count_persists_but_never_reaches_config(logged_in):
+    # The scenario's Workshop player count seeds max_players in the wizard (#65).
+    # It is wizard metadata: it round-trips through the DB, while config.json only
+    # ever carries the resulting maxPlayers.
+    spec = _spec("Sized scenario") | {"scenario_player_count": 12, "max_players": 12}
+    tid = logged_in.post("/api/templates", json=spec).json()["id"]
+
+    got = logged_in.get(f"/api/templates/{tid}").json()["spec"]
+    assert got["scenario_player_count"] == 12
+    assert got["max_players"] == 12
+
+    cfg = logged_in.get(f"/api/templates/{tid}/config.json").json()
+    assert cfg["game"]["maxPlayers"] == 12
+    assert "scenario_player_count" not in json.dumps(cfg)
+
+    # An override is the user's call and must survive a save untouched.
+    logged_in.put(f"/api/templates/{tid}", json=spec | {"max_players": 40})
+    got = logged_in.get(f"/api/templates/{tid}").json()["spec"]
+    assert got["max_players"] == 40
+    assert got["scenario_player_count"] == 12  # the recommendation still stands
+
+
+def test_scenario_player_count_defaults_to_unknown(logged_in):
+    # Base-game scenarios (and templates saved before #65) declare no count: the
+    # field is simply absent and max_players stays whatever was submitted.
+    sent = _spec("Unsized")
+    tid = logged_in.post("/api/templates", json=sent).json()["id"]
+    spec = logged_in.get(f"/api/templates/{tid}").json()["spec"]
+    assert spec["scenario_player_count"] is None
+    assert spec["max_players"] == sent["max_players"]
+
+
 def test_preview_without_saving(logged_in):
     r = logged_in.post("/api/templates/preview", json=_spec())
     assert r.status_code == 200
