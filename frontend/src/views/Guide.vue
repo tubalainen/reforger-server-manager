@@ -150,7 +150,9 @@ const faq = [
     q: 'Where is everything stored?',
     a: `Next to your docker-compose.yaml: ./data holds the manager database (templates,
        instances) and per-instance configs, profiles and logs; ./serverfiles holds the
-       downloaded game server per branch. Back up the data folder to keep your setup. On
+       downloaded game server per branch. A server's persistent save lives with its profile,
+       at ./data/instances/<id>/profile/.save/game — on the host, never inside a container
+       image, so it survives rebuilds and updates. Back up the data folder to keep your setup. On
        Windows the same content lives in Docker named volumes (reforger-data,
        reforger-serverfiles-*) — browse them in Docker Desktop → Volumes — because the
        Linux-owned server files are far faster and permission-clean there than in an
