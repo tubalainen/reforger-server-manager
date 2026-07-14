@@ -14,6 +14,8 @@ one install instead of each re-downloading. The image still validates on start
 import json
 import logging
 import re
+import threading
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -128,8 +130,58 @@ def parse_server_status(log_text: str) -> dict | None:
     return {"fps": fps, "mem_kb": mem_kb, "players": players}
 
 
+# docker's one-shot stats endpoint only answers after it has collected TWO CPU
+# samples, so _docker_cpu_mem blocks for a second or two. It used to be called
+# straight from instance_stats, i.e. on every 5-second poll of an open detail page,
+# tying up a worker for that whole time (#87). It is now sampled in the background
+# and the request serves the last reading — a couple of seconds stale at worst, for
+# a number that is a moving average anyway.
+_CPU_SAMPLE_TTL = 12.0
+_cpu_cache: dict[int, tuple[float, dict]] = {}
+_cpu_sampling: set[int] = set()
+_cpu_lock = threading.Lock()
+
+
+def cpu_mem_for(instance_id: int, container) -> dict:
+    """The last CPU/memory sample for an instance; refreshes it in the background.
+
+    Never blocks the caller. The first ever call returns {} (the GUI shows "—"),
+    and the sample lands a second or two later.
+    """
+    now = time.monotonic()
+    sampled_at, sample = _cpu_cache.get(instance_id, (0.0, {}))
+    if now - sampled_at < _CPU_SAMPLE_TTL:
+        return sample
+
+    with _cpu_lock:
+        if instance_id in _cpu_sampling:
+            return sample  # a refresh is already in flight
+        _cpu_sampling.add(instance_id)
+
+    def refresh():
+        try:
+            fresh = _docker_cpu_mem(container)
+            if fresh:
+                _cpu_cache[instance_id] = (time.monotonic(), fresh)
+        finally:
+            with _cpu_lock:
+                _cpu_sampling.discard(instance_id)
+
+    threading.Thread(target=refresh, daemon=True).start()
+    return sample
+
+
+def forget_cpu_sample(instance_id: int) -> None:
+    """Drop an instance's cached CPU/memory sample (it is being deleted)."""
+    _cpu_cache.pop(instance_id, None)
+
+
 def _docker_cpu_mem(container) -> dict:
-    """One-shot CPU%/memory from docker stats (best-effort; {} on failure)."""
+    """One-shot CPU%/memory from docker stats (best-effort; {} on failure).
+
+    Slow by construction — see _CPU_SAMPLE_TTL. Call it through cpu_mem_for(),
+    not from a request.
+    """
     try:
         s = container.stats(stream=False)
     except (DockerException, KeyError, ValueError):
@@ -688,10 +740,12 @@ def stop_instance(instance_id: int) -> None:
 def delete_instance(instance_id: int) -> None:
     container = docker_service.find_instance_container(instance_id)
     if container:
+        forget_run(container.id)  # don't leak the "this run was online" memo (#88)
         try:
             container.remove(force=True)
         except DockerException as exc:
             logger.warning("Removing container for instance %s failed: %s", instance_id, exc)
+    forget_cpu_sample(instance_id)
     with Session(get_engine()) as session:
         inst = session.get(Instance, instance_id)
         if inst:
@@ -704,20 +758,41 @@ def delete_instance(instance_id: int) -> None:
 # Status
 # --------------------------------------------------------------------------- #
 
-def container_status(instance_id: int) -> str:
+def status_of(container) -> str:
     """running | exited | created | absent (no container) | unknown."""
-    container = docker_service.find_instance_container(instance_id)
     if container is None:
         return "absent"
     try:
-        container.reload()
         return container.status
-    except (DockerException, NotFound):
+    except (DockerException, NotFound, AttributeError):
         return "unknown"
 
 
-def instance_view(inst: Instance, template_name: str | None) -> dict:
-    status = container_status(inst.id) if docker_service.ping() else "unknown"
+def container_status(instance_id: int, containers: dict | None = None) -> str:
+    """Status of one instance's container.
+
+    Pass `containers` (from docker_service.instance_containers()) when reporting on
+    several instances at once: the container is then read out of that one snapshot
+    instead of costing its own daemon lookup (#87). The containers in a snapshot are
+    already inspected, so no reload() is needed either way.
+    """
+    if containers is not None:
+        return status_of(containers.get(instance_id))
+    return status_of(docker_service.find_instance_container(instance_id))
+
+
+def instance_view(
+    inst: Instance,
+    template_name: str | None,
+    containers: dict | None = None,
+    docker_up: bool | None = None,
+) -> dict:
+    # docker_up/containers are passed in by list_views, which resolves them ONCE for
+    # the whole page. This used to ping the daemon per instance, inside a list
+    # comprehension (#87).
+    if docker_up is None:
+        docker_up = docker_service.ping()
+    status = container_status(inst.id, containers) if docker_up else "unknown"
     return {
         "id": inst.id,
         "name": inst.name,
@@ -866,12 +941,16 @@ def instance_stats(instance_id: int) -> dict:
         game_port = inst.game_port
 
     public = config.settings.public_address
+    # ONE lookup for the container, reused for status, uptime, logs and cpu/mem.
+    # This used to look it up for the status, look it up AGAIN, and then reload()
+    # it — three daemon round-trips for one container (#87).
+    container = docker_service.find_instance_container(instance_id)
     stats: dict = {
         "public_address": public or None,
         "public_address_detected": False,
         "game_port": game_port,
         "connect": f"{public}:{game_port}" if public else None,
-        "status": container_status(instance_id),
+        "status": status_of(container),
         # Whether the game server inside a running container is still loading
         # (mods, world) or actually joinable (#76). None when not running.
         "server_state": None,
@@ -884,15 +963,11 @@ def instance_stats(instance_id: int) -> dict:
         "mem_limit_bytes": None,
     }
 
-    container = docker_service.find_instance_container(instance_id)
     if container is None or stats["status"] != "running":
         return stats
 
-    try:
-        container.reload()
-        stats["uptime_seconds"] = _container_uptime_seconds(container)
-    except DockerException:
-        pass
+    # The container came from a non-sparse list(), i.e. it is already inspected.
+    stats["uptime_seconds"] = _container_uptime_seconds(container)
 
     try:
         log_text = current_run_log(container)
@@ -913,7 +988,7 @@ def instance_stats(instance_id: int) -> dict:
     except DockerException as exc:
         logger.debug("Could not read logs for stats (instance %s): %s", instance_id, exc)
 
-    stats.update(_docker_cpu_mem(container))
+    stats.update(cpu_mem_for(instance_id, container))
     return stats
 
 
@@ -1178,6 +1253,9 @@ def instances_summary() -> dict:
     """Aggregate + per-server snapshot for the summary status bar (issue #12)."""
     public = config.settings.public_address
     docker_up = docker_service.ping()
+    # One listing for every server on the bar; the same containers then serve both
+    # the status and the log read, instead of being looked up twice each (#87).
+    containers = docker_service.instance_containers() if docker_up else {}
     with Session(get_engine()) as session:
         instances = _all_instances(session)
 
@@ -1185,13 +1263,13 @@ def instances_summary() -> dict:
     running = 0
     players_total = 0
     for inst in instances:
-        status = container_status(inst.id) if docker_up else "unknown"
+        status = container_status(inst.id, containers) if docker_up else "unknown"
         players = None
         state = None
         address = public  # env-configured PUBLIC_ADDRESS wins
         if status == "running":
             running += 1
-            container = docker_service.find_instance_container(inst.id)
+            container = containers.get(inst.id)
             if container:
                 try:
                     log_text = current_run_log(container)
@@ -1224,10 +1302,17 @@ def instances_summary() -> dict:
 
 
 def list_views() -> list[dict]:
+    # One ping and one container listing for the whole page, not one of each per
+    # instance (#87).
+    docker_up = docker_service.ping()
+    containers = docker_service.instance_containers() if docker_up else {}
     with Session(get_engine()) as session:
         instances = _all_instances(session)
         names = {t.id: t.name for t in session.exec(select(Template)).all()}
-        return [instance_view(i, names.get(i.template_id)) for i in instances]
+        return [
+            instance_view(i, names.get(i.template_id), containers, docker_up)
+            for i in instances
+        ]
 
 
 def set_restart_settings(

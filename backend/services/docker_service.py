@@ -126,6 +126,34 @@ def find_instance_container(instance_id: int):
     return found[0] if found else None
 
 
+def instance_containers() -> dict[int, object]:
+    """Every managed instance container, indexed by instance id.
+
+    ONE daemon query for the whole set, so an endpoint that reports on N instances
+    costs one list instead of N lookups. Endpoints that report on every instance
+    (the list, the summary) used to call find_instance_container() — and ping() —
+    once per instance, which is the amplification this exists to kill (#87).
+
+    docker-py's list() is non-sparse: it inspects each match, so the containers
+    handed back are already fresh and need no reload().
+    """
+    try:
+        containers = get_client().containers.list(
+            all=True, filters={"label": [f"{LABEL_ROLE}={ROLE_INSTANCE}"]}
+        )
+    except DockerException as exc:
+        logger.warning("Instance container listing failed: %s", exc)
+        return {}
+    by_instance: dict[int, object] = {}
+    for container in containers:
+        raw = (container.labels or {}).get(LABEL_INSTANCE_ID)
+        try:
+            by_instance[int(raw)] = container
+        except (TypeError, ValueError):
+            continue  # a managed container without a usable instance label
+    return by_instance
+
+
 def remove_exited(role: str) -> None:
     """Clean up leftover exited containers of ours with the given role."""
     for container in find_containers(role, status="exited"):
