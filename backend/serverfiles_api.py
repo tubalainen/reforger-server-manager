@@ -1,12 +1,13 @@
 """API for downloading/updating the Arma Reforger server files per branch."""
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, WebSocket
 
 import auth
 import config
 from services import docker_service, instance_service
 from services.image_service import image
+from services.jobs import stream_job
 from services.steam_service import steam
 
 router = APIRouter(prefix="/api/serverfiles", tags=["serverfiles"])
@@ -62,24 +63,12 @@ async def image_events(websocket: WebSocket):
         return
     await websocket.accept()
     job = image.job
-    await websocket.send_json({
+    await stream_job(websocket, job, {
         "type": "snapshot",
         "job": job.snapshot() if job else None,
         "present": await asyncio.to_thread(image.present),
         "log": list(job.log) if job else [],
     })
-    queue = image.subscribe()
-    if queue is None:
-        await websocket.close()
-        return
-    try:
-        while True:
-            event = await queue.get()
-            await websocket.send_json(event)
-    except WebSocketDisconnect:
-        pass
-    finally:
-        image.unsubscribe(queue)
 
 
 @router.delete("/{branch}", status_code=204)
@@ -129,20 +118,8 @@ async def download_events(websocket: WebSocket, branch: str):
         return
     await websocket.accept()
     job = steam.job(branch)
-    await websocket.send_json({
+    await stream_job(websocket, job, {
         "type": "snapshot",
         "state": _branch_state(branch),
         "log": list(job.log) if job else [],
     })
-    queue = steam.subscribe(branch)
-    if queue is None:
-        await websocket.close()
-        return
-    try:
-        while True:
-            event = await queue.get()
-            await websocket.send_json(event)
-    except WebSocketDisconnect:
-        pass
-    finally:
-        steam.unsubscribe(branch, queue)

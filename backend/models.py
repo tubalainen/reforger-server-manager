@@ -47,7 +47,11 @@ class Instance(SQLModel, table=True):
     game_port: int
     a2s_port: int
     rcon_port: int
-    container_id: str = ""
+    # NB: no container_id here on purpose. Containers are found by LABEL
+    # (reforger-manager.instance_id), which survives a manager restart AND a
+    # container recreation; a stored id goes stale the moment we recreate one.
+    # The column used to exist, was written once and never read (#88). Old
+    # databases keep the orphaned column; nothing selects it.
     desired_state: str = "stopped"  # running | stopped
     auto_restart: bool = True   # restart the server if it crashes
     auto_start: bool = True     # start the server after a Docker/host restart

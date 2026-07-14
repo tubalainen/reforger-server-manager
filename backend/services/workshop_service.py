@@ -86,8 +86,6 @@ def _row_summary(row: dict) -> dict:
         "type": row.get("type"),
         "version": row.get("currentVersionNumber"),
         "size": row.get("currentVersionSize") or 0,
-        "subscribers": row.get("subscriberCount") or 0,
-        "rating": row.get("averageRating"),
         "author": (row.get("author") or {}).get("username"),
         "tags": tags,
         "kind": asset_kind(tags),

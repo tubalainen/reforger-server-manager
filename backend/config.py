@@ -4,7 +4,7 @@ import secrets
 from dataclasses import dataclass
 
 APP_NAME = "Reforger Server Manager"
-APP_VERSION = "0.29.1"
+APP_VERSION = "0.30.0"
 
 # Steam app IDs for the Arma Reforger Dedicated Server
 STEAM_APPID_STABLE = "1874900"
@@ -43,6 +43,7 @@ class Settings:
     auth_enabled: bool
     session_secret: str
     session_ttl_hours: int
+    session_cookie_secure: bool
     data_dir: str
     serverfiles_dir: str
     steamcmd_timeout_minutes: int
@@ -72,6 +73,9 @@ class Settings:
             session_secret=secret,
             session_secret_generated=generated,
             session_ttl_hours=int(os.environ.get("SESSION_TTL_HOURS", "168")),
+            # Only meaningful behind TLS; a secure cookie is never sent over the
+            # plain-HTTP localhost default, so it cannot be on by default (#88).
+            session_cookie_secure=_env_bool("SESSION_COOKIE_SECURE", False),
             data_dir=os.environ.get("DATA_DIR", "./data"),
             serverfiles_dir=os.environ.get("SERVERFILES_DIR", "/serverfiles"),
             steamcmd_timeout_minutes=int(os.environ.get("STEAMCMD_TIMEOUT_MINUTES", "60")),
