@@ -300,6 +300,38 @@ def _seed_instance_data(tmp_path, monkeypatch):
     return idir
 
 
+def test_desired_environment_pins_the_save_and_addons_dirs_to_the_mounts():
+    # The image only DEFAULTS -profile to /home/profile and the addons dir to
+    # /reforger/workshop (acemod launch.py reads ARMA_PROFILE / ARMA_WORKSHOP_DIR).
+    # We pin them to the paths we bind-mount: if a future image changed a default,
+    # the persistent save (<profile>/.save/game) would be written INSIDE the
+    # container and the next container rebuild would silently take it with it (#79).
+    env = instance_service._desired_environment(_inst(), None)
+    assert env["ARMA_PROFILE"] == instance_service.PROFILE_DIR == "/home/profile"
+    assert env["ARMA_WORKSHOP_DIR"] == instance_service.WORKSHOP_DIR == "/reforger/workshop"
+
+
+def test_the_save_dir_the_server_actually_uses_is_detected(tmp_path, monkeypatch):
+    # The real server writes its persistence to <profile>/.save/game.
+    import config
+    import models
+    from sqlmodel import Session
+
+    monkeypatch.setattr(config.settings, "data_dir", str(tmp_path))
+    with Session(models.get_engine()) as session:
+        session.add(_inst(id=1))
+        session.commit()
+    save = tmp_path / "instances" / "1" / "profile" / ".save" / "game"
+    save.mkdir(parents=True)
+    (save / "world.bin").write_bytes(b"s" * 512)
+    monkeypatch.setattr(instance_service.docker_service, "ping", lambda: False)
+
+    saves = {i["target"]: i for i in instance_service.instance_data(1)["items"]}["saves"]
+    assert saves["paths"] == [".save"]
+    assert saves["size_bytes"] == 512
+    assert saves["mount"] == instance_service.PROFILE_DIR
+
+
 def test_instance_data_reports_what_is_on_disk(tmp_path, monkeypatch):
     _seed_instance_data(tmp_path, monkeypatch)
     monkeypatch.setattr(instance_service.docker_service, "ping", lambda: False)

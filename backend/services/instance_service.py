@@ -168,6 +168,22 @@ STATS_LOG_TAIL = 400
 # Its presence is our proof that a branch's server files are installed.
 SERVER_BINARY = "ArmaReforgerServer"
 
+# Where the server keeps its own state INSIDE the container. Both are bind-mounted
+# to data/instances/<id>/{profile,workshop} on the host, so a save survives a
+# container rebuild, an image update, and a `docker rm` (issue #79).
+#
+# The image takes these from ARMA_PROFILE / ARMA_WORKSHOP_DIR (acemod's launch.py
+# passes them as -profile and -addonsDir/-addonDownloadDir) and merely DEFAULTS
+# them to these paths. We set them explicitly rather than inherit the defaults:
+# if the image ever changed one, the server would write the persistent save into
+# the container's own filesystem — where the next container rebuild would take it
+# with it, silently. The mount and the env now say the same thing on purpose.
+#
+# The persistent save lands under <profile>/.save/game.
+PROFILE_DIR = "/home/profile"
+WORKSHOP_DIR = "/reforger/workshop"
+CONFIGS_DIR = "/reforger/Configs"
+
 
 class InstanceError(Exception):
     """User-facing instance operation failure."""
@@ -481,6 +497,11 @@ def _desired_environment(inst: Instance, launch: "LaunchParams | None") -> dict:
         # tab and mounted at /reforger. Downloading is gated in start_instance.
         "SKIP_INSTALL": "true",
         "ARMA_CONFIG": CONFIG_FILENAME,
+        # Pin the profile and addons dirs to the paths we bind-mount, so the
+        # persistent save (<profile>/.save/game) and the baked mods always land
+        # on the host and never inside the container (#79).
+        "ARMA_PROFILE": PROFILE_DIR,
+        "ARMA_WORKSHOP_DIR": WORKSHOP_DIR,
         "SERVER_BIND_PORT": str(inst.game_port),
         "SERVER_PUBLIC_PORT": str(inst.game_port),
     }
@@ -589,9 +610,9 @@ def _create_container(inst: Instance, config_path: Path, launch: "LaunchParams |
 
     volumes = {
         serverfiles_host: {"bind": "/reforger", "mode": "rw"},
-        docker_service.host_path_for(str(idir / "configs")): {"bind": "/reforger/Configs", "mode": "rw"},
-        docker_service.host_path_for(str(idir / "profile")): {"bind": "/home/profile", "mode": "rw"},
-        docker_service.host_path_for(str(idir / "workshop")): {"bind": "/reforger/workshop", "mode": "rw"},
+        docker_service.host_path_for(str(idir / "configs")): {"bind": CONFIGS_DIR, "mode": "rw"},
+        docker_service.host_path_for(str(idir / "profile")): {"bind": PROFILE_DIR, "mode": "rw"},
+        docker_service.host_path_for(str(idir / "workshop")): {"bind": WORKSHOP_DIR, "mode": "rw"},
     }
     # Publish each UDP port unchanged (host == container). The game port used to
     # be remapped to a fixed internal 2001, but A2S/RCON had no matching override,
@@ -1032,12 +1053,20 @@ def _target_paths(instance_id: int, target: str) -> list[Path]:
     raise InstanceError(f"Unknown data target '{target}'")
 
 
+_TARGET_MOUNT = {
+    DATA_MODS: WORKSHOP_DIR,
+    DATA_SAVES: PROFILE_DIR,
+    DATA_LOGS: PROFILE_DIR,
+}
+
+
 def instance_data(instance_id: int) -> dict:
     """What this instance has on disk, per target, so the GUI can offer to wipe it."""
     with Session(get_engine()) as session:
         if not session.get(Instance, instance_id):
             raise InstanceError("Instance not found")
     running = container_status(instance_id) == "running" if docker_service.ping() else False
+    idir = Path(config.settings.data_dir) / "instances" / str(instance_id)
     items = []
     for target in DATA_TARGETS:
         paths = _target_paths(instance_id, target)
@@ -1048,8 +1077,16 @@ def instance_data(instance_id: int) -> dict:
             "files": files,
             # The actual names on disk, so the user can see what is about to go.
             "paths": sorted(p.name for p in paths),
+            # Where the server writes it inside its container.
+            "mount": _TARGET_MOUNT[target],
         })
-    return {"running": running, "items": items}
+    return {
+        "running": running,
+        "items": items,
+        # Where all of it really lives, on the host — none of it is in the image,
+        # so it survives container rebuilds and image updates (#79).
+        "host_path": docker_service.host_path_for(str(idir)),
+    }
 
 
 def clear_instance_data(instance_id: int, targets: list[str]) -> dict:

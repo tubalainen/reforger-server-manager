@@ -669,9 +669,15 @@ onUnmounted(() => {
           <button class="btn btn-sm btn-outline-secondary" @click="loadData">Refresh</button>
         </div>
         <div class="card-body">
-          <p class="text-secondary small">
+          <p class="text-secondary small mb-2">
             What this server has written to disk. Clearing something makes the server
             rebuild it from the template the next time it starts.
+          </p>
+          <p v-if="dataInfo.host_path" class="text-secondary small">
+            None of it lives inside the container image — it is all kept on the host at
+            <code class="text-break">{{ dataInfo.host_path }}</code> and mounted in, so it
+            survives container rebuilds and manager updates. Back up the save by copying
+            <code>profile/</code> from there.
           </p>
 
           <div v-if="dataNotice" class="alert alert-success py-2 small">{{ dataNotice }}</div>
