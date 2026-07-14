@@ -1,19 +1,27 @@
 # Reforger Server Manager
 
-A web-based manager for **Arma Reforger Dedicated Servers** on Linux. Draw up server
-templates (scenario, mods, settings) in an intuitive web GUI, download the server files
-with SteamCMD at the click of a button, and run any number of server instances — each in
-its own Docker container — from a single `docker-compose.yaml` on any VPS or home Linux box.
+A web-based manager for **Arma Reforger Dedicated Servers**. Draw up server templates
+(scenario, mods, settings) in an intuitive web GUI, download the server files with
+SteamCMD at the click of a button, and run any number of server instances — each in its
+own Docker container — from a single `docker-compose.yaml`.
+
+Runs on **Linux** (any VPS or home box) and on **Windows 10/11** via Docker Desktop,
+where a PowerShell installer sets everything up and puts a start shortcut on your
+Desktop. See [Getting started](#getting-started) or
+[Running on Windows](#running-on-windows-11--10).
 
 Inspired by (and a spiritual successor to) [Longbow / ArmaReforgerServerTool](https://github.com/soda3x/ArmaReforgerServerTool)
-by soda3x — reimagined as a Linux-first, Dockerized web application.
+by soda3x — reimagined as a Dockerized web application.
 
-> **Status: early scaffold.** Login, app shell and the container plumbing are in
-> place; the feature milestones below land one by one.
+> **Status: stable and feature-complete for day-to-day hosting.** Everything below is
+> built and released: templates and the mod manager, SteamCMD downloads, multiple live
+> server instances with logs, stats, scheduled restarts and crash recovery. Development
+> continues in the open — see the [issues](https://github.com/tubalainen/reforger-server-manager/issues)
+> and [releases](https://github.com/tubalainen/reforger-server-manager/releases).
 
 Docker image: `ghcr.io/tubalainen/reforger-server-manager:latest`
 
-## Features (roadmap)
+## Features
 
 - [x] Single `docker-compose.yaml` + single `.env` deployment, built-in login
 - [x] One-click SteamCMD download of server files — **Stable** (app `1874900`) or
@@ -37,6 +45,9 @@ Docker image: `ghcr.io/tubalainen/reforger-server-manager:latest`
       auto-detects the server's public IP from its log when `PUBLIC_ADDRESS` isn't set
 - [x] Built-in **User Guide** page: getting-started walkthrough, feature guide, FAQ and
       links to the official Reforger documentation
+- [x] **Windows 10/11 support** via Docker Desktop (WSL2): PowerShell installer, Desktop
+      start shortcut, and a **Ports & firewall** panel that prints the exact firewall
+      command for your configured port ranges
 
 ## Architecture
 
@@ -72,8 +83,10 @@ the instance detail page.
 
 ## Getting started
 
-Two paths, depending on how comfortable you are with Linux and Docker. On Windows,
-skip both and use [Running on Windows](#running-on-windows-11--10) instead.
+**On Windows?** Skip this section entirely — go to
+[Running on Windows](#running-on-windows-11--10), where an installer does all of it for you.
+
+On Linux, two paths, depending on how comfortable you are with Docker.
 
 ### New to Docker & Linux? (step-by-step)
 
