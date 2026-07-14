@@ -125,6 +125,10 @@ class TemplateSpec(BaseModel):
     # Scenario display name for the wizard (#59); config.json only holds the
     # raw scenarioId, so this is persisted separately and never rendered.
     scenario_name: str = ""
+    # Player count the scenario declares on the Workshop (#65). Seeds max_players
+    # when a scenario is picked and backs the "recommended" hint; the user's
+    # max_players always wins. Never rendered to config.json.
+    scenario_player_count: int | None = Field(default=None, ge=1, le=256)
     mods: list[ModEntry] = []
     launch: LaunchParams = Field(default_factory=LaunchParams)
 
@@ -282,7 +286,10 @@ def spec_from_config(config_json: str) -> dict:
     rcon = cfg.get("rcon", {})
     return {
         "scenario_id": game.get("scenarioId", ""),
-        "scenario_name": "",  # not part of config.json; filled from the DB row
+        # Neither is part of config.json; both are filled from the DB row (and,
+        # for a fresh import, from the Workshop by the wizard's hydration pass).
+        "scenario_name": "",
+        "scenario_player_count": None,
 
         "mods": game.get("mods", []),
         "game_name": game.get("name", ""),

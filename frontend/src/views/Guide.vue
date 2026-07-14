@@ -46,6 +46,14 @@ const faq = [
        (server browser)" switch must be on for the server to be listed.`,
   },
   {
+    q: 'Why did Max players change when I picked a scenario?',
+    a: `Because the scenario says how many players it is built for, and the wizard now
+       matches it — a 12-player co-op scenario would otherwise be hosted with 64 slots.
+       You are told when it happens, and Max players stays fully editable on the Settings
+       step: type whatever you want and it is kept. The scenario's own number is shown
+       underneath, one click away if you want it back.`,
+  },
+  {
     q: 'Can I run this on Windows?',
     a: `Yes — on Windows 10/11 with Docker Desktop (WSL2 backend). The README's "Running on
        Windows" section has a short PowerShell block that downloads an installer script and
@@ -224,7 +232,8 @@ const faq = [
           <li class="mb-2">
             <strong>Settings:</strong> server name, passwords, player limit and view
             distances up front; VON, persistence (save games), RCON and engine launch
-            parameters under "advanced".
+            parameters under "advanced". Max players is seeded from the player count the
+            chosen scenario declares on the Workshop — override it freely, it is yours.
           </li>
           <li>
             <strong>Import/export:</strong> upload an existing <code>config.json</code> to

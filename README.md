@@ -37,6 +37,9 @@ Docker image: `ghcr.io/tubalainen/reforger-server-manager:latest`
       whether to drop the dependencies it brought in; reorder mods and export/import the
       mod list as JSON; mods follow the latest Workshop release by default, or **lock any
       mod to a specific version** (only locked versions are written to `config.json`)
+- [x] **Max players follows the scenario** — the wizard seeds the player limit from the
+      count the scenario declares on the Workshop (a 12-player co-op scenario no longer
+      gets a 64-slot server), and you can override it whenever you like
 - [x] Multiple concurrent server instances (stable + experimental side by side), each a
       Docker container spawned and supervised by the manager
 - [x] Live server logs in the browser (with a clear-window button), crash auto-restart
