@@ -38,6 +38,15 @@ const faq = [
        switch a single instance between templates (restart required).`,
   },
   {
+    q: 'Can I start from a terrain (map) instead of a scenario?',
+    a: `Yes — search terrains as well as scenarios on the wizard's Scenario step; each search
+       result is tagged so you can tell them apart. A terrain usually publishes playable
+       scenarios of its own, and often several: the Visingsö map ships both a Conflict and a
+       Game Master scenario. Pick the terrain and the wizard lists what it provides, so you
+       choose which one this server runs (its mod and dependencies come along automatically).
+       To run another of that terrain's scenarios, save a second template.`,
+  },
+  {
     q: 'Why does my instance say "starting…" for several minutes?',
     a: `Because it is. Starting the container is instant, but the Arma server then downloads
        its mods and loads the world before anyone can join — on a heavy modset that is

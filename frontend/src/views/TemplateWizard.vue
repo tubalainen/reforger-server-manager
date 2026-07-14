@@ -147,7 +147,21 @@ function fmtSize(n) {
 }
 
 // ---- Step 1: scenario ------------------------------------------------------
+// Scenarios AND terrains are pickable here: a terrain (map) publishes playable
+// scenarios of its own, frequently several — the Visingsö map ships a Conflict
+// and a Game Master scenario. Whatever the asset is, its scenarios are listed and
+// the user chooses one, because a server config holds exactly one scenarioId.
 const scenarioPick = reactive({ busy: false, asset: null, error: '' })
+
+const assetKindBadge = {
+  scenario: 'text-bg-info',
+  terrain: 'text-bg-success',
+  addon: 'text-bg-secondary',
+}
+
+const pickedScenarios = computed(() => scenarioPick.asset?.asset?.scenarios || [])
+// `kind` is classified from the Workshop's tags by the backend (asset_kind).
+const pickedAssetKind = computed(() => scenarioPick.asset?.asset?.kind || 'asset')
 
 async function pickScenarioAsset(row) {
   scenarioPick.busy = true
@@ -157,7 +171,9 @@ async function pickScenarioAsset(row) {
     const res = await api(`/api/workshop/resolve/${row.id}`)
     scenarioPick.asset = res
     if (!res.asset.scenarios.length) {
-      scenarioPick.error = 'This asset exposes no scenarios; pick another or add it as a mod.'
+      scenarioPick.error =
+        `"${res.asset.name}" publishes no scenarios of its own — pick a scenario or a ` +
+        'terrain here, and add this one as a mod on the next step.'
     }
   } catch (e) {
     scenarioPick.error = e.message
@@ -732,11 +748,16 @@ onMounted(async () => {
               ? 'To replace the scenario, search the Workshop and pick a new one — you\'ll be asked to confirm.'
               : 'Search the Workshop and pick a scenario. Its mod and all dependencies are added automatically.' }}
           </p>
+          <p class="text-secondary small">
+            Search <strong>scenarios</strong> or <strong>terrains</strong> — a terrain (map)
+            usually ships playable scenarios of its own, and often more than one. Pick the
+            asset, then choose which of its scenarios this server runs.
+          </p>
           <div class="input-group mb-3">
             <input
               v-model="search.q"
               class="form-control"
-              placeholder="Search scenarios, e.g. Conflict, Overthrow…"
+              placeholder="Search scenarios or terrains, e.g. Conflict, Overthrow, Visingsö…"
               @keyup.enter="runSearch"
             />
             <button class="btn btn-primary" :disabled="search.busy" @click="runSearch">
@@ -750,10 +771,16 @@ onMounted(async () => {
               v-for="row in search.results"
               :key="row.id"
               class="list-group-item list-group-item-action text-start"
+              :class="{ active: scenarioPick.asset?.asset?.id === row.id }"
               @click="pickScenarioAsset(row)"
             >
               <div class="d-flex justify-content-between">
-                <span class="fw-semibold">{{ row.name }}</span>
+                <span class="fw-semibold">
+                  {{ row.name }}
+                  <span class="badge fw-normal ms-1" :class="assetKindBadge[row.kind] || 'text-bg-secondary'">
+                    {{ row.kind }}
+                  </span>
+                </span>
                 <small class="text-secondary">{{ fmtSize(row.size) }}</small>
               </div>
               <small class="text-secondary">by {{ row.author }} · v{{ row.version }}</small>
@@ -764,17 +791,34 @@ onMounted(async () => {
           <div v-if="scenarioPick.error" class="alert alert-info py-2 small">
             {{ scenarioPick.error }}
           </div>
-          <div v-if="scenarioPick.asset" class="card">
+          <div v-if="scenarioPick.asset" class="card border-primary-subtle">
             <div class="card-body">
-              <h2 class="h6">{{ scenarioPick.asset.asset.name }} — scenarios</h2>
+              <h2 class="h6 mb-1">
+                {{ scenarioPick.asset.asset.name }}
+                <span class="badge fw-normal" :class="assetKindBadge[pickedAssetKind] || 'text-bg-secondary'">
+                  {{ pickedAssetKind }}
+                </span>
+              </h2>
+              <!-- A server runs exactly one scenario, so a multi-scenario asset has to
+                   be asked about rather than guessed at (#79 follow-up). -->
+              <p v-if="pickedScenarios.length > 1" class="small mb-3">
+                This {{ pickedAssetKind }} provides
+                <strong>{{ pickedScenarios.length }} scenarios</strong> — choose the one this
+                server should run. (A server runs one scenario; save another template for the
+                others.)
+              </p>
+              <p v-else class="text-secondary small mb-3">
+                One scenario — select it to continue.
+              </p>
               <div class="list-group">
                 <button
-                  v-for="sc in scenarioPick.asset.asset.scenarios"
+                  v-for="sc in pickedScenarios"
                   :key="sc.scenario_id"
                   class="list-group-item list-group-item-action"
                   @click="chooseScenario(sc, scenarioPick.asset)"
                 >
                   <div class="fw-semibold">{{ sc.name }}</div>
+                  <small class="text-secondary d-block text-break">{{ sc.scenario_id }}</small>
                   <small class="text-secondary">
                     {{ sc.game_mode }} · {{ sc.player_count }} players
                     · adds {{ scenarioPick.asset.mods.length }} mod(s),
