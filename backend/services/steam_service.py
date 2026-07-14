@@ -8,14 +8,14 @@ import asyncio
 import logging
 import re
 import time
-from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from docker.errors import DockerException
 
 import config
 from services import docker_service
+from services.jobs import ProgressJob
 
 logger = logging.getLogger("manager.steam")
 
@@ -92,33 +92,15 @@ def parse_line(line: str) -> dict | None:
 
 
 @dataclass
-class DownloadJob:
-    branch: str
-    started_at: float
-    status: str = "running"  # running | success | error
-    phase: str = "starting"
-    percent: float = 0.0
-    bytes_done: int = 0
-    bytes_total: int = 0
-    error: str = ""
+class DownloadJob(ProgressJob):
+    """A steamcmd download. Progress/log/streaming come from ProgressJob (#88)."""
+
+    branch: str = ""
     container_id: str = ""
-    finished_at: float | None = None
     saw_success: bool = False
-    log: deque = field(default_factory=lambda: deque(maxlen=LOG_RING_SIZE))
-    subscribers: list[asyncio.Queue] = field(default_factory=list)
 
     def snapshot(self) -> dict:
-        return {
-            "branch": self.branch,
-            "status": self.status,
-            "phase": self.phase,
-            "percent": self.percent,
-            "bytes_done": self.bytes_done,
-            "bytes_total": self.bytes_total,
-            "error": self.error,
-            "started_at": self.started_at,
-            "finished_at": self.finished_at,
-        }
+        return {"branch": self.branch, **super().snapshot()}
 
 
 class SteamService:
@@ -259,19 +241,6 @@ class SteamService:
         self._tasks[branch] = asyncio.create_task(self._run(job))
         return job
 
-    def subscribe(self, branch: str) -> asyncio.Queue | None:
-        job = self.jobs.get(branch)
-        if not job:
-            return None
-        queue: asyncio.Queue = asyncio.Queue()
-        job.subscribers.append(queue)
-        return queue
-
-    def unsubscribe(self, branch: str, queue: asyncio.Queue) -> None:
-        job = self.jobs.get(branch)
-        if job and queue in job.subscribers:
-            job.subscribers.remove(queue)
-
     # ---- job lifecycle --------------------------------------------------------
 
     async def _run(self, job: DownloadJob) -> None:
@@ -306,7 +275,7 @@ class SteamService:
             "SteamCMD download started: branch=%s app=%s container=%s",
             job.branch, app_id, job.container_id,
         )
-        self._broadcast(job, {"type": "status", "job": job.snapshot(), "installed": None})
+        job.broadcast({"type": "status", "job": job.snapshot(), "installed": None})
 
         exit_code: int | None = None
         try:
@@ -350,8 +319,7 @@ class SteamService:
         return result.get("StatusCode", -1)
 
     def _on_line(self, job: DownloadJob, line: str) -> None:
-        job.log.append(line)
-        self._broadcast(job, {"type": "log", "line": line})
+        job.emit_log(line)
         event = parse_line(line)
         if not event:
             return
@@ -360,7 +328,7 @@ class SteamService:
             job.percent = event["percent"]
             job.bytes_done = event["bytes_done"]
             job.bytes_total = event["bytes_total"]
-            self._broadcast(job, {"type": "progress", **{k: event[k] for k in
+            job.broadcast({"type": "progress", **{k: event[k] for k in
                              ("phase", "percent", "bytes_done", "bytes_total")}})
         elif event["kind"] == "success":
             job.saw_success = True
@@ -368,25 +336,18 @@ class SteamService:
             job.error = event["message"]
 
     def _finish(self, job: DownloadJob, status: str, error: str) -> None:
-        job.status = status
-        job.error = error
-        job.finished_at = time.time()
+        job.finish(status, error)
         if status == "success":
-            job.percent = 100.0
             job.phase = "completed"
             logger.info("SteamCMD download finished: branch=%s", job.branch)
         else:
             job.phase = "failed"
             logger.warning("SteamCMD download failed: branch=%s: %s", job.branch, error)
-        self._broadcast(job, {
+        job.broadcast({
             "type": "status",
             "job": job.snapshot(),
             "installed": self.installed_info(job.branch),
         })
-
-    def _broadcast(self, job: DownloadJob, event: dict) -> None:
-        for queue in list(job.subscribers):
-            queue.put_nowait(event)
 
     @staticmethod
     def _force_remove(container) -> None:

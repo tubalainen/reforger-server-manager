@@ -61,3 +61,33 @@ def test_auth_disabled_bypasses_login(client, monkeypatch):
     # a normally-protected data endpoint is reachable too
     assert client.get("/api/instances").status_code == 200
     assert client.get("/api/version").json()["auth_enabled"] is False
+
+
+def test_login_attempt_windows_are_evicted(client):
+    # The throttle kept one deque per source IP for ever — pruned only if that same
+    # IP came back. An internet-facing GUI accumulated them without limit (#88).
+    import auth
+
+    auth._attempts.clear()
+    for i in range(5):
+        client.post("/api/auth/login", json={"username": f"u{i}", "password": "nope"})
+    assert len(auth._attempts) >= 1
+
+    # Time-travel past the window: the next login sweeps the expired entries.
+    for window in auth._attempts.values():
+        for _ in range(len(window)):
+            window[0] -= auth._LOGIN_WINDOW_SECONDS * 2
+            window.rotate(-1)
+    client.post("/api/auth/login", json={"username": "x", "password": "nope"})
+    assert len(auth._attempts) == 1  # only the current caller remains
+
+
+def test_session_cookie_is_secure_when_configured(client, monkeypatch):
+    import config
+
+    monkeypatch.setattr(config.settings, "session_cookie_secure", True)
+    r = client.post(
+        "/api/auth/login", json={"username": "testadmin", "password": "testpass-123"}
+    )
+    assert r.status_code == 200
+    assert "secure" in r.headers["set-cookie"].lower()

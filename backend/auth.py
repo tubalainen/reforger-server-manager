@@ -45,6 +45,21 @@ def _throttle(request: Request) -> None:
     if len(window) >= _LOGIN_MAX_ATTEMPTS:
         raise HTTPException(status_code=429, detail="Too many login attempts, try again later")
     window.append(now)
+    _evict_stale_attempts(now)
+
+
+def _evict_stale_attempts(now: float) -> None:
+    """Forget IPs whose window has expired.
+
+    Entries were only ever pruned when that same IP came back, so an
+    internet-facing GUI accumulated one deque per source address, for ever (#88).
+    """
+    stale = [
+        ip for ip, window in _attempts.items()
+        if not window or now - window[-1] > _LOGIN_WINDOW_SECONDS
+    ]
+    for ip in stale:
+        del _attempts[ip]
 
 
 def session_username(token: str | None) -> str | None:
@@ -89,6 +104,12 @@ async def login(body: LoginRequest, request: Request, response: Response):
         max_age=cfg.session_ttl_hours * 3600,
         httponly=True,
         samesite="lax",
+        # Off by default because the out-of-the-box deployment is plain HTTP on
+        # 127.0.0.1, where a secure cookie would simply never be sent. Set
+        # SESSION_COOKIE_SECURE=true when a TLS reverse proxy fronts the GUI — as
+        # the README recommends for remote use — so the session cannot travel in
+        # the clear on a downgrade (#88).
+        secure=cfg.session_cookie_secure,
     )
     return {"username": cfg.admin_username}
 

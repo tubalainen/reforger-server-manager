@@ -390,6 +390,21 @@ onUnmounted(() => {
             <div class="col-6 col-md-2">
               <div class="text-secondary">Memory</div>
               <div class="fs-5 fw-semibold">{{ fmtMem(stats.mem_bytes) }}</div>
+              <!-- The limit and the server's own reading were both being computed
+                   and then thrown away (#88). They are worth showing: the limit is
+                   what the container may use, and the server's figure is the game
+                   engine's own view of its heap. -->
+              <div v-if="stats.mem_limit_bytes" class="text-secondary" style="font-size: .75rem">
+                of {{ fmtMem(stats.mem_limit_bytes) }}
+              </div>
+              <div
+                v-if="stats.server_mem_kb"
+                class="text-secondary"
+                style="font-size: .75rem"
+                title="Memory the Arma server reports for itself (-logStats)"
+              >
+                server {{ fmtMem(stats.server_mem_kb * 1024) }}
+              </div>
             </div>
           </div>
         </div>

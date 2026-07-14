@@ -10,13 +10,13 @@ it, streaming progress with the same job/WebSocket shape as steam downloads.
 import asyncio
 import logging
 import time
-from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from docker.errors import DockerException, ImageNotFound
 
 import config
 from services import docker_service
+from services.jobs import ProgressJob
 
 logger = logging.getLogger("manager.image")
 
@@ -38,31 +38,13 @@ def split_image_ref(ref: str) -> tuple[str, str]:
 
 
 @dataclass
-class PullJob:
-    image: str
-    started_at: float
-    status: str = "running"  # running | success | error
-    phase: str = "starting"
-    percent: float = 0.0
-    bytes_done: int = 0
-    bytes_total: int = 0
-    error: str = ""
-    finished_at: float | None = None
-    log: deque = field(default_factory=lambda: deque(maxlen=LOG_RING_SIZE))
-    subscribers: list[asyncio.Queue] = field(default_factory=list)
+class PullJob(ProgressJob):
+    """A docker image pull. Progress/log/streaming come from ProgressJob (#88)."""
+
+    image: str = ""
 
     def snapshot(self) -> dict:
-        return {
-            "image": self.image,
-            "status": self.status,
-            "phase": self.phase,
-            "percent": self.percent,
-            "bytes_done": self.bytes_done,
-            "bytes_total": self.bytes_total,
-            "error": self.error,
-            "started_at": self.started_at,
-            "finished_at": self.finished_at,
-        }
+        return {"image": self.image, **super().snapshot()}
 
 
 class ImageService:
@@ -96,23 +78,12 @@ class ImageService:
         self._task = asyncio.create_task(self._run(job))
         return job
 
-    def subscribe(self) -> asyncio.Queue | None:
-        if not self.job:
-            return None
-        queue: asyncio.Queue = asyncio.Queue()
-        self.job.subscribers.append(queue)
-        return queue
-
-    def unsubscribe(self, queue: asyncio.Queue) -> None:
-        if self.job and queue in self.job.subscribers:
-            self.job.subscribers.remove(queue)
-
     # ---- job lifecycle --------------------------------------------------------
 
     async def _run(self, job: PullJob) -> None:
         loop = asyncio.get_running_loop()
         logger.info("Pulling server image: %s", job.image)
-        self._broadcast(job, {"type": "status", "job": job.snapshot(), "present": None})
+        job.broadcast({"type": "status", "job": job.snapshot(), "present": None})
         try:
             await asyncio.to_thread(self._pull, job, loop)
         except Exception as exc:  # a pull failure must never take the app down
@@ -166,15 +137,14 @@ class ImageService:
     # ---- loop-thread mutations ------------------------------------------------
 
     def _on_log(self, job: PullJob, line: str) -> None:
-        job.log.append(line)
-        self._broadcast(job, {"type": "log", "line": line})
+        job.emit_log(line)
 
     def _on_progress(self, job, phase, percent, done, total) -> None:
         job.phase = phase
         job.percent = percent
         job.bytes_done = done
         job.bytes_total = total
-        self._broadcast(job, {
+        job.broadcast({
             "type": "progress",
             "phase": phase,
             "percent": percent,
@@ -183,25 +153,18 @@ class ImageService:
         })
 
     def _finish(self, job: PullJob, status: str, error: str) -> None:
-        job.status = status
-        job.error = error
-        job.finished_at = time.time()
+        job.finish(status, error)
         if status == "success":
-            job.percent = 100.0
             job.phase = "completed"
             logger.info("Server image pulled: %s", job.image)
         else:
             job.phase = "failed"
             logger.warning("Server image pull failed: %s: %s", job.image, error)
-        self._broadcast(job, {
+        job.broadcast({
             "type": "status",
             "job": job.snapshot(),
             "present": status == "success",
         })
-
-    def _broadcast(self, job: PullJob, event: dict) -> None:
-        for queue in list(job.subscribers):
-            queue.put_nowait(event)
 
 
 def _clean_error(message: str) -> str:
