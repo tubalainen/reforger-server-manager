@@ -48,11 +48,14 @@ const faq = [
   {
     q: 'Can I run this on Windows?',
     a: `Yes — on Windows 10/11 with Docker Desktop (WSL2 backend). The README's "Running on
-       Windows" section has a PowerShell one-liner that installs the prerequisites, writes
-       the config, opens the firewall for the game and A2S ports, and puts a shortcut on
-       your Desktop that starts Docker and the manager. Do not install Docker Engine
-       inside a WSL distro instead: its NAT only forwards TCP, so the UDP game ports never
-       reach the Windows host and players cannot join.`,
+       Windows" section has a short PowerShell block that downloads an installer script and
+       runs it: it installs the prerequisites, writes the config, opens the firewall for the
+       game and A2S ports, and puts a shortcut on your Desktop that starts Docker and the
+       manager. Read the downloaded script before running it — and note it is downloaded to
+       a file on purpose rather than piped into the shell, because that pipe-into-shell
+       pattern is what malware uses and Windows Defender blocks it. Do not install Docker
+       Engine inside a WSL distro instead: its NAT only forwards TCP, so the UDP game ports
+       never reach the Windows host and players cannot join.`,
   },
   {
     q: 'Which exact firewall command do I need?',

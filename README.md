@@ -190,23 +190,37 @@ Windows is supported through **Docker Desktop with its WSL2 backend** — the sa
 manager image, the same Arma server containers, running inside the lightweight Linux
 VM that Docker Desktop manages for you. You never have to touch WSL yourself.
 
-### One-liner install
+### Install
 
-Open **PowerShell** (a normal window — it asks for admin only when it needs to) and run:
+Open **PowerShell** (a normal window — it asks for admin only when it needs to), then
+copy-paste these three lines. They download the installer, then run it:
 
 ```powershell
-irm https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/scripts/windows/install.ps1 | iex
+$installer = "$env:TEMP\reforger-install.ps1"
+Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/scripts/windows/install.ps1 -OutFile $installer
+powershell -ExecutionPolicy Bypass -File $installer
 ```
+
+Append options to the last line if you want them, e.g. `-InstallDir 'D:\Reforger'` or
+`-WebPort 8080`.
+
+> **Why not a single `irm … | iex` line?** Because piping a downloaded script straight
+> into the interpreter is the *ClickFix* technique that real malware uses, so Microsoft
+> Defender blocks it as `Trojan:Win32/ClickFix` — and it would run code you never had a
+> chance to read. Downloading to a file first keeps Defender happy and lets you open
+> `%TEMP%\reforger-install.ps1` in Notepad and check it before it runs. Do that: never
+> take our word for what a script does.
 
 The installer:
 
 1. checks for **WSL2** and **Docker Desktop**, and installs whatever is missing via
-   `winget` (if it installs either, reboot and run the one-liner again);
+   `winget` (if it installs either, reboot and run the install again);
 2. creates `%USERPROFILE%\ReforgerServerManager` with `docker-compose.windows.yaml`,
-   a `.env`, and the start/stop scripts;
+   a `.env`, and the start/stop/firewall scripts;
 3. generates a `SESSION_SECRET` and lets you pick (or auto-generates) the admin
    password — it is printed once at the end and stored in `.env`;
-4. opens the **Windows firewall** for the game + A2S UDP ranges (one UAC prompt);
+4. opens the **Windows firewall** for the game + A2S UDP ranges by running
+   `firewall.ps1` elevated (one UAC prompt — you can read that script first too);
 5. puts a **Reforger Server Manager** shortcut on your Desktop.
 
 The shortcut is all you need from then on: it starts Docker Desktop (and with it the
@@ -237,10 +251,12 @@ back them up from **Docker Desktop → Volumes**.
 Two hops have to be open — Windows and your router. Both use the same UDP ranges, and
 the GUI prints the exact command for you under **Instances → Ports & firewall**.
 
-1. **Windows firewall** (the installer already did this; here it is for reference, in
-   an *elevated* PowerShell):
+1. **Windows firewall** — the installer already did this. To redo it (after changing the
+   ranges in `.env`, say), run either of these in an *elevated* PowerShell:
 
    ```powershell
+   powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\ReforgerServerManager\firewall.ps1" -GamePorts 2001-2020 -A2sPorts 17777-17796
+   # ...or the rule it creates, directly:
    New-NetFirewallRule -DisplayName "Arma Reforger (game + A2S)" -Direction Inbound -Action Allow -Protocol UDP -LocalPort 2001-2020,17777-17796
    ```
 
