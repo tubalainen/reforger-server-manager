@@ -50,6 +50,11 @@ class EditInstance(BaseModel):
     branch: str | None = None
 
 
+class ClearData(BaseModel):
+    # Any of instance_service.DATA_TARGETS: mods | saves | logs (#79)
+    targets: list[str] = Field(min_length=1)
+
+
 @router.get("")
 async def list_instances(_user: str = Depends(auth.require_session)):
     return await asyncio.to_thread(instance_service.list_views)
@@ -188,6 +193,28 @@ async def restart_schedule(
 @router.delete("/{instance_id}", status_code=204)
 async def delete(instance_id: int, _user: str = Depends(auth.require_session)):
     await asyncio.to_thread(instance_service.delete_instance, instance_id)
+
+
+@router.get("/{instance_id}/data")
+async def instance_data(instance_id: int, _user: str = Depends(auth.require_session)):
+    """What this instance has stored on disk: baked mods, saves, logs (#79)."""
+    try:
+        return await asyncio.to_thread(instance_service.instance_data, instance_id)
+    except InstanceError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.post("/{instance_id}/data/clear")
+async def clear_instance_data(
+    instance_id: int, body: ClearData, _user: str = Depends(auth.require_session)
+):
+    """Wipe the selected stored data so the next start rebuilds it (#79)."""
+    try:
+        return await asyncio.to_thread(
+            instance_service.clear_instance_data, instance_id, body.targets
+        )
+    except InstanceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 @router.get("/{instance_id}/logfiles")

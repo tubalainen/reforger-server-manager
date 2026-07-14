@@ -249,22 +249,126 @@ def test_inject_stats_logging_adds_arg_and_respects_user_override():
     assert instance_service._inject_stats_logging("-logStats 5000") == "-logStats 5000"
 
 
-def test_container_has_stats_logging_detection():
-    class FakeContainer:
-        def __init__(self, env, fail=False):
-            self.attrs = {"Config": {"Env": env}}
-            self._fail = fail
+class _FakeEnvContainer:
+    def __init__(self, env, fail=False):
+        self.attrs = {"Config": {"Env": env}}
+        self._fail = fail
 
-        def reload(self):
-            if self._fail:
-                raise AttributeError("cannot inspect")
+    def reload(self):
+        if self._fail:
+            raise AttributeError("cannot inspect")
 
-    has = instance_service._container_has_stats_logging
-    assert has(FakeContainer(["ARMA_PARAMS=-logStats 10000 -nds 3"])) is True
-    assert has(FakeContainer(["ARMA_PARAMS=-nds 3"])) is False
-    assert has(FakeContainer(["OTHER=x"])) is False
+
+def test_container_env_match_detects_stale_launch_params():
+    # Docker bakes env at container creation, so a template's launch parameters
+    # edited afterwards were silently ignored on a plain restart (#79).
+    matches = instance_service._container_env_matches
+    desired = {"ARMA_PARAMS": "-logStats 10000 -nds 3", "STEAM_APPID": "1874900"}
+
+    assert matches(_FakeEnvContainer(
+        ["ARMA_PARAMS=-logStats 10000 -nds 3", "STEAM_APPID=1874900", "PATH=/usr/bin"]
+    ), desired) is True
+    # the template's launch params changed -> the container is stale
+    assert matches(_FakeEnvContainer(
+        ["ARMA_PARAMS=-logStats 10000", "STEAM_APPID=1874900"]
+    ), desired) is False
+    # still covers the old -logStats check (#38): missing key -> stale
+    assert matches(_FakeEnvContainer(["STEAM_APPID=1874900"]), desired) is False
     # uninspectable container -> True, so we never destroy what we can't read
-    assert has(FakeContainer([], fail=True)) is True
+    assert matches(_FakeEnvContainer([], fail=True), desired) is True
+
+
+def _seed_instance_data(tmp_path, monkeypatch):
+    """A realistic on-disk instance: baked mods, a save, logs."""
+    import config
+    import models
+    from sqlmodel import Session
+
+    monkeypatch.setattr(config.settings, "data_dir", str(tmp_path))
+    with Session(models.get_engine()) as session:
+        session.add(_inst(id=1))
+        session.commit()
+    idir = tmp_path / "instances" / "1"
+    (idir / "workshop" / "591AF5BDA9F7CEEB").mkdir(parents=True)
+    (idir / "workshop" / "591AF5BDA9F7CEEB" / "addon.pak").write_bytes(b"x" * 1000)
+    (idir / "profile" / "save").mkdir(parents=True)
+    (idir / "profile" / "save" / "world.bin").write_bytes(b"s" * 100)
+    (idir / "profile" / "logs" / "session1").mkdir(parents=True)
+    (idir / "profile" / "logs" / "session1" / "console.log").write_bytes(b"l" * 10)
+    (idir / "configs").mkdir(parents=True)
+    (idir / "configs" / "server.json").write_text("{}")
+    return idir
+
+
+def test_instance_data_reports_what_is_on_disk(tmp_path, monkeypatch):
+    _seed_instance_data(tmp_path, monkeypatch)
+    monkeypatch.setattr(instance_service.docker_service, "ping", lambda: False)
+
+    data = instance_service.instance_data(1)
+    by_target = {i["target"]: i for i in data["items"]}
+
+    assert by_target["mods"]["size_bytes"] == 1000
+    assert by_target["mods"]["paths"] == ["workshop"]
+    assert by_target["saves"]["size_bytes"] == 100
+    assert by_target["saves"]["paths"] == ["save"]
+    assert by_target["logs"]["files"] == 1
+
+
+def test_clear_instance_data_wipes_only_the_chosen_targets(tmp_path, monkeypatch):
+    idir = _seed_instance_data(tmp_path, monkeypatch)
+    monkeypatch.setattr(instance_service, "container_status", lambda _id: "exited")
+
+    # The real delete runs in a sibling container (the files are root-owned);
+    # here, act it out on the paths the service asks to remove.
+    asked = {}
+
+    class FakeContainers:
+        def run(self, image, entrypoint=None, command=None, **kw):
+            asked["script"] = command[1]
+            import shutil
+            for part in command[1].split("rm -rf ")[1:]:
+                rel = part.split("'")[1].replace("/idata/", "")
+                shutil.rmtree(idir / rel, ignore_errors=True)
+
+    monkeypatch.setattr(
+        instance_service.docker_service, "get_client",
+        lambda: type("C", (), {"containers": FakeContainers()})(),
+    )
+    monkeypatch.setattr(instance_service.docker_service, "host_path_for", lambda p: p)
+
+    out = instance_service.clear_instance_data(1, ["mods", "saves"])
+
+    assert {r["target"] for r in out["removed"]} == {"mods", "saves"}
+    assert not (idir / "workshop" / "591AF5BDA9F7CEEB").exists()  # bake thrown away
+    assert not (idir / "profile" / "save").exists()               # save wiped
+    assert (idir / "profile" / "logs" / "session1" / "console.log").exists()  # kept
+    assert (idir / "configs" / "server.json").exists()            # never touched
+    # the dirs the server expects are recreated, empty
+    assert (idir / "workshop").is_dir() and not any((idir / "workshop").iterdir())
+
+
+def test_clear_instance_data_refuses_while_the_server_runs(tmp_path, monkeypatch):
+    _seed_instance_data(tmp_path, monkeypatch)
+    monkeypatch.setattr(instance_service, "container_status", lambda _id: "running")
+    with pytest.raises(instance_service.InstanceError, match="Stop the server"):
+        instance_service.clear_instance_data(1, ["saves"])
+
+
+def test_clear_instance_data_rejects_an_unknown_target(tmp_path, monkeypatch):
+    _seed_instance_data(tmp_path, monkeypatch)
+    monkeypatch.setattr(instance_service, "container_status", lambda _id: "exited")
+    # Targets are a fixed vocabulary; nothing a caller sends reaches a path or a shell.
+    with pytest.raises(instance_service.InstanceError, match="Nothing selected"):
+        instance_service.clear_instance_data(1, ["../../etc"])
+
+
+def test_instance_data_404s_for_an_instance_that_does_not_exist(tmp_path, monkeypatch):
+    import config
+
+    monkeypatch.setattr(config.settings, "data_dir", str(tmp_path))
+    # Without this it happily reported "0 B, nothing here" for any id at all.
+    with pytest.raises(instance_service.InstanceError, match="not found"):
+        instance_service.instance_data(999)
 
 
 def test_list_and_resolve_log_files(tmp_path, monkeypatch):

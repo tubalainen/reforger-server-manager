@@ -83,6 +83,16 @@ const faq = [
        same UDP ranges forwarded to this machine's LAN IP.`,
   },
   {
+    q: 'I changed the template’s mods, restarted — and the server still runs the old ones.',
+    a: `The server downloads and "bakes" its addons once and then reuses that copy. Open the
+       instance, stop it, and use the "Stored data" card to clear Downloaded & baked mods:
+       the next start fetches and bakes the template's current mod list from scratch (give it
+       a few minutes). The same card clears saved game data — which resets the persistent
+       world, so only do that when you want a clean slate — and old logs. Changing a
+       template's launch parameters no longer needs any of this: the instance rebuilds its
+       container by itself on the next start.`,
+  },
+  {
     q: 'Do mods update automatically?',
     a: `Yes, by default. Mods follow the latest Workshop release: the server checks and
        downloads mod updates when it starts. If an update breaks things, edit the
