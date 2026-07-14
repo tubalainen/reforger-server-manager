@@ -38,6 +38,16 @@ const faq = [
        switch a single instance between templates (restart required).`,
   },
   {
+    q: 'Why does my instance say "starting…" for several minutes?',
+    a: `Because it is. Starting the container is instant, but the Arma server then downloads
+       its mods and loads the world before anyone can join — on a heavy modset that is
+       minutes, not seconds. The status stays amber ("Starting server…") until the server's
+       own log says it is up (it registers with the Reforger backend and enters the online
+       game state), and only then turns green ("Started and online"). If it never goes
+       green, read the server log on the instance page — a missing mod or a bad config
+       shows up there.`,
+  },
+  {
     q: "Players can't find or join my server. What should I check?",
     a: `Three usual suspects: (1) UDP ports — the game port and A2S port of each running
        instance must be forwarded through your router/firewall to the Docker host

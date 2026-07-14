@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
+import { serverStatus } from '../status'
 
 const props = defineProps({ id: { type: [String, Number], required: true } })
 const router = useRouter()
@@ -58,13 +59,11 @@ function downloadLog(path) {
   window.location.href = `/api/instances/${props.id}/logfiles/download?path=${encodeURIComponent(path)}`
 }
 
-const statusBadge = {
-  running: 'text-bg-success',
-  exited: 'text-bg-danger',
-  created: 'text-bg-secondary',
-  absent: 'text-bg-secondary',
-  unknown: 'text-bg-warning',
-}
+// "running" means the container is up; the server inside it may still be loading
+// mods and the world, and cannot be joined until it says it is online (#76).
+const serverStatusView = computed(() =>
+  serverStatus(inst.value?.status, stats.value?.server_state),
+)
 
 async function loadInstance() {
   try {
@@ -255,8 +254,15 @@ onUnmounted(() => {
           <div class="text-secondary small text-uppercase" style="letter-spacing: .04em">Instance</div>
           <h1 class="h3 mb-0 d-flex align-items-center flex-wrap gap-2">
             <span>{{ inst.name }}</span>
-            <span class="badge fs-6 align-middle" :class="statusBadge[inst.status] || 'text-bg-secondary'">
-              {{ inst.status }}
+            <span class="badge fs-6 align-middle" :class="serverStatusView.cls">
+              <span
+                v-if="serverStatusView.starting"
+                class="spinner-border spinner-border-sm me-1 align-[-0.125em]"
+                role="status"
+                aria-hidden="true"
+                style="width: .7em; height: .7em; border-width: .15em"
+              ></span>
+              {{ serverStatusView.label }}
             </span>
           </h1>
         </div>
@@ -284,7 +290,10 @@ onUnmounted(() => {
             <div class="col-6 col-md-2">
               <div class="text-secondary">Status</div>
               <div class="fs-6">
-                <span class="badge" :class="statusBadge[inst.status] || 'text-bg-secondary'">{{ inst.status }}</span>
+                <span class="badge" :class="serverStatusView.cls">{{ serverStatusView.long }}</span>
+              </div>
+              <div v-if="serverStatusView.starting" class="text-secondary" style="font-size: .75rem">
+                loading mods &amp; world
               </div>
             </div>
             <div class="col-6 col-md-2">

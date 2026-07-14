@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { api } from '../api'
 import Downloads from './Downloads.vue'
 import PortsFirewall from '../components/PortsFirewall.vue'
+import { serverStatus } from '../status'
 
 const router = useRouter()
 const instances = ref([])
@@ -17,14 +18,6 @@ const create = reactive({
   busy: false, error: '',
 })
 let poll = null
-
-const statusBadge = {
-  running: 'text-bg-success',
-  exited: 'text-bg-danger',
-  created: 'text-bg-secondary',
-  absent: 'text-bg-secondary',
-  unknown: 'text-bg-warning',
-}
 
 async function load() {
   try {
@@ -40,10 +33,14 @@ async function load() {
   }
 }
 
-const statusChip = {
-  running: 'text-bg-success',
-  exited: 'text-bg-danger',
-  unknown: 'text-bg-warning',
+// The summary carries whether each running server is still loading or actually
+// online (#76); the cards come from /api/instances, so pair them up by id.
+const stateById = computed(() =>
+  Object.fromEntries((summary.value?.servers || []).map((s) => [s.id, s.server_state])),
+)
+
+function cardStatus(inst) {
+  return serverStatus(inst.status, stateById.value[inst.id])
 }
 
 async function openCreate() {
@@ -136,8 +133,14 @@ onUnmounted(() => clearInterval(poll))
               class="text-decoration-none d-inline-flex align-items-center gap-2 border rounded-pill ps-1 pe-2 py-1"
               :title="s.connect || 'PUBLIC_ADDRESS not set'"
             >
-              <span class="badge rounded-pill" :class="statusChip[s.status] || 'text-bg-secondary'">
-                {{ s.status === 'running' ? (s.players ?? '—') + ' 👤' : s.status }}
+              <!-- A still-loading server has no players to speak of: say so
+                   instead of showing a hollow "0 👤" (#76). -->
+              <span class="badge rounded-pill" :class="serverStatus(s.status, s.server_state).cls">
+                {{
+                  s.status === 'running' && s.server_state !== 'starting'
+                    ? (s.players ?? '—') + ' 👤'
+                    : serverStatus(s.status, s.server_state).label
+                }}
               </span>
               <span class="small text-body text-truncate" style="max-width: 16rem">{{ s.name }}</span>
             </router-link>
@@ -177,8 +180,8 @@ onUnmounted(() => clearInterval(poll))
                   </span>
                 </div>
               </div>
-              <span class="badge" :class="statusBadge[inst.status] || 'text-bg-secondary'">
-                {{ inst.status }}
+              <span class="badge" :class="cardStatus(inst).cls">
+                {{ cardStatus(inst).label }}
               </span>
             </div>
 

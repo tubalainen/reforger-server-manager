@@ -62,6 +62,37 @@ def parse_public_address(log_text: str) -> str | None:
     return found
 
 
+# A container that is "running" is not a server players can join: Reforger spends
+# minutes downloading mods and loading the world first (issue #76). The server
+# announces the transition itself:
+#   BACKEND      : Server registered with address: 203.0.113.7:2001
+#   DEFAULT      : Entered online game state.
+# A private (unlisted) server never registers with the backend but still enters
+# the online game state, so either line is proof enough. The periodic -logStats
+# line is a third witness: the engine only prints it once the world is running,
+# and it keeps printing every STATS_LOG_INTERVAL_MS — which matters because the
+# one-shot lines above scroll out of the log tail we read on a long-lived server.
+_ONLINE_RE = re.compile(
+    r"Entered online game state|registered with address:", re.IGNORECASE
+)
+
+STATE_STARTING = "starting"
+STATE_ONLINE = "online"
+
+
+def parse_server_state(log_text: str) -> str:
+    """STATE_ONLINE once the server's log says it is up; STATE_STARTING before.
+
+    `log_text` must cover the CURRENT run only (see current_run_log): Docker keeps
+    a container's log across restarts, and a previous run's "online" line would
+    otherwise report a still-loading server as online.
+    """
+    for line in log_text.splitlines():
+        if _ONLINE_RE.search(line) or _FPS_RE.search(line):
+            return STATE_ONLINE
+    return STATE_STARTING
+
+
 def parse_server_status(log_text: str) -> dict | None:
     """Return the most recent {fps, mem_kb, players} from server log output.
 
@@ -675,8 +706,8 @@ def running_instance_names_for_branch(branch: str) -> list[str]:
     return names
 
 
-def _container_uptime_seconds(container) -> int | None:
-    """How long the container has been running, from its Docker StartedAt."""
+def _started_at(container) -> datetime | None:
+    """When the container's current run began, from its Docker StartedAt."""
     try:
         started = (container.attrs.get("State") or {}).get("StartedAt")
     except AttributeError:
@@ -689,10 +720,51 @@ def _container_uptime_seconds(container) -> int | None:
         return None
     iso = m.group(1) + (("." + m.group(2)[:6]) if m.group(2) else "") + "+00:00"
     try:
-        started_dt = datetime.fromisoformat(iso)
+        return datetime.fromisoformat(iso)
     except ValueError:
         return None
+
+
+def _container_uptime_seconds(container) -> int | None:
+    """How long the container has been running, from its Docker StartedAt."""
+    started_dt = _started_at(container)
+    if started_dt is None:
+        return None
     return max(0, int((datetime.now(timezone.utc) - started_dt).total_seconds()))
+
+
+def current_run_log(container, tail: int = STATS_LOG_TAIL) -> str:
+    """The tail of the log for the container's CURRENT run only.
+
+    Docker keeps a container's log across restarts, so a plain tail can serve up
+    the previous run's output — which would report a restarting server as still
+    online (#76), and its old FPS/player numbers as current. Anchoring on
+    StartedAt keeps every reading honest.
+    """
+    started_dt = _started_at(container)
+    kwargs = {"tail": tail}
+    if started_dt is not None:
+        kwargs["since"] = started_dt
+    return container.logs(**kwargs).decode("utf-8", errors="replace")
+
+
+# Runs already seen online: {container id: StartedAt}. Once a server has come up
+# it stays up until its container restarts, so remember it rather than re-deriving
+# it from a log window that will eventually scroll past the evidence. Keyed by
+# StartedAt so a restart of the same container is a fresh run.
+_online_runs: dict[str, str] = {}
+
+
+def server_state(container, log_text: str) -> str:
+    """STATE_STARTING while the game server loads, STATE_ONLINE once it is up."""
+    cid = getattr(container, "id", "") or ""
+    started = str((container.attrs.get("State") or {}).get("StartedAt", ""))
+    if cid and _online_runs.get(cid) == started:
+        return STATE_ONLINE
+    state = parse_server_state(log_text)
+    if state == STATE_ONLINE and cid:
+        _online_runs[cid] = started
+    return state
 
 
 def instance_stats(instance_id: int) -> dict:
@@ -715,6 +787,9 @@ def instance_stats(instance_id: int) -> dict:
         "game_port": game_port,
         "connect": f"{public}:{game_port}" if public else None,
         "status": container_status(instance_id),
+        # Whether the game server inside a running container is still loading
+        # (mods, world) or actually joinable (#76). None when not running.
+        "server_state": None,
         "uptime_seconds": None,
         "players": None,
         "server_fps": None,
@@ -735,7 +810,8 @@ def instance_stats(instance_id: int) -> dict:
         pass
 
     try:
-        log_text = container.logs(tail=STATS_LOG_TAIL).decode("utf-8", errors="replace")
+        log_text = current_run_log(container)
+        stats["server_state"] = server_state(container, log_text)
         server = parse_server_status(log_text)
         if server:
             stats["players"] = server["players"]
@@ -839,13 +915,15 @@ def instances_summary() -> dict:
     for inst in instances:
         status = container_status(inst.id) if docker_up else "unknown"
         players = None
+        state = None
         address = public  # env-configured PUBLIC_ADDRESS wins
         if status == "running":
             running += 1
             container = docker_service.find_instance_container(inst.id)
             if container:
                 try:
-                    log_text = container.logs(tail=STATS_LOG_TAIL).decode("utf-8", errors="replace")
+                    log_text = current_run_log(container)
+                    state = server_state(container, log_text)
                     parsed = parse_server_status(log_text)
                     if parsed and parsed["players"] is not None:
                         players = parsed["players"]
@@ -859,6 +937,7 @@ def instances_summary() -> dict:
             "name": inst.name,
             "branch": inst.branch,
             "status": status,
+            "server_state": state,
             "players": players,
             "connect": f"{address}:{inst.game_port}" if address else None,
         })
