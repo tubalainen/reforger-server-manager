@@ -314,7 +314,7 @@ class SteamService:
                 asyncio.to_thread(self._stream_logs, job, container, loop),
                 timeout=config.settings.steamcmd_timeout_minutes * 60,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             await asyncio.to_thread(self._force_remove, container)
             self._finish(
                 job, "error",

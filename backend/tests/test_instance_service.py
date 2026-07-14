@@ -1,6 +1,5 @@
 import json
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import UTC, datetime
 
 import pytest
 
@@ -168,7 +167,7 @@ class _FakeLogContainer:
 
 
 def _ts(second, micro=0):
-    return datetime(2026, 7, 14, 10, 0, second, micro, tzinfo=timezone.utc)
+    return datetime(2026, 7, 14, 10, 0, second, micro, tzinfo=UTC)
 
 
 def test_current_run_log_ignores_the_previous_run():
@@ -295,9 +294,10 @@ def test_container_env_match_detects_stale_launch_params():
 
 def _seed_instance_data(tmp_path, monkeypatch):
     """A realistic on-disk instance: baked mods, a save, logs."""
+    from sqlmodel import Session
+
     import config
     import models
-    from sqlmodel import Session
 
     monkeypatch.setattr(config.settings, "data_dir", str(tmp_path))
     with Session(models.get_engine()) as session:
@@ -328,9 +328,10 @@ def test_desired_environment_pins_the_save_and_addons_dirs_to_the_mounts():
 
 def test_the_save_dir_the_server_actually_uses_is_detected(tmp_path, monkeypatch):
     # The real server writes its persistence to <profile>/.save/game.
+    from sqlmodel import Session
+
     import config
     import models
-    from sqlmodel import Session
 
     monkeypatch.setattr(config.settings, "data_dir", str(tmp_path))
     with Session(models.get_engine()) as session:
@@ -640,9 +641,9 @@ def test_due_scheduled_restart_picks_latest_of_several():
 
 
 def test_container_uptime_seconds_parses_docker_timestamp():
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
-    started = (datetime.now(timezone.utc) - timedelta(minutes=5)).strftime(
+    started = (datetime.now(UTC) - timedelta(minutes=5)).strftime(
         "%Y-%m-%dT%H:%M:%S.123456789Z"
     )
     c = type("C", (), {"attrs": {"State": {"StartedAt": started}}})()

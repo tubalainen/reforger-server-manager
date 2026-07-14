@@ -1,5 +1,5 @@
 """SQLite persistence (SQLModel): server templates, instances, port leases."""
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlmodel import Field, SQLModel, create_engine
@@ -8,7 +8,7 @@ import config
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Template(SQLModel, table=True):

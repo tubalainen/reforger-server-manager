@@ -1,12 +1,10 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
 import { api } from '../api'
 import Downloads from './Downloads.vue'
 import PortsFirewall from '../components/PortsFirewall.vue'
 import { serverStatus } from '../status'
 
-const router = useRouter()
 const instances = ref([])
 const summary = ref(null)
 const templates = ref([])

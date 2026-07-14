@@ -71,7 +71,7 @@ def test_parse_latest_build_none_when_absent():
 
 
 def test_download_script_retries_and_detects_success():
-    from services.steam_service import _build_download_script, STEAMCMD_ATTEMPTS
+    from services.steam_service import STEAMCMD_ATTEMPTS, _build_download_script
 
     script = _build_download_script("1874900")
     # Runs the real steamcmd app_update for the branch's app id...

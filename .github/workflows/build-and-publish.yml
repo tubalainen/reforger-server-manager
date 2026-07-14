@@ -24,6 +24,23 @@ jobs:
       - name: Install backend dependencies
         run: pip install -r backend/requirements-dev.txt
 
+      - name: Lint backend (ruff)
+        run: python -m ruff check backend/
+
+      # The version lives in two files that no build stage can see at once, so it
+      # cannot have a single source — but it can refuse to drift (#86).
+      - name: Check backend and frontend versions agree
+        run: |
+          python - <<'EOF'
+          import json, re, sys, pathlib
+          backend = re.search(r'APP_VERSION = "([^"]+)"',
+                              pathlib.Path("backend/config.py").read_text()).group(1)
+          frontend = json.loads(pathlib.Path("frontend/package.json").read_text())["version"]
+          if backend != frontend:
+              sys.exit(f"version drift: backend/config.py={backend} frontend/package.json={frontend}")
+          print(f"version {backend} — consistent")
+          EOF
+
       - name: Run backend tests
         run: python -m pytest backend/tests -q
 
@@ -31,11 +48,21 @@ jobs:
         with:
           node-version: "24"
 
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Lint frontend (eslint)
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Run frontend tests (vitest)
+        working-directory: frontend
+        run: npm test
+
       - name: Build frontend
         working-directory: frontend
-        run: |
-          npm ci
-          npm run build
+        run: npm run build
 
   publish:
     needs: test

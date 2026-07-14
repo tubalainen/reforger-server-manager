@@ -13,8 +13,8 @@ from fastapi.staticfiles import StaticFiles
 
 import auth
 import config
-import models
 import instances_api
+import models
 import serverfiles_api
 import system_api
 import templates_api

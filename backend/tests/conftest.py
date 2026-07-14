@@ -41,8 +41,9 @@ def client(monkeypatch):
 @pytest.fixture(autouse=True)
 def _clean_db():
     """Each test starts with empty tables (the SQLite file is shared)."""
-    import models
     from sqlmodel import Session, delete
+
+    import models
 
     models.init_db()
     with Session(models.get_engine()) as session:

@@ -1,11 +1,10 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
 import { api } from '../api'
 import { serverStatus } from '../status'
+import { formatBytes, formatUptime, formatTimestamp } from '../format'
 
 const props = defineProps({ id: { type: [String, Number], required: true } })
-const router = useRouter()
 
 const inst = ref(null)
 const stats = ref(null)
@@ -16,21 +15,8 @@ const logPane = ref(null)
 let ws = null
 let poll = null
 
-function fmtMem(bytes) {
-  if (!bytes) return '—'
-  const mb = bytes / 1048576
-  return mb >= 1024 ? (mb / 1024).toFixed(2) + ' GB' : mb.toFixed(0) + ' MB'
-}
-
-function fmtUptime(s) {
-  if (s == null) return '—'
-  const d = Math.floor(s / 86400)
-  const h = Math.floor((s % 86400) / 3600)
-  const m = Math.floor((s % 3600) / 60)
-  if (d) return `${d}d ${h}h`
-  if (h) return `${h}h ${m}m`
-  return `${m}m`
-}
+const fmtMem = (bytes) => formatBytes(bytes, { empty: '—' })
+const fmtUptime = formatUptime
 
 async function loadStats() {
   try {
@@ -48,15 +34,8 @@ async function loadLogFiles() {
     /* ignore */
   }
 }
-function fmtBytes(n) {
-  if (!n) return '0 B'
-  // A baked mod folder is easily several GB (#79) — don't print it as "3242.5 MB".
-  if (n >= 1073741824) return (n / 1073741824).toFixed(2) + ' GB'
-  return n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : (n / 1024).toFixed(0) + ' KB'
-}
-function fmtTime(ts) {
-  return ts ? new Date(ts * 1000).toLocaleString() : ''
-}
+const fmtBytes = formatBytes
+const fmtTime = formatTimestamp
 function downloadLog(path) {
   window.location.href = `/api/instances/${props.id}/logfiles/download?path=${encodeURIComponent(path)}`
 }

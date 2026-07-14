@@ -71,8 +71,9 @@ def test_pull_aggregates_layers_and_reports_success(monkeypatch):
     monkeypatch.setattr(image_service.docker_service, "get_client", lambda: FakeClient())
 
     svc = ImageService()
-    from services.image_service import PullJob
     import time
+
+    from services.image_service import PullJob
 
     job = PullJob(image=config.settings.reforger_server_image, started_at=time.time())
 

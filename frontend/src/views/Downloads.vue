@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted, onUnmounted, reactive, nextTick } from 'vue'
 import { api } from '../api'
+import { formatBytes, formatTimestamp } from '../format'
 
 const state = reactive({ branches: [], docker: true, error: '', steamcmd_image: '', server_image: '' })
 const logs = reactive({})
@@ -37,14 +38,8 @@ async function removeFiles(branch) {
 
 const badge = { stable: 'text-bg-success', experimental: 'text-bg-warning' }
 
-function fmtBytes(n) {
-  if (!n) return ''
-  return (n / 1e9).toFixed(2) + ' GB'
-}
-
-function fmtDate(ts) {
-  return ts ? new Date(ts * 1000).toLocaleString() : ''
-}
+const fmtBytes = (n) => formatBytes(n, { base: 1000, empty: '' })
+const fmtDate = formatTimestamp
 
 function branchState(name) {
   return state.branches.find((b) => b.branch === name)
