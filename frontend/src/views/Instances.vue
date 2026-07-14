@@ -39,8 +39,11 @@ const stateById = computed(() =>
   Object.fromEntries((summary.value?.servers || []).map((s) => [s.id, s.server_state])),
 )
 
+// Stop/start/restart the user asked for but that is still in flight, per instance.
+const pending = reactive({})
+
 function cardStatus(inst) {
-  return serverStatus(inst.status, stateById.value[inst.id])
+  return serverStatus(inst.status, stateById.value[inst.id], pending[inst.id])
 }
 
 async function openCreate() {
@@ -78,11 +81,14 @@ async function submitCreate() {
 }
 
 async function action(inst, verb) {
+  pending[inst.id] = verb
   try {
     await api(`/api/instances/${inst.id}/${verb}`, { method: 'POST' })
     await load()
   } catch (e) {
     error.value = e.message
+  } finally {
+    delete pending[inst.id]
   }
 }
 

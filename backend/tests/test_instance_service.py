@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -145,32 +145,85 @@ def test_parse_server_state_online_from_the_periodic_stats_line():
 
 
 class _FakeLogContainer:
-    """Container whose logs honour docker's `since` (as a real daemon does)."""
+    """A container whose logs behave like a real daemon's.
 
-    def __init__(self, started, previous_run="", current_run=""):
+    Lines are (timestamp, text) pairs spanning both runs. `since` is honoured the
+    way docker actually honours it: the SDK truncates it to whole seconds, so a
+    previous-run line written in the same second the new run began still comes
+    through — the case that kept a restarted server looking online (#76).
+    """
+
+    def __init__(self, started, lines=()):
         self.id = "cid-1"
         self.attrs = {"State": {"StartedAt": started}}
-        self._previous, self._current = previous_run, current_run
+        self.lines = list(lines)
 
-    def logs(self, tail=None, since=None):
-        text = self._current if since else self._previous + self._current
-        return text.encode()
+    def logs(self, tail=None, since=None, timestamps=False):
+        out = []
+        for ts, text in self.lines:
+            if since is not None and ts < since.replace(microsecond=0):
+                continue  # docker's second-granularity filter
+            out.append(f"{ts.isoformat().replace('+00:00', '')}Z {text}" if timestamps else text)
+        return ("\n".join(out) + "\n").encode()
 
 
-def test_current_run_log_ignores_the_previous_run(monkeypatch):
+def _ts(second, micro=0):
+    return datetime(2026, 7, 14, 10, 0, second, micro, tzinfo=timezone.utc)
+
+
+def test_current_run_log_ignores_the_previous_run():
     # Docker keeps a container's log across restarts. Without anchoring on
     # StartedAt, a restarting server would look online because the run BEFORE it
     # was (#76) — and its stale FPS/player numbers would be served as current.
     instance_service._online_runs.clear()
     c = _FakeLogContainer(
-        started="2026-07-14T10:00:00.123456789Z",
-        previous_run=ONLINE_LOG,
-        current_run=STARTUP_LOG,
+        started="2026-07-14T10:00:30Z",
+        lines=[
+            (_ts(10), "  DEFAULT      : Entered online game state."),   # previous run
+            (_ts(20), "  DEFAULT      : FPS: 60.0, Player: 5"),          # previous run
+            (_ts(31), "  SCRIPT       : Loading mods"),                  # current run
+        ],
     )
-    assert instance_service.current_run_log(c) == STARTUP_LOG
-    assert instance_service.server_state(c, instance_service.current_run_log(c)) == (
-        instance_service.STATE_STARTING
+    log = instance_service.current_run_log(c)
+    assert "Entered online game state" not in log
+    assert "Loading mods" in log
+    assert instance_service.server_state(c, log) == instance_service.STATE_STARTING
+
+
+def test_current_run_log_drops_a_previous_line_from_the_start_second():
+    # The regression behind the #76 follow-up: docker's `since` is truncated to
+    # whole seconds, so the dying run's last stats line — written in the same
+    # second the new run started — slipped through and reported the freshly
+    # restarting server as online. Line timestamps are compared at full precision.
+    instance_service._online_runs.clear()
+    c = _FakeLogContainer(
+        started="2026-07-14T10:00:30.800000Z",
+        lines=[
+            (_ts(30, 100000), "  DEFAULT      : FPS: 60.0, Player: 5"),  # previous run!
+            (_ts(31), "  SCRIPT       : Loading mods"),                  # current run
+        ],
     )
+    log = instance_service.current_run_log(c)
+    assert "FPS" not in log
+    assert instance_service.server_state(c, log) == instance_service.STATE_STARTING
+
+
+def test_restarting_an_instance_forgets_that_the_old_run_was_online():
+    # The memo must not outlive the run it describes, however the restart happens.
+    instance_service._online_runs.clear()
+    c = _FakeLogContainer(started="2026-07-14T10:00:00Z")
+    assert instance_service.server_state(c, ONLINE_LOG) == instance_service.STATE_ONLINE
+
+    instance_service.forget_run(c.id)
+    assert instance_service.server_state(c, STARTUP_LOG) == instance_service.STATE_STARTING
+
+
+def test_max_fps_config_echo_is_not_a_live_fps_reading():
+    # "maxFPS: 60" in a startup config echo must not read as an FPS sample — nor
+    # as proof the world is running, since the stats line doubles as that (#76).
+    log = "  ENGINE       : maxFPS: 60\n"
+    assert instance_service.parse_server_status(log) is None
+    assert instance_service.parse_server_state(log) == instance_service.STATE_STARTING
 
 
 def test_server_state_stays_online_once_seen_for_that_run():

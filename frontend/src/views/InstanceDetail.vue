@@ -61,8 +61,11 @@ function downloadLog(path) {
 
 // "running" means the container is up; the server inside it may still be loading
 // mods and the world, and cannot be joined until it says it is online (#76).
+// `pending` covers the stop/start/restart the user just asked for, which the old
+// server can spend tens of seconds ignoring.
+const pending = ref('')
 const serverStatusView = computed(() =>
-  serverStatus(inst.value?.status, stats.value?.server_state),
+  serverStatus(inst.value?.status, stats.value?.server_state, pending.value),
 )
 
 async function loadInstance() {
@@ -96,12 +99,18 @@ function connectLogs() {
 }
 
 async function action(verb) {
+  pending.value = verb
   try {
     inst.value = await api(`/api/instances/${props.id}/${verb}`, { method: 'POST' })
+    // Refresh the live stats at once: otherwise the status keeps showing the old
+    // server's "online" for up to a poll interval after a restart (#76).
+    await loadStats()
     // reconnect logs after start/restart (a new container may exist)
     if (verb !== 'stop') setTimeout(connectLogs, 800)
   } catch (e) {
     error.value = e.message
+  } finally {
+    pending.value = ''
   }
 }
 
@@ -292,8 +301,8 @@ onUnmounted(() => {
               <div class="fs-6">
                 <span class="badge" :class="serverStatusView.cls">{{ serverStatusView.long }}</span>
               </div>
-              <div v-if="serverStatusView.starting" class="text-secondary" style="font-size: .75rem">
-                loading mods &amp; world
+              <div v-if="serverStatusView.note" class="text-secondary" style="font-size: .75rem">
+                {{ serverStatusView.note }}
               </div>
             </div>
             <div class="col-6 col-md-2">
