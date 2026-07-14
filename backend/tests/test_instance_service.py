@@ -226,6 +226,21 @@ def test_max_fps_config_echo_is_not_a_live_fps_reading():
     assert instance_service.parse_server_state(log) == instance_service.STATE_STARTING
 
 
+def test_config_echo_is_never_read_as_live_server_stats():
+    # The server logs its own CONFIG too. Unanchored, `Players?:` matches inside
+    # "maxPlayers:" — so a config echo reported 64 players on an empty server, and
+    # fed that into the summary bar's player total (#85). Same trap as maxFPS.
+    log = "  ENGINE       : maxPlayers: 64, maxFPS: 60, maxMem: 8000 kB\n"
+    assert instance_service.parse_server_status(log) is None
+    assert instance_service.parse_server_state(log) == instance_service.STATE_STARTING
+
+    # ...while the real stats line still parses in full.
+    real = "  DEFAULT      : FPS: 59.9, Mem: 1190747 kB, Player: 12\n"
+    assert instance_service.parse_server_status(real) == {
+        "fps": 59.9, "mem_kb": 1190747, "players": 12,
+    }
+
+
 def test_server_state_stays_online_once_seen_for_that_run():
     # The proof lines eventually scroll away; a server that came up stays up
     # until its container restarts.

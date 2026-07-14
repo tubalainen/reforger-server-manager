@@ -35,13 +35,15 @@ logger = logging.getLogger("manager.instance")
 # The field order varies between builds (and "Player:" is sometimes "Players:"),
 # so match each field independently and keep the most recent value seen for each
 # — FPS and the player count legitimately arrive on different lines.
-# Anchored on a word boundary so a config echo like "maxFPS: 60" is not read as a
-# live FPS reading — and, since the stats line doubles as proof the world is
-# running (#76), is not mistaken for a server that is already online either.
+# Every one of these is anchored on a word boundary, because the server also logs
+# its own CONFIGURATION: "maxPlayers: 64, maxFPS: 60" must not be read as 64
+# players online at 60 FPS. Unanchored, `Players?:` matches inside `maxPlayers:`
+# — that is the bug this guard exists to prevent (#85), and the FPS half of it
+# shipped once already. Keep the lookbehind on any pattern added here.
 _FPS_RE = re.compile(r"(?<![A-Za-z])FPS:\s*([\d.]+)")
-_MEM_RE = re.compile(r"Mem:\s*(\d+)\s*kB")
-_PLAYERS_STAT_RE = re.compile(r"Players?:\s*(\d+)")          # -logStats line
-_PLAYERS_CONN_RE = re.compile(r"Players connected:\s*(\d+)")  # NETWORK event line
+_MEM_RE = re.compile(r"(?<![A-Za-z])Mem:\s*(\d+)\s*kB")
+_PLAYERS_STAT_RE = re.compile(r"(?<![A-Za-z])Players?:\s*(\d+)")   # -logStats line
+_PLAYERS_CONN_RE = re.compile(r"Players connected:\s*(\d+)")       # NETWORK event line
 
 # When PUBLIC_ADDRESS isn't set, the server's own registration line reveals the
 # public IP the Reforger backend sees (issue #46), e.g.:

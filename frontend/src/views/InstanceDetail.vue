@@ -255,13 +255,18 @@ function pickData(target, on) {
 }
 const dataBusy = ref(false)
 const dataNotice = ref('')
+const dataError = ref('')
 const confirmClear = ref(false)
 
 async function loadData() {
   try {
     dataInfo.value = await api(`/api/instances/${props.id}/data`)
-  } catch {
-    /* leave the card empty */
+    dataError.value = ''
+  } catch (e) {
+    // Never swallow this: the card used to be hidden behind `v-if="dataInfo"`, so a
+    // failed call made the whole feature vanish with no explanation — indistinguishable
+    // from "this version doesn't have it" (#85). Say what went wrong instead.
+    dataError.value = e.message
   }
 }
 
@@ -630,8 +635,9 @@ onUnmounted(() => {
         >{{ logLines.join('\n') || '// waiting for log output…' }}</pre>
       </div>
 
-      <!-- Stored data: baked mods, saves, logs (issue #79) -->
-      <div v-if="dataInfo" class="card mt-3">
+      <!-- Stored data: baked mods, saves, logs (issue #79). Always rendered — a failed
+           load shows an error here rather than hiding the whole feature (#85). -->
+      <div class="card mt-3">
         <div class="card-header d-flex justify-content-between align-items-center py-2">
           <span class="fw-semibold small">Stored data</span>
           <button class="btn btn-sm btn-outline-secondary" @click="loadData">Refresh</button>
@@ -641,6 +647,13 @@ onUnmounted(() => {
             What this server has written to disk. Clearing something makes the server
             rebuild it from the template the next time it starts.
           </p>
+
+          <div v-if="dataError" class="alert alert-warning py-2 small mb-0">
+            Could not read what this server has stored: {{ dataError }}
+            <div class="text-secondary">Use Refresh to try again.</div>
+          </div>
+
+          <template v-else-if="dataInfo">
           <p v-if="dataInfo.host_path" class="text-secondary small">
             None of it lives inside the container image — it is all kept on the host at
             <code class="text-break">{{ dataInfo.host_path }}</code> and mounted in, so it
@@ -695,6 +708,9 @@ onUnmounted(() => {
           >
             {{ dataBusy ? 'Clearing…' : 'Clear selected data' }}
           </button>
+          </template>
+
+          <p v-else class="text-secondary small mb-0">Loading…</p>
         </div>
       </div>
 
