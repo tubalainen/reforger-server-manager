@@ -87,6 +87,17 @@ const faq = [
        the UDP game ports never reach the Windows host and players cannot join.`,
   },
   {
+    q: 'How do I uninstall it on Windows (or start over after a failed install)?',
+    a: `Run uninstall.ps1 from the install folder (%USERPROFILE%\\ReforgerServerManager) — or
+       download it from the repo and run it from anywhere if that folder is gone. It shows
+       exactly what it found and only proceeds when you type REMOVE. It takes away the
+       containers, the install folder, the Desktop shortcut, the firewall rule and the
+       installer's leftovers. Your data — templates, instances, saved games and the ~10 GB of
+       server files — is KEPT by default, in Docker volumes, so a reinstall picks it up again;
+       pass -RemoveData to wipe it for good. Docker Desktop and WSL2 are never touched, since
+       other things on your machine may use them.`,
+  },
+  {
     q: 'Which exact firewall command do I need?',
     a: `Open the "Ports & firewall" panel on Server Instances — it prints the ready-to-run
        PowerShell (Windows) or ufw (Linux) command for the port ranges this install

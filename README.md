@@ -269,6 +269,35 @@ cd $env:USERPROFILE\ReforgerServerManager
 Then do the [First run](#first-run) steps in the GUI (pull the runtime image, download
 the server files) and create an instance.
 
+### Uninstalling (or starting over after a failed install)
+
+```powershell
+cd $env:USERPROFILE\ReforgerServerManager
+powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
+```
+
+If the install folder is gone or the install never finished, fetch the uninstaller and
+run it from anywhere — it finds whatever is there:
+
+```powershell
+$u = "$env:TEMP\reforger-uninstall.ps1"
+Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/scripts/windows/uninstall.ps1 -OutFile $u
+powershell -ExecutionPolicy Bypass -File $u
+```
+
+It lists exactly what it found and what it will do, and only proceeds when you type
+`REMOVE`. It removes the containers, the install folder (including the `.env` with your
+admin password), the Desktop shortcut, the firewall rule and the installer's own
+leftovers.
+
+**Your data is kept by default.** Templates, instances, saved games and the ~10 GB of
+downloaded server files live in Docker volumes, which are left alone — reinstall and
+they come back. Add `-RemoveData` to delete them too (irreversible), and `-RemoveImages`
+to drop the Docker images as well.
+
+**Docker Desktop and WSL2 are never touched** — other things on your machine may be
+using them. Remove them from *Add or remove programs* if you want them gone.
+
 ### Where the files live
 
 The Windows compose file keeps state in **Docker named volumes**

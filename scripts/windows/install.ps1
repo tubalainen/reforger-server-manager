@@ -166,6 +166,7 @@ $files = @{
     'stop.ps1'                    = "$RepoRaw/scripts/windows/stop.ps1"
     'firewall.ps1'                = "$RepoRaw/scripts/windows/firewall.ps1"
     'common.ps1'                  = "$RepoRaw/scripts/windows/common.ps1"
+    'uninstall.ps1'               = "$RepoRaw/scripts/windows/uninstall.ps1"
 }
 foreach ($name in $files.Keys) {
     Invoke-WebRequest -Uri $files[$name] -OutFile (Join-Path $InstallDir $name) -UseBasicParsing
@@ -268,6 +269,7 @@ if ($generatedPassword) {
 }
 Write-Host ''
 Write-Host '  Start it any time from the "Reforger Server Manager" shortcut on your Desktop.'
+Write-Host "  To remove it later:  powershell -ExecutionPolicy Bypass -File `"$(Join-Path $InstallDir 'uninstall.ps1')`""
 Write-Host '  Still to do, so players on the internet can join:'
 Write-Host '    * forward UDP ' -NoNewline; Write-Host "$gameRange and $a2sRange" -NoNewline -ForegroundColor White
 Write-Host " on your router to this PC's LAN IP (and reserve that IP in DHCP)."
