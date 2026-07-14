@@ -233,17 +233,27 @@ Append options to the last line if you want them, e.g. `-InstallDir 'D:\Reforger
 > `%TEMP%\reforger-install.ps1` in Notepad and check it before it runs. Do that: never
 > take our word for what a script does.
 
-The installer:
+That is the only command you run. The installer:
 
-1. checks for **WSL2** and **Docker Desktop**, and installs whatever is missing via
-   `winget` (if it installs either, reboot and run the install again);
-2. creates `%USERPROFILE%\ReforgerServerManager` with `docker-compose.windows.yaml`,
+1. **installs WSL2** if it is missing, then **reboots and carries on by itself** — you
+   are asked first, and after you sign back in the installer reopens and finishes.
+   (Docker Desktop cannot run without WSL2, and Windows can only finish installing it
+   across a restart.)
+2. **installs Docker Desktop** if it is missing, straight from Docker's own installer,
+   silently and with the licence pre-accepted and the WSL2 backend selected;
+3. creates `%USERPROFILE%\ReforgerServerManager` with `docker-compose.windows.yaml`,
    a `.env`, and the start/stop/firewall scripts;
-3. generates a `SESSION_SECRET` and lets you pick (or auto-generates) the admin
+4. generates a `SESSION_SECRET` and lets you pick (or auto-generates) the admin
    password — it is printed once at the end and stored in `.env`;
-4. opens the **Windows firewall** for the game + A2S UDP ranges by running
+5. opens the **Windows firewall** for the game + A2S UDP ranges by running
    `firewall.ps1` elevated (one UAC prompt — you can read that script first too);
-5. puts a **Reforger Server Manager** shortcut on your Desktop.
+6. puts a **Reforger Server Manager** shortcut on your Desktop.
+
+> **The one thing you may have to click.** The very first time Docker Desktop opens it
+> shows a **Sign in** screen. Click **Skip** — you do not need a Docker account, and
+> nothing here uses one. The installer waits for you and says so on screen. Docker's
+> engine will not start until that screen is dismissed, which is the only manual step
+> in the whole process.
 
 The shortcut is all you need from then on: it starts Docker Desktop (and with it the
 WSL2 VM), waits for the engine, brings the manager up with the right networking, and

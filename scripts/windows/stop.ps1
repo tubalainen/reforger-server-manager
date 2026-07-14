@@ -16,16 +16,9 @@ param(
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $here
+. (Join-Path $here 'common.ps1')   # Get-DockerCli and friends live here now
 
 $Compose = Join-Path $here 'docker-compose.windows.yaml'
-
-function Get-DockerCli {
-    $cmd = Get-Command docker -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
-    $fallback = Join-Path $env:ProgramFiles 'Docker\Docker\resources\bin\docker.exe'
-    if (Test-Path $fallback) { return $fallback }
-    throw 'Docker Desktop is not installed.'
-}
 
 $docker = Get-DockerCli
 

@@ -9,21 +9,16 @@
         Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/scripts/windows/install.ps1 -OutFile $installer
         powershell -ExecutionPolicy Bypass -File $installer
 
-    Deliberately downloaded to a file rather than piped into the shell. Piping a
-    remote script straight into the interpreter is the "ClickFix" pattern that
-    malware uses, and Microsoft Defender blocks it on sight (Trojan:Win32/ClickFix)
-    - it would also mean you run code you never got a chance to read. Options can
-    simply be appended to the last line, e.g. -InstallDir 'D:\Reforger' -WebPort 8080.
+    Deliberately downloaded to a file rather than piped into the shell: piping a
+    remote script straight into the interpreter is the "ClickFix" pattern malware
+    uses, Microsoft Defender blocks it, and it would mean running code you never
+    got a chance to read.
 
-    What it does:
-      1. makes sure WSL2 and Docker Desktop are installed (installs them via winget if missing),
-      2. creates an install folder with docker-compose.windows.yaml, .env and the start/stop scripts,
-      3. generates a session secret and an admin password (or asks for one),
-      4. opens the Windows firewall for the game + A2S UDP ranges (one elevation prompt),
-      5. puts a "Reforger Server Manager" shortcut on the Desktop that starts Docker and the manager.
+    It installs WSL2 and Docker Desktop if they are missing, sets the manager up,
+    opens the firewall for the game ports, and puts a shortcut on your Desktop.
 
-    Nothing else on the machine is touched, and re-running it is safe: an existing
-    .env is never overwritten.
+    If WSL2 has to be installed, Windows must reboot. The script offers to reboot
+    and CONTINUE BY ITSELF afterwards, so you only ever run one command.
 #>
 [CmdletBinding()]
 param(
@@ -36,11 +31,14 @@ param(
     # Branch or tag of the repository to install from.
     [string] $Ref = 'main',
 
-    # Skip the Docker Desktop / WSL2 checks (they are already known good).
+    # Skip the WSL2 / Docker Desktop checks (they are already known good).
     [switch] $SkipPrereqs,
 
     # Do not start the manager at the end.
-    [switch] $NoStart
+    [switch] $NoStart,
+
+    # Set when the script resumes itself after the reboot it asked for.
+    [switch] $Resumed
 )
 
 $ErrorActionPreference = 'Stop'
@@ -48,25 +46,16 @@ $ProgressPreference = 'SilentlyContinue'   # makes Invoke-WebRequest fast
 
 $RepoRaw = "https://raw.githubusercontent.com/tubalainen/reforger-server-manager/$Ref"
 $DockerDesktopExe = Join-Path $env:ProgramFiles 'Docker\Docker\Docker Desktop.exe'
+$DockerInstallerUrl = 'https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe'
+$SelfPath = $MyInvocation.MyCommand.Path
 
-function Write-Step  { param($m) Write-Host "`n==> $m" -ForegroundColor Cyan }
-function Write-Ok    { param($m) Write-Host "    [ok] $m" -ForegroundColor Green }
-function Write-Warn2 { param($m) Write-Host "    [!]  $m" -ForegroundColor Yellow }
-function Write-Info  { param($m) Write-Host "    $m" -ForegroundColor Gray }
-
-function Test-Admin {
-    $id = [Security.Principal.WindowsIdentity]::GetCurrent()
-    (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole(
-        [Security.Principal.WindowsBuiltInRole]::Administrator)
+# The helpers live next to this script once installed, but on the very first run
+# this file is alone in %TEMP% — so fetch common.ps1 beside it if it is not there.
+$CommonPath = Join-Path (Split-Path -Parent $SelfPath) 'common.ps1'
+if (-not (Test-Path $CommonPath)) {
+    Invoke-WebRequest -Uri "$RepoRaw/scripts/windows/common.ps1" -OutFile $CommonPath -UseBasicParsing
 }
-
-function Get-DockerCli {
-    $cmd = Get-Command docker -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
-    $fallback = Join-Path $env:ProgramFiles 'Docker\Docker\resources\bin\docker.exe'
-    if (Test-Path $fallback) { return $fallback }
-    return $null
-}
+. $CommonPath
 
 function New-RandomString {
     param([int] $Length, [string] $Charset)
@@ -78,9 +67,29 @@ function New-RandomString {
     return $out
 }
 
+function Register-Resume {
+    <#
+    Continue this installer automatically after the reboot WSL2 needs, so the user
+    runs ONE command instead of "run, reboot, remember to run it again".
+    RunOnce fires once, at the next sign-in, and then deletes itself.
+    #>
+    param([string] $ScriptPath)
+    $resumeDir = Join-Path $env:LOCALAPPDATA 'ReforgerServerManager'
+    New-Item -ItemType Directory -Force -Path $resumeDir | Out-Null
+    $resumeScript = Join-Path $resumeDir 'resume-install.ps1'
+    Copy-Item -Path $ScriptPath -Destination $resumeScript -Force
+    Copy-Item -Path $CommonPath -Destination (Join-Path $resumeDir 'common.ps1') -Force
+
+    $cmd = ('powershell -NoProfile -ExecutionPolicy Bypass -File "{0}" -InstallDir "{1}" -WebPort {2} -Ref "{3}" -Resumed' -f
+            $resumeScript, $InstallDir, $WebPort, $Ref)
+    Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce' `
+                     -Name 'ReforgerServerManagerInstall' -Value $cmd
+}
+
 Write-Host ''
 Write-Host '  Reforger Server Manager - Windows installer' -ForegroundColor White
 Write-Host '  https://github.com/tubalainen/reforger-server-manager' -ForegroundColor DarkGray
+if ($Resumed) { Write-Info 'Continuing after the reboot.' }
 
 # --- 1. Prerequisites: WSL2 + Docker Desktop --------------------------------
 if (-not $SkipPrereqs) {
@@ -91,40 +100,58 @@ if (-not $SkipPrereqs) {
     }
     Write-Ok "Windows build $([Environment]::OSVersion.Version.Build)"
 
-    $needsReboot = $false
-
-    if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
-        Write-Warn2 'WSL is not installed - installing it (a UAC prompt will appear)'
-        Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -ArgumentList @(
-            '-NoProfile', '-Command', 'wsl --install --no-distribution')
-        $needsReboot = $true
+    # WSL2. NOTE: the presence of wsl.exe proves nothing — Windows ships a stub of
+    # it either way, which is why the first version of this installer wrongly
+    # reported "WSL is present" and left Docker Desktop unable to start (#51).
+    if (Test-WslInstalled) {
+        Write-Ok 'WSL2 is installed'
+        Write-Info 'Making sure the WSL kernel is current...'
+        $null = Invoke-Quiet 'wsl --update'
     } else {
-        Write-Ok 'WSL is present'
+        Write-Warn2 'WSL2 is NOT installed (Docker Desktop cannot run without it) - installing it now.'
+        Write-Info  'A UAC prompt will appear. This needs a reboot afterwards.'
+        Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -ArgumentList @(
+            '-NoProfile', '-Command', 'wsl --install --no-distribution; wsl --update')
+
+        Write-Host ''
+        Write-Host '  Windows must restart to finish installing WSL2.' -ForegroundColor Yellow
+        $answer = Read-Host '  Restart now and let the installer carry on by itself afterwards? [Y/n]'
+        if ([string]::IsNullOrWhiteSpace($answer) -or $answer -match '^[Yy]') {
+            Register-Resume -ScriptPath $SelfPath
+            Write-Info 'Restarting. This window will reopen after you sign back in.'
+            Start-Sleep -Seconds 3
+            Restart-Computer -Force
+            return
+        }
+        Write-Warn2 'Reboot when you can, then run this installer again to finish.'
+        return
     }
 
-    if (-not (Test-Path $DockerDesktopExe) -and -not (Get-DockerCli)) {
-        Write-Warn2 'Docker Desktop is not installed'
-        if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-            throw ("winget is unavailable, so Docker Desktop cannot be installed automatically. " +
-                   "Install it from https://www.docker.com/products/docker-desktop/ (keep the WSL2 " +
-                   "option ticked), then run this installer again.")
+    # Docker Desktop. Installed straight from Docker's own installer so we can pass
+    # --accept-license and pin the WSL2 backend, which removes the licence prompt
+    # from the user's first run.
+    if (-not (Test-Path $DockerDesktopExe) -and -not (Get-DockerCli -Quiet)) {
+        Write-Warn2 'Docker Desktop is not installed - installing it (a few minutes).'
+        $dockerSetup = Join-Path $env:TEMP 'DockerDesktopInstaller.exe'
+        try {
+            Write-Info 'Downloading Docker Desktop from docker.com...'
+            Invoke-WebRequest -Uri $DockerInstallerUrl -OutFile $dockerSetup -UseBasicParsing
+            Write-Info 'Installing (silent, licence accepted, WSL2 backend)...'
+            $p = Start-Process -FilePath $dockerSetup -Verb RunAs -Wait -PassThru -ArgumentList @(
+                'install', '--quiet', '--accept-license', '--backend=wsl-2')
+            if ($p.ExitCode -ne 0) {
+                throw "the Docker Desktop installer exited with code $($p.ExitCode)"
+            }
+        } catch {
+            throw ("Could not install Docker Desktop automatically ($($_.Exception.Message)). " +
+                   "Install it by hand from https://www.docker.com/products/docker-desktop/ " +
+                   "(keep the WSL2 option ticked), then run this installer again.")
+        } finally {
+            Remove-Item $dockerSetup -Force -ErrorAction SilentlyContinue
         }
-        Write-Info 'Installing Docker Desktop via winget - this takes a few minutes...'
-        winget install --id Docker.DockerDesktop -e --accept-source-agreements --accept-package-agreements
-        if ($LASTEXITCODE -ne 0) {
-            throw "winget could not install Docker Desktop (exit code $LASTEXITCODE). Install it manually from https://www.docker.com/products/docker-desktop/ and run this installer again."
-        }
-        $needsReboot = $true
+        Write-Ok 'Docker Desktop installed'
     } else {
         Write-Ok 'Docker Desktop is present'
-    }
-
-    if ($needsReboot) {
-        Write-Host ''
-        Write-Host '  Restart Windows now, sign back in, and run this installer again' -ForegroundColor Yellow
-        Write-Host '  to finish the setup. (WSL2 / Docker Desktop need the reboot.)' -ForegroundColor Yellow
-        Write-Host ''
-        return
     }
 }
 
@@ -138,22 +165,21 @@ $files = @{
     'start.ps1'                   = "$RepoRaw/scripts/windows/start.ps1"
     'stop.ps1'                    = "$RepoRaw/scripts/windows/stop.ps1"
     'firewall.ps1'                = "$RepoRaw/scripts/windows/firewall.ps1"
+    'common.ps1'                  = "$RepoRaw/scripts/windows/common.ps1"
 }
 foreach ($name in $files.Keys) {
-    $dest = Join-Path $InstallDir $name
-    Invoke-WebRequest -Uri $files[$name] -OutFile $dest -UseBasicParsing
+    Invoke-WebRequest -Uri $files[$name] -OutFile (Join-Path $InstallDir $name) -UseBasicParsing
     Write-Ok $name
 }
 
 # --- 3. .env (never clobber an existing one) --------------------------------
 $envPath = Join-Path $InstallDir '.env'
+$generatedPassword = $null
 if (Test-Path $envPath) {
     Write-Step 'Keeping the existing .env'
     Write-Info 'Delete it and re-run the installer if you want a fresh configuration.'
-    $generatedPassword = $null
 } else {
     Write-Step 'Creating .env'
-
     Write-Host ''
     Write-Host '    Choose the password for the web GUI login (user: admin).' -ForegroundColor White
     Write-Host '    Press Enter to have a strong one generated for you.' -ForegroundColor Gray
@@ -161,7 +187,6 @@ if (Test-Path $envPath) {
     $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
         [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
 
-    $generatedPassword = $null
     if ([string]::IsNullOrWhiteSpace($plain)) {
         $plain = New-RandomString -Length 18 -Charset 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'
         $generatedPassword = $plain
@@ -194,19 +219,15 @@ $a2sRange  = Get-EnvValue -Key 'A2S_PORT_RANGE'  -Default '17777-17796'
 $firewallScript = Join-Path $InstallDir 'firewall.ps1'
 
 # firewall.ps1 is elevated with -File, not as an encoded or generated command: an
-# obfuscated elevated command line is exactly what antivirus heuristics look for,
-# and it would hide from you what is about to run as administrator. Only the two
-# player-facing ranges are opened - never RCON, never the web GUI.
-$fwArgs = @(
-    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$firewallScript`"",
-    '-GamePorts', $gameRange, '-A2sPorts', $a2sRange
-)
-
+# obfuscated elevated command line is what antivirus heuristics look for, and it
+# would hide from you what is about to run as administrator.
 if (Test-Admin) {
     & $firewallScript -GamePorts $gameRange -A2sPorts $a2sRange
 } else {
     Write-Info 'Asking for administrator rights (firewall rules need them)...'
-    $p = Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru -ArgumentList $fwArgs
+    $p = Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru -ArgumentList @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$firewallScript`"",
+        '-GamePorts', $gameRange, '-A2sPorts', $a2sRange)
     if ($p.ExitCode -eq 0) {
         Write-Ok "UDP $gameRange and $a2sRange allowed inbound"
     } else {
@@ -258,4 +279,9 @@ if (-not $NoStart) {
     if ([string]::IsNullOrWhiteSpace($answer) -or $answer -match '^[Yy]') {
         & (Join-Path $InstallDir 'start.ps1')
     }
+}
+
+if ($Resumed) {
+    Write-Host ''
+    Read-Host '  Press Enter to close this window'
 }
