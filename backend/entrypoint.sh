@@ -6,7 +6,10 @@ set -e
 if [ "$(id -u)" = "0" ]; then
     # ./data is auto-created root-owned by the docker bind mount on first
     # run; hand it to the app user so SQLite can create its database.
-    chown app:app /data
+    # A Windows-hosted bind (drvfs/9p) rejects chown but is already
+    # world-writable, so a failure here is not fatal.
+    chown app:app /data 2>/dev/null || \
+        echo "NOTE: could not chown /data (expected on a Windows bind mount)" >&2
 
     # Grant the app user access to the docker socket, whatever GID the
     # host uses for it.

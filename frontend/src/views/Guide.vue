@@ -46,6 +46,22 @@ const faq = [
        (server browser)" switch must be on for the server to be listed.`,
   },
   {
+    q: 'Can I run this on Windows?',
+    a: `Yes — on Windows 10/11 with Docker Desktop (WSL2 backend). The README's "Running on
+       Windows" section has a PowerShell one-liner that installs the prerequisites, writes
+       the config, opens the firewall for the game and A2S ports, and puts a shortcut on
+       your Desktop that starts Docker and the manager. Do not install Docker Engine
+       inside a WSL distro instead: its NAT only forwards TCP, so the UDP game ports never
+       reach the Windows host and players cannot join.`,
+  },
+  {
+    q: 'Which exact firewall command do I need?',
+    a: `Open the "Ports & firewall" panel on Server Instances — it prints the ready-to-run
+       PowerShell (Windows) or ufw (Linux) command for the port ranges this install
+       actually uses, so you can copy it straight into a terminal. Your router needs the
+       same UDP ranges forwarded to this machine's LAN IP.`,
+  },
+  {
     q: 'Do mods update automatically?',
     a: `Yes, by default. Mods follow the latest Workshop release: the server checks and
        downloads mod updates when it starts. If an update breaks things, edit the
@@ -87,8 +103,10 @@ const faq = [
   {
     q: 'How do I update this manager itself?',
     a: `From the folder with your docker-compose.yaml run: docker compose pull, then
-       docker compose up -d. Templates, instances and downloaded server files live in
-       ./data and ./serverfiles next to the compose file and survive updates.`,
+       docker compose up -d. On Windows run .\\start.ps1 -Update from the install folder
+       instead. Templates, instances and downloaded server files survive updates — they
+       live in ./data and ./serverfiles next to the compose file (Docker named volumes on
+       Windows).`,
   },
   {
     q: 'Why is the web GUI only reachable on localhost?',
@@ -101,7 +119,11 @@ const faq = [
     q: 'Where is everything stored?',
     a: `Next to your docker-compose.yaml: ./data holds the manager database (templates,
        instances) and per-instance configs, profiles and logs; ./serverfiles holds the
-       downloaded game server per branch. Back up the data folder to keep your setup.`,
+       downloaded game server per branch. Back up the data folder to keep your setup. On
+       Windows the same content lives in Docker named volumes (reforger-data,
+       reforger-serverfiles-*) — browse them in Docker Desktop → Volumes — because the
+       Linux-owned server files are far faster and permission-clean there than in an
+       Explorer folder.`,
   },
 ]
 </script>
@@ -159,8 +181,10 @@ const faq = [
             <strong>Open the ports.</strong> For internet players, forward each running
             instance's UDP game port (default range 2001–2020) and A2S port (17777–17796)
             through your router and host firewall, and set <code>PUBLIC_ADDRESS</code> in
-            <code>.env</code> to your public IP. Keep RCON (19999–20018) and the web GUI
-            (7780) private.
+            <code>.env</code> to your public IP. The
+            <router-link to="/instances">Ports &amp; firewall</router-link> panel on Server
+            Instances prints the exact firewall command for this host. Keep RCON
+            (19999–20018) and the web GUI (7780) private.
           </li>
         </ol>
       </div>
