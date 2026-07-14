@@ -72,7 +72,8 @@ the instance detail page.
 
 ## Getting started
 
-Two paths, depending on how comfortable you are with Linux and Docker.
+Two paths, depending on how comfortable you are with Linux and Docker. On Windows,
+skip both and use [Running on Windows](#running-on-windows-11--10) instead.
 
 ### New to Docker & Linux? (step-by-step)
 
@@ -182,6 +183,89 @@ On the **Downloads** tab, do both one-time steps before creating a server instan
    ~10 GB of game data mounted into every instance of that branch.
 
 Then head to **Instances** and create your first server from a template.
+
+## Running on Windows 11 / 10
+
+Windows is supported through **Docker Desktop with its WSL2 backend** — the same
+manager image, the same Arma server containers, running inside the lightweight Linux
+VM that Docker Desktop manages for you. You never have to touch WSL yourself.
+
+### One-liner install
+
+Open **PowerShell** (a normal window — it asks for admin only when it needs to) and run:
+
+```powershell
+irm https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/scripts/windows/install.ps1 | iex
+```
+
+The installer:
+
+1. checks for **WSL2** and **Docker Desktop**, and installs whatever is missing via
+   `winget` (if it installs either, reboot and run the one-liner again);
+2. creates `%USERPROFILE%\ReforgerServerManager` with `docker-compose.windows.yaml`,
+   a `.env`, and the start/stop scripts;
+3. generates a `SESSION_SECRET` and lets you pick (or auto-generates) the admin
+   password — it is printed once at the end and stored in `.env`;
+4. opens the **Windows firewall** for the game + A2S UDP ranges (one UAC prompt);
+5. puts a **Reforger Server Manager** shortcut on your Desktop.
+
+The shortcut is all you need from then on: it starts Docker Desktop (and with it the
+WSL2 VM), waits for the engine, brings the manager up with the right networking, and
+opens `http://localhost:7780`. Options if you prefer to drive it by hand:
+
+```powershell
+cd $env:USERPROFILE\ReforgerServerManager
+.\start.ps1 -Update     # pull the newest manager image, then start
+.\stop.ps1              # stop the manager (running Arma servers stay up)
+.\stop.ps1 -All         # also stop every Arma server instance
+```
+
+Then do the [First run](#first-run) steps in the GUI (pull the runtime image, download
+the server files) and create an instance.
+
+### Where the files live
+
+The Windows compose file keeps state in **Docker named volumes**
+(`reforger-data`, `reforger-serverfiles-stable`, `reforger-serverfiles-experimental`),
+not in a Windows folder. The ~10 GB of server files are Linux-owned and heavily read
+during startup: on the VM's native ext4 disk that is fast and permission-clean, while
+on an Explorer folder it would be slow (9p) and prone to ownership errors. Browse or
+back them up from **Docker Desktop → Volumes**.
+
+### Letting players in
+
+Two hops have to be open — Windows and your router. Both use the same UDP ranges, and
+the GUI prints the exact command for you under **Instances → Ports & firewall**.
+
+1. **Windows firewall** (the installer already did this; here it is for reference, in
+   an *elevated* PowerShell):
+
+   ```powershell
+   New-NetFirewallRule -DisplayName "Arma Reforger (game + A2S)" -Direction Inbound -Action Allow -Protocol UDP -LocalPort 2001-2020,17777-17796
+   ```
+
+2. **Router:** forward UDP `2001-2020` and `17777-17796` to this PC's LAN IP, and give
+   that PC a **DHCP reservation** so the address never moves. Set `PUBLIC_ADDRESS` in
+   `.env` to your public IP.
+
+Never forward the RCON ports (`19999-20018`) or the web GUI port (`7780`).
+
+### Keeping it running
+
+- Server containers already carry a restart policy, so they come back with Docker.
+- In **Docker Desktop → Settings → General**, tick **Start Docker Desktop when you sign
+  in** so a reboot brings everything back by itself.
+- Docker Desktop runs inside your *user session*, not as a service. On an unattended
+  machine that means the box must actually sign in after a reboot — configure automatic
+  sign-in (`netplwiz`, untick "Users must enter a user name and password") or expect to
+  log in manually before the servers come back.
+
+### Do not run Docker CE inside WSL
+
+Installing Docker Engine *inside* a WSL distro instead of using Docker Desktop looks
+tempting, but its NAT only forwards TCP: the published **UDP** game/A2S ports never
+reach the Windows host, and `netsh portproxy` cannot help (it is TCP-only). Players
+would never see or join your server. Use Docker Desktop.
 
 ## Development
 

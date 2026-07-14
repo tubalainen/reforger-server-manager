@@ -16,6 +16,7 @@ import config
 import models
 import instances_api
 import serverfiles_api
+import system_api
 import templates_api
 import workshop_api
 from services import docker_service, instance_service
@@ -81,6 +82,7 @@ app.include_router(serverfiles_api.router)
 app.include_router(workshop_api.router)
 app.include_router(templates_api.router)
 app.include_router(instances_api.router)
+app.include_router(system_api.router)
 
 
 REPO_URL = "https://github.com/tubalainen/reforger-server-manager"

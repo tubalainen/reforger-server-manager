@@ -23,6 +23,7 @@ ROLE_INSTANCE = "instance"
 
 _client: docker.DockerClient | None = None
 _self_mounts: list | None = None
+_info: dict | None = None
 
 
 def get_client() -> docker.DockerClient:
@@ -30,6 +31,27 @@ def get_client() -> docker.DockerClient:
     if _client is None:
         _client = docker.from_env()
     return _client
+
+
+def daemon_info() -> dict:
+    """Cached `docker info` ({} when the daemon is unreachable)."""
+    global _info
+    if _info is None:
+        try:
+            _info = get_client().info()
+        except DockerException as exc:
+            logger.warning("Could not read docker info: %s", exc)
+            _info = {}
+    return _info
+
+
+def is_docker_desktop() -> bool:
+    """True when the daemon is Docker Desktop (Windows/macOS, WSL2 backend).
+
+    Published ports still land on the real host, but the firewall the user must
+    open is the Windows one — hence the distinction (issue #51).
+    """
+    return "docker desktop" in str(daemon_info().get("OperatingSystem", "")).lower()
 
 
 def ping() -> bool:

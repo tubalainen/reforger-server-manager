@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
 import Downloads from './Downloads.vue'
+import PortsFirewall from '../components/PortsFirewall.vue'
 
 const router = useRouter()
 const instances = ref([])
@@ -144,6 +145,9 @@ onUnmounted(() => clearInterval(poll))
         </div>
       </div>
     </div>
+
+    <!-- The exact firewall command for this host, from the configured ranges (#51) -->
+    <PortsFirewall />
 
     <div v-if="!instances.length" class="card text-center text-secondary py-5">
       <div class="card-body">
