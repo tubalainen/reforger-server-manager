@@ -630,38 +630,6 @@ onUnmounted(() => {
         >{{ logLines.join('\n') || '// waiting for log output…' }}</pre>
       </div>
 
-      <!-- Log & crash files -->
-      <div class="card mt-3">
-        <div class="card-header d-flex justify-content-between align-items-center py-2">
-          <span class="fw-semibold small">Log &amp; crash files</span>
-          <button class="btn btn-sm btn-outline-secondary" @click="loadLogFiles">Refresh</button>
-        </div>
-        <div class="card-body">
-          <p v-if="!logFiles.length" class="text-secondary small mb-0">
-            No log files yet. The server writes logs and crash reports here once it has run.
-          </p>
-          <div v-else class="table-responsive">
-            <table class="table table-sm table-hover align-middle mb-0 small">
-              <thead>
-                <tr><th>File</th><th>Size</th><th>Modified</th><th></th></tr>
-              </thead>
-              <tbody>
-                <tr v-for="f in logFiles" :key="f.path">
-                  <td class="text-break">{{ f.path }}</td>
-                  <td>{{ fmtBytes(f.size) }}</td>
-                  <td>{{ fmtTime(f.modified) }}</td>
-                  <td class="text-end">
-                    <button class="btn btn-sm btn-outline-primary" @click="downloadLog(f.path)">
-                      Download
-                    </button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
       <!-- Stored data: baked mods, saves, logs (issue #79) -->
       <div v-if="dataInfo" class="card mt-3">
         <div class="card-header d-flex justify-content-between align-items-center py-2">
@@ -727,6 +695,38 @@ onUnmounted(() => {
           >
             {{ dataBusy ? 'Clearing…' : 'Clear selected data' }}
           </button>
+        </div>
+      </div>
+
+      <!-- Log & crash files -->
+      <div class="card mt-3">
+        <div class="card-header d-flex justify-content-between align-items-center py-2">
+          <span class="fw-semibold small">Log &amp; crash files</span>
+          <button class="btn btn-sm btn-outline-secondary" @click="loadLogFiles">Refresh</button>
+        </div>
+        <div class="card-body">
+          <p v-if="!logFiles.length" class="text-secondary small mb-0">
+            No log files yet. The server writes logs and crash reports here once it has run.
+          </p>
+          <div v-else class="table-responsive">
+            <table class="table table-sm table-hover align-middle mb-0 small">
+              <thead>
+                <tr><th>File</th><th>Size</th><th>Modified</th><th></th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="f in logFiles" :key="f.path">
+                  <td class="text-break">{{ f.path }}</td>
+                  <td>{{ fmtBytes(f.size) }}</td>
+                  <td>{{ fmtTime(f.modified) }}</td>
+                  <td class="text-end">
+                    <button class="btn btn-sm btn-outline-primary" @click="downloadLog(f.path)">
+                      Download
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
