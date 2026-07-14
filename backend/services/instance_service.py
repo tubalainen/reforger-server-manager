@@ -35,7 +35,10 @@ logger = logging.getLogger("manager.instance")
 # The field order varies between builds (and "Player:" is sometimes "Players:"),
 # so match each field independently and keep the most recent value seen for each
 # — FPS and the player count legitimately arrive on different lines.
-_FPS_RE = re.compile(r"FPS:\s*([\d.]+)")
+# Anchored on a word boundary so a config echo like "maxFPS: 60" is not read as a
+# live FPS reading — and, since the stats line doubles as proof the world is
+# running (#76), is not mistaken for a server that is already online either.
+_FPS_RE = re.compile(r"(?<![A-Za-z])FPS:\s*([\d.]+)")
 _MEM_RE = re.compile(r"Mem:\s*(\d+)\s*kB")
 _PLAYERS_STAT_RE = re.compile(r"Players?:\s*(\d+)")          # -logStats line
 _PLAYERS_CONN_RE = re.compile(r"Players connected:\s*(\d+)")  # NETWORK event line
@@ -540,6 +543,8 @@ def start_instance(instance_id: int) -> None:
             container.start()
         except DockerException as exc:
             raise InstanceError(f"Could not start container: {exc}") from exc
+        # A fresh run must prove it is online from its own log (#76).
+        forget_run(container.id)
         inst.desired_state = "running"
         session.add(inst)
         session.commit()
@@ -636,6 +641,7 @@ def stop_instance(instance_id: int) -> None:
         session.commit()
     container = docker_service.find_instance_container(instance_id)
     if container:
+        forget_run(container.id)  # whatever it was, it is not online any more (#76)
         try:
             container.stop(timeout=30)
         except DockerException as exc:
@@ -733,19 +739,51 @@ def _container_uptime_seconds(container) -> int | None:
     return max(0, int((datetime.now(timezone.utc) - started_dt).total_seconds()))
 
 
+_LOG_TS_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?Z?\s(.*)$", re.DOTALL
+)
+
+
+def _split_log_timestamp(line: str) -> tuple[datetime | None, str]:
+    """Split docker's RFC3339 timestamp prefix off a log line."""
+    m = _LOG_TS_RE.match(line)
+    if not m:
+        return None, line
+    iso = m.group(1) + (("." + m.group(2)[:6]) if m.group(2) else "") + "+00:00"
+    try:
+        return datetime.fromisoformat(iso), m.group(3)
+    except ValueError:
+        return None, line
+
+
 def current_run_log(container, tail: int = STATS_LOG_TAIL) -> str:
     """The tail of the log for the container's CURRENT run only.
 
-    Docker keeps a container's log across restarts, so a plain tail can serve up
-    the previous run's output — which would report a restarting server as still
-    online (#76), and its old FPS/player numbers as current. Anchoring on
-    StartedAt keeps every reading honest.
+    Docker keeps a container's log across restarts, so a plain tail serves up the
+    previous run's output too — which would report a restarting server as still
+    online (#76) and its old FPS/player numbers as current.
+
+    Docker's own `since` filter is passed, but it is NOT trusted on its own: the
+    SDK truncates it to whole seconds (docker.utils.datetime_to_timestamp), so a
+    line the previous run wrote in the same second the new run began still comes
+    through — and on a fast restart that is exactly where the last stats line
+    lands. Each line therefore carries its timestamp and is checked against
+    StartedAt at full precision; the prefix is stripped again so the parsers see
+    an ordinary log.
     """
     started_dt = _started_at(container)
-    kwargs = {"tail": tail}
-    if started_dt is not None:
-        kwargs["since"] = started_dt
-    return container.logs(**kwargs).decode("utf-8", errors="replace")
+    if started_dt is None:
+        # Unknown start time: no honest way to draw the boundary, so read as before.
+        return container.logs(tail=tail).decode("utf-8", errors="replace")
+
+    raw = container.logs(tail=tail, since=started_dt, timestamps=True)
+    kept = []
+    for line in raw.decode("utf-8", errors="replace").splitlines():
+        ts, text = _split_log_timestamp(line)
+        if ts is not None and ts < started_dt:
+            continue  # belongs to a previous run of this container
+        kept.append(text)
+    return "\n".join(kept)
 
 
 # Runs already seen online: {container id: StartedAt}. Once a server has come up
@@ -753,6 +791,16 @@ def current_run_log(container, tail: int = STATS_LOG_TAIL) -> str:
 # it from a log window that will eventually scroll past the evidence. Keyed by
 # StartedAt so a restart of the same container is a fresh run.
 _online_runs: dict[str, str] = {}
+
+
+def forget_run(container_id: str | None) -> None:
+    """Drop the remembered 'this run is online' fact for a container.
+
+    Called whenever the manager stops or starts one: the next run has to prove
+    itself from its own log again, no matter what the previous one did (#76).
+    """
+    if container_id:
+        _online_runs.pop(container_id, None)
 
 
 def server_state(container, log_text: str) -> str:

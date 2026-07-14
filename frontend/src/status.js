@@ -14,18 +14,44 @@ const CONTAINER_BADGE = {
   unknown: 'text-bg-warning',
 }
 
-export function serverStatus(status, serverState) {
+// While a stop/start/restart the user asked for is still in flight, say so. The
+// old server stays genuinely "online" until it exits — Reforger can take tens of
+// seconds to honour SIGTERM — so without this the badge sits on "Started and
+// online" after a Restart and the button looks broken (#76).
+const PENDING = {
+  restart: { label: 'restarting…', long: 'Restarting…', note: 'shutting the old server down' },
+  stop: { label: 'stopping…', long: 'Stopping…', note: '' },
+  start: { label: 'starting…', long: 'Starting server…', note: '' },
+}
+
+export function serverStatus(status, serverState, pending) {
+  if (pending && PENDING[pending]) {
+    return { ...PENDING[pending], cls: 'text-bg-warning', starting: true }
+  }
   if (status === 'running' && serverState === 'starting') {
-    return { label: 'starting…', long: 'Starting server…', cls: 'text-bg-warning', starting: true }
+    return {
+      label: 'starting…',
+      long: 'Starting server…',
+      note: 'loading mods & world',
+      cls: 'text-bg-warning',
+      starting: true,
+    }
   }
   if (status === 'running' && serverState === 'online') {
-    return { label: 'online', long: 'Started and online', cls: 'text-bg-success', starting: false }
+    return {
+      label: 'online',
+      long: 'Started and online',
+      note: '',
+      cls: 'text-bg-success',
+      starting: false,
+    }
   }
   // Running but the log could not be read (Docker hiccup): fall back to the
   // container's own word for it rather than claiming either way.
   return {
     label: status,
     long: status,
+    note: '',
     cls: CONTAINER_BADGE[status] || 'text-bg-secondary',
     starting: false,
   }
