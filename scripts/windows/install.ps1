@@ -3,13 +3,17 @@
     Installs the Reforger Server Manager on Windows 10/11 (Docker Desktop + WSL2).
 
 .DESCRIPTION
-    One-liner install, from a normal (non-elevated) PowerShell window:
+    Download this script, then run it from a normal (non-elevated) PowerShell window:
 
-        irm https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/scripts/windows/install.ps1 | iex
+        $installer = "$env:TEMP\reforger-install.ps1"
+        Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/scripts/windows/install.ps1 -OutFile $installer
+        powershell -ExecutionPolicy Bypass -File $installer
 
-    To pass options, create the script block explicitly:
-
-        & ([scriptblock]::Create((irm https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/scripts/windows/install.ps1))) -InstallDir 'D:\Reforger' -WebPort 8080
+    Deliberately downloaded to a file rather than piped into the shell. Piping a
+    remote script straight into the interpreter is the "ClickFix" pattern that
+    malware uses, and Microsoft Defender blocks it on sight (Trojan:Win32/ClickFix)
+    - it would also mean you run code you never got a chance to read. Options can
+    simply be appended to the last line, e.g. -InstallDir 'D:\Reforger' -WebPort 8080.
 
     What it does:
       1. makes sure WSL2 and Docker Desktop are installed (installs them via winget if missing),
@@ -133,6 +137,7 @@ $files = @{
     '.env.example'                = "$RepoRaw/.env.example"
     'start.ps1'                   = "$RepoRaw/scripts/windows/start.ps1"
     'stop.ps1'                    = "$RepoRaw/scripts/windows/stop.ps1"
+    'firewall.ps1'                = "$RepoRaw/scripts/windows/firewall.ps1"
 }
 foreach ($name in $files.Keys) {
     $dest = Join-Path $InstallDir $name
@@ -186,28 +191,27 @@ function Get-EnvValue {
 
 $gameRange = Get-EnvValue -Key 'GAME_PORT_RANGE' -Default '2001-2020'
 $a2sRange  = Get-EnvValue -Key 'A2S_PORT_RANGE'  -Default '17777-17796'
-$ruleName  = 'Arma Reforger (game + A2S)'
+$firewallScript = Join-Path $InstallDir 'firewall.ps1'
 
-# RCON and the web GUI are deliberately NOT opened: neither belongs on the internet.
-$fwCommand = @"
-`$r = Get-NetFirewallRule -DisplayName '$ruleName' -ErrorAction SilentlyContinue
-if (`$r) { Remove-NetFirewallRule -DisplayName '$ruleName' }
-New-NetFirewallRule -DisplayName '$ruleName' -Direction Inbound -Action Allow -Protocol UDP -LocalPort $gameRange,$a2sRange | Out-Null
-"@
+# firewall.ps1 is elevated with -File, not as an encoded or generated command: an
+# obfuscated elevated command line is exactly what antivirus heuristics look for,
+# and it would hide from you what is about to run as administrator. Only the two
+# player-facing ranges are opened - never RCON, never the web GUI.
+$fwArgs = @(
+    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$firewallScript`"",
+    '-GamePorts', $gameRange, '-A2sPorts', $a2sRange
+)
 
 if (Test-Admin) {
-    Invoke-Expression $fwCommand
-    Write-Ok "UDP $gameRange and $a2sRange allowed inbound"
+    & $firewallScript -GamePorts $gameRange -A2sPorts $a2sRange
 } else {
     Write-Info 'Asking for administrator rights (firewall rules need them)...'
-    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($fwCommand))
-    $p = Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru -ArgumentList @(
-        '-NoProfile', '-EncodedCommand', $encoded)
+    $p = Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru -ArgumentList $fwArgs
     if ($p.ExitCode -eq 0) {
         Write-Ok "UDP $gameRange and $a2sRange allowed inbound"
     } else {
-        Write-Warn2 'The firewall rule was not created. Run this later in an elevated PowerShell:'
-        Write-Host "    New-NetFirewallRule -DisplayName '$ruleName' -Direction Inbound -Action Allow -Protocol UDP -LocalPort $gameRange,$a2sRange" -ForegroundColor Yellow
+        Write-Warn2 'The firewall rule was not created. Run this later in an ELEVATED PowerShell:'
+        Write-Host "    powershell -ExecutionPolicy Bypass -File `"$firewallScript`"" -ForegroundColor Yellow
     }
 }
 

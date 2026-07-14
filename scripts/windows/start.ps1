@@ -97,11 +97,9 @@ if (Test-DockerEngine -Cli $docker) {
 # --- 2. Firewall sanity check (the installer creates this rule) -------------
 $ruleName = 'Arma Reforger (game + A2S)'
 if (-not (Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue)) {
-    $game = Get-EnvValue -Key 'GAME_PORT_RANGE' -Default '2001-2020'
-    $a2s  = Get-EnvValue -Key 'A2S_PORT_RANGE'  -Default '17777-17796'
     Write-Warn2 'The firewall rule for the game ports is missing - players will not be able to join.'
     Write-Host  '    Run this once in an ELEVATED PowerShell:' -ForegroundColor Yellow
-    Write-Host  "    New-NetFirewallRule -DisplayName '$ruleName' -Direction Inbound -Action Allow -Protocol UDP -LocalPort $game,$a2s" -ForegroundColor Yellow
+    Write-Host  "    powershell -ExecutionPolicy Bypass -File `"$(Join-Path $here 'firewall.ps1')`"" -ForegroundColor Yellow
 }
 
 # --- 3. The manager itself ---------------------------------------------------
