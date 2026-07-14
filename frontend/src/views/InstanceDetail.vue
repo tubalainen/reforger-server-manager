@@ -50,6 +50,8 @@ async function loadLogFiles() {
 }
 function fmtBytes(n) {
   if (!n) return '0 B'
+  // A baked mod folder is easily several GB (#79) — don't print it as "3242.5 MB".
+  if (n >= 1073741824) return (n / 1073741824).toFixed(2) + ' GB'
   return n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : (n / 1024).toFixed(0) + ' KB'
 }
 function fmtTime(ts) {
@@ -105,6 +107,7 @@ async function action(verb) {
     // Refresh the live stats at once: otherwise the status keeps showing the old
     // server's "online" for up to a poll interval after a restart (#76).
     await loadStats()
+    await loadData()  // stopping unlocks the data controls; a start refills the dirs
     // reconnect logs after start/restart (a new container may exist)
     if (verb !== 'stop') setTimeout(connectLogs, 800)
   } catch (e) {
@@ -215,6 +218,84 @@ async function saveTemplate() {
   }
 }
 
+// --- stored data: baked mods, saves, logs (issue #79) ------------------------
+// Editing a template's mods and just restarting can leave the server running the
+// old content: it reuses the addons it already downloaded and baked. Wiping that
+// makes the next start rebuild it. Saves and logs are offered alongside, because
+// the same "give me a clean slate" moment usually wants them gone too.
+const DATA_KINDS = {
+  mods: {
+    label: 'Downloaded & baked mods',
+    hint: 'The addons this server downloaded for its template. Clear this when you changed the template\'s mods but the server still runs the old ones — the next start downloads and bakes them again.',
+    danger: false,
+  },
+  saves: {
+    label: 'Saved game data',
+    hint: 'The persistent world your players built. Clearing it starts the scenario from scratch — there is no undo.',
+    danger: true,
+  },
+  logs: {
+    label: 'Logs & crash reports',
+    hint: 'Past sessions\' console logs and crash dumps. Safe to clear; only history is lost.',
+    danger: false,
+  },
+}
+
+const dataInfo = ref(null)
+const dataPicked = ref([])
+
+// Toggled explicitly rather than with v-model on the array: v-model reads the
+// array it was last patched with, so two boxes ticked before a re-render both
+// build on the same stale copy and only the last one survives.
+function pickData(target, on) {
+  const next = new Set(dataPicked.value)
+  if (on) next.add(target)
+  else next.delete(target)
+  dataPicked.value = [...next]
+}
+const dataBusy = ref(false)
+const dataNotice = ref('')
+const confirmClear = ref(false)
+
+async function loadData() {
+  try {
+    dataInfo.value = await api(`/api/instances/${props.id}/data`)
+  } catch {
+    /* leave the card empty */
+  }
+}
+
+const dataItems = computed(() =>
+  (dataInfo.value?.items || []).map((i) => ({ ...i, ...DATA_KINDS[i.target] })),
+)
+const pickedItems = computed(() => dataItems.value.filter((i) => dataPicked.value.includes(i.target)))
+const clearingSaves = computed(() => dataPicked.value.includes('saves'))
+
+async function clearData() {
+  dataBusy.value = true
+  try {
+    const res = await api(`/api/instances/${props.id}/data/clear`, {
+      method: 'POST',
+      body: { targets: dataPicked.value },
+    })
+    const freed = res.removed.reduce((n, r) => n + r.size_bytes, 0)
+    dataNotice.value =
+      `Cleared ${res.removed.map((r) => DATA_KINDS[r.target].label.toLowerCase()).join(', ')}` +
+      ` (${fmtBytes(freed)} freed).` +
+      (dataPicked.value.includes('mods')
+        ? ' The next start will download and bake the mods again — expect it to take a while.'
+        : '')
+    dataPicked.value = []
+    confirmClear.value = false
+    await loadData()
+  } catch (e) {
+    error.value = e.message
+    confirmClear.value = false
+  } finally {
+    dataBusy.value = false
+  }
+}
+
 // --- rename / change branch (issue #27) ---
 const editingBasics = ref(false)
 const basicsForm = ref({ name: '', branch: 'stable' })
@@ -238,6 +319,7 @@ onMounted(async () => {
   await loadInstance()
   await loadStats()
   await loadLogFiles()
+  await loadData()
   await loadTemplates()
   connectLogs()
   poll = setInterval(() => {
@@ -576,6 +658,100 @@ onUnmounted(() => {
                 </tr>
               </tbody>
             </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stored data: baked mods, saves, logs (issue #79) -->
+      <div v-if="dataInfo" class="card mt-3">
+        <div class="card-header d-flex justify-content-between align-items-center py-2">
+          <span class="fw-semibold small">Stored data</span>
+          <button class="btn btn-sm btn-outline-secondary" @click="loadData">Refresh</button>
+        </div>
+        <div class="card-body">
+          <p class="text-secondary small">
+            What this server has written to disk. Clearing something makes the server
+            rebuild it from the template the next time it starts.
+          </p>
+
+          <div v-if="dataNotice" class="alert alert-success py-2 small">{{ dataNotice }}</div>
+
+          <div v-if="inst.status === 'running'" class="alert alert-secondary py-2 small mb-3">
+            Stop the server to clear its data — pulling the addons or the save out from
+            under a running server would corrupt both.
+          </div>
+
+          <div class="list-group list-group-flush mb-3">
+            <!-- input + sibling label[for], not a label wrapping the input: the
+                 wrapping form makes a click on the box activate the label too. -->
+            <div
+              v-for="item in dataItems"
+              :key="item.target"
+              class="list-group-item d-flex gap-3 align-items-start px-0"
+              :class="{ 'opacity-50': inst.status === 'running' }"
+            >
+              <input
+                :id="`clear-${item.target}`"
+                class="form-check-input mt-1 flex-shrink-0"
+                type="checkbox"
+                :checked="dataPicked.includes(item.target)"
+                :disabled="inst.status === 'running' || !item.files"
+                @change="pickData(item.target, $event.target.checked)"
+              />
+              <label :for="`clear-${item.target}`" class="flex-grow-1">
+                <span class="fw-semibold">{{ item.label }}</span>
+                <span class="badge text-bg-secondary ms-2">
+                  {{ item.files ? fmtBytes(item.size_bytes) : 'empty' }}
+                </span>
+                <span v-if="item.danger && item.files" class="badge text-bg-danger ms-1">
+                  destructive
+                </span>
+                <small class="d-block text-secondary">{{ item.hint }}</small>
+                <small v-if="item.paths.length" class="d-block text-secondary">
+                  <code>{{ item.paths.join(', ') }}</code> · {{ item.files }} file(s)
+                </small>
+              </label>
+            </div>
+          </div>
+
+          <button
+            class="btn btn-outline-danger"
+            :disabled="!dataPicked.length || inst.status === 'running' || dataBusy"
+            @click="confirmClear = true"
+          >
+            {{ dataBusy ? 'Clearing…' : 'Clear selected data' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Spell out exactly what is about to be deleted (issue #79) -->
+    <div v-if="confirmClear" class="modal d-block" style="background: rgba(0,0,0,.5)">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-body">
+            <h2 class="h6">Clear stored data for "{{ inst.name }}"?</h2>
+            <p class="small text-secondary mb-2">This deletes, permanently:</p>
+            <ul class="small">
+              <li v-for="item in pickedItems" :key="item.target">
+                <strong>{{ item.label }}</strong> — {{ fmtBytes(item.size_bytes) }}
+                ({{ item.files }} file(s))
+              </li>
+            </ul>
+            <div v-if="clearingSaves" class="alert alert-danger py-2 small mb-2">
+              The saved game data goes with it: this server's persistent world is gone for
+              good, and the scenario starts over from scratch. Nothing here can bring it back.
+            </div>
+            <p class="small text-secondary mb-0">
+              The server rebuilds what it needs on the next start — re-downloading and
+              re-baking mods can take several minutes.
+            </p>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-outline-secondary" @click="confirmClear = false">Cancel</button>
+            <button class="btn btn-danger" :disabled="dataBusy" @click="clearData">
+              {{ dataBusy ? 'Clearing…' : 'Clear it' }}
+            </button>
           </div>
         </div>
       </div>

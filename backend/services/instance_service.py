@@ -473,21 +473,49 @@ def _container_ports_match(container, inst: Instance) -> bool:
     return actual == _desired_port_bindings(inst)
 
 
-def _container_has_stats_logging(container) -> bool:
-    """True if the container was created with -logStats (needed for FPS/players).
+def _desired_environment(inst: Instance, launch: "LaunchParams | None") -> dict:
+    """The environment an instance's container should be created with."""
+    environment = {
+        "STEAM_APPID": config.BRANCHES[inst.branch]["app_id"],
+        # Never self-install: instances run the files fetched on the Downloads
+        # tab and mounted at /reforger. Downloading is gated in start_instance.
+        "SKIP_INSTALL": "true",
+        "ARMA_CONFIG": CONFIG_FILENAME,
+        "SERVER_BIND_PORT": str(inst.game_port),
+        "SERVER_PUBLIC_PORT": str(inst.game_port),
+    }
+    if config.settings.public_address:
+        environment["SERVER_PUBLIC_ADDRESS"] = config.settings.public_address
+    arma_params, max_fps = launch.render() if launch is not None else ("", None)
+    environment["ARMA_PARAMS"] = _inject_stats_logging(arma_params)
+    if max_fps is not None:
+        environment["ARMA_MAX_FPS"] = str(max_fps)
+    return environment
 
-    Containers created before the #38 fix lack it and would show "—" forever;
-    start_instance recreates them. On any read failure we return True — never
-    destroy a container we cannot inspect.
+
+def _container_env_matches(container, desired: dict) -> bool:
+    """True if the container already carries the environment we would give it now.
+
+    Docker bakes environment variables at container CREATION, so a template's
+    engine launch parameters (ARMA_PARAMS / ARMA_MAX_FPS) edited after the fact
+    were silently ignored on a plain stop→start — the container simply kept the
+    old ones (#79). start_instance recreates on a mismatch, which also subsumes
+    the old -logStats check (#38), since -logStats is part of what we want.
+
+    Only the keys we set are compared; the image's own variables are ignored.
+    On any read failure we return True — never destroy a container we cannot
+    inspect.
     """
     try:
         container.reload()
-        env = (container.attrs.get("Config") or {}).get("Env") or []
+        env_list = (container.attrs.get("Config") or {}).get("Env") or []
     except (DockerException, NotFound, AttributeError):
         return True
-    return any(
-        e.startswith("ARMA_PARAMS=") and STATS_LOG_ARG in e for e in env
-    )
+    actual = {}
+    for entry in env_list:
+        key, _, value = str(entry).partition("=")
+        actual[key] = value
+    return all(actual.get(key) == value for key, value in desired.items())
 
 
 def start_instance(instance_id: int) -> None:
@@ -514,8 +542,8 @@ def start_instance(instance_id: int) -> None:
             reason = None
             if not _container_ports_match(container, inst):
                 reason = "published ports changed"
-            elif not _container_has_stats_logging(container):
-                reason = "enabling -logStats (#38)"
+            elif not _container_env_matches(container, _desired_environment(inst, launch)):
+                reason = "launch parameters or server environment changed"
             if reason:
                 logger.info("Recreating container for %s: %s", inst.name, reason)
                 try:
@@ -570,21 +598,7 @@ def _create_container(inst: Instance, config_path: Path, launch: "LaunchParams |
     # so the server bound the host port number inside the container while Docker
     # forwarded a *different* internal port — breaking A2S/server-browser queries.
     port_bindings = _desired_port_bindings(inst)
-    environment = {
-        "STEAM_APPID": config.BRANCHES[inst.branch]["app_id"],
-        # Never self-install: instances run the files fetched on the Downloads
-        # tab and mounted at /reforger. Downloading is gated in start_instance.
-        "SKIP_INSTALL": "true",
-        "ARMA_CONFIG": CONFIG_FILENAME,
-        "SERVER_BIND_PORT": str(inst.game_port),
-        "SERVER_PUBLIC_PORT": str(inst.game_port),
-    }
-    if config.settings.public_address:
-        environment["SERVER_PUBLIC_ADDRESS"] = config.settings.public_address
-    arma_params, max_fps = launch.render() if launch is not None else ("", None)
-    environment["ARMA_PARAMS"] = _inject_stats_logging(arma_params)
-    if max_fps is not None:
-        environment["ARMA_MAX_FPS"] = str(max_fps)
+    environment = _desired_environment(inst, launch)
 
     return docker_service.get_client().containers.create(
         config.settings.reforger_server_image,
@@ -919,6 +933,177 @@ def resolve_log_file(instance_id: int, relpath: str) -> Path:
     if not target.is_file() or target.suffix.lower() not in _LOG_SUFFIXES:
         raise InstanceError("Log file not found")
     return target
+
+
+# --------------------------------------------------------------------------- #
+# Stored data: what an instance accumulates on disk, and wiping it (issue #79)
+# --------------------------------------------------------------------------- #
+#
+# Three kinds of state build up under data/instances/<id>/:
+#
+#   workshop/   the addons dir. The server DOWNLOADS and BAKES the template's
+#               mods into it on startup and reuses that bake forever after. This
+#               is why editing a template's mods and merely restarting can leave
+#               the server running the old content — the fix is to throw the bake
+#               away so the next start rebuilds it from the config.
+#   profile/    the server's own profile: persistent save games (the world your
+#               players built), plus logs and crash dumps.
+#   configs/    the rendered config.json — never wiped here; it is rewritten from
+#               the template on every start anyway.
+#
+# The server container runs as root, so the files it writes are root-owned and
+# the manager (uid 1000) cannot delete them itself. A short-lived sibling
+# container does the removal, exactly as steam_service.remove_files does.
+
+# Persistence artifacts inside the profile, by name. Reforger has moved these
+# around between builds (save/, .save/, and the .db the Enfusion persistence
+# system writes), so match on any of them rather than one blessed path.
+_SAVE_DIR_NAMES = {"save", "saves", ".save"}
+_SAVE_SUFFIXES = {".db"}
+
+DATA_MODS = "mods"
+DATA_SAVES = "saves"
+DATA_LOGS = "logs"
+DATA_TARGETS = (DATA_MODS, DATA_SAVES, DATA_LOGS)
+
+
+def _dir_usage(paths) -> tuple[int, int]:
+    """(bytes, file count) over the given files/dirs; unreadable parts count 0."""
+    total = files = 0
+    for path in paths:
+        try:
+            if path.is_file():
+                total += path.stat().st_size
+                files += 1
+                continue
+            for child in path.rglob("*"):
+                try:
+                    if child.is_file():
+                        total += child.stat().st_size
+                        files += 1
+                except OSError:
+                    continue
+        except OSError:
+            continue
+    return total, files
+
+
+def _save_paths(profile: Path) -> list[Path]:
+    """Persistence artifacts inside an instance's profile dir."""
+    if not profile.is_dir():
+        return []
+    found = []
+    try:
+        for entry in profile.iterdir():
+            name = entry.name.lower()
+            if name in _SAVE_DIR_NAMES or Path(name).suffix in _SAVE_SUFFIXES:
+                found.append(entry)
+    except OSError:
+        return []
+    return found
+
+
+def _log_paths(profile: Path) -> list[Path]:
+    """Log/crash artifacts inside an instance's profile dir."""
+    if not profile.is_dir():
+        return []
+    found = []
+    try:
+        for entry in profile.iterdir():
+            if entry.is_dir() and entry.name.lower() in ("logs", "crash", "crashes"):
+                found.append(entry)
+            elif entry.is_file() and entry.suffix.lower() in _LOG_SUFFIXES:
+                found.append(entry)
+    except OSError:
+        return []
+    return found
+
+
+def _target_paths(instance_id: int, target: str) -> list[Path]:
+    idir = Path(config.settings.data_dir) / "instances" / str(instance_id)
+    profile = idir / "profile"
+    if target == DATA_MODS:
+        # The addons dir, plus the copy some builds keep inside the profile.
+        return [p for p in (idir / "workshop", profile / "addons") if p.exists()]
+    if target == DATA_SAVES:
+        return _save_paths(profile)
+    if target == DATA_LOGS:
+        return _log_paths(profile)
+    raise InstanceError(f"Unknown data target '{target}'")
+
+
+def instance_data(instance_id: int) -> dict:
+    """What this instance has on disk, per target, so the GUI can offer to wipe it."""
+    with Session(get_engine()) as session:
+        if not session.get(Instance, instance_id):
+            raise InstanceError("Instance not found")
+    running = container_status(instance_id) == "running" if docker_service.ping() else False
+    items = []
+    for target in DATA_TARGETS:
+        paths = _target_paths(instance_id, target)
+        size, files = _dir_usage(paths)
+        items.append({
+            "target": target,
+            "size_bytes": size,
+            "files": files,
+            # The actual names on disk, so the user can see what is about to go.
+            "paths": sorted(p.name for p in paths),
+        })
+    return {"running": running, "items": items}
+
+
+def clear_instance_data(instance_id: int, targets: list[str]) -> dict:
+    """Delete the selected stored data for a stopped instance.
+
+    Returns what was removed. The instance must be stopped: wiping the addons or
+    the save out from under a live server would be a fine way to corrupt both.
+    """
+    chosen = [t for t in targets if t in DATA_TARGETS]
+    if not chosen:
+        raise InstanceError("Nothing selected to clear")
+    with Session(get_engine()) as session:
+        if not session.get(Instance, instance_id):
+            raise InstanceError("Instance not found")
+    if container_status(instance_id) == "running":
+        raise InstanceError("Stop the server before clearing its data")
+
+    idir = Path(config.settings.data_dir) / "instances" / str(instance_id)
+    if not idir.is_dir():
+        raise InstanceError("Instance has no data directory yet")
+
+    removed = []
+    victims: list[Path] = []
+    for target in chosen:
+        paths = _target_paths(instance_id, target)
+        size, files = _dir_usage(paths)
+        victims.extend(paths)
+        removed.append({"target": target, "size_bytes": size, "files": files})
+
+    if victims:
+        # Paths are handed to the cleanup container relative to the instance dir,
+        # and each one came from _target_paths — no user-supplied path ever
+        # reaches the shell.
+        rel = [p.relative_to(idir).as_posix() for p in victims]
+        script = " ".join(f"rm -rf '/idata/{r}';" for r in rel) + " true"
+        host_dir = docker_service.host_path_for(str(idir))
+        try:
+            docker_service.get_client().containers.run(
+                config.settings.steamcmd_image,
+                entrypoint="/bin/sh",
+                command=["-c", script],
+                remove=True,
+                volumes={host_dir: {"bind": "/idata", "mode": "rw"}},
+                labels={docker_service.LABEL_MANAGED: "true"},
+            )
+        except DockerException as exc:
+            raise InstanceError(f"Could not clear instance data: {exc}") from exc
+
+    # The server expects these to exist; it will refill them on the next start.
+    (idir / "workshop").mkdir(parents=True, exist_ok=True)
+    (idir / "profile").mkdir(parents=True, exist_ok=True)
+
+    logger.info("Cleared %s for instance %s", ", ".join(chosen), instance_id)
+    return {"removed": removed}
 
 
 def prune_old_logs() -> int:
