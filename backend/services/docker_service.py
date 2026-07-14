@@ -34,14 +34,21 @@ def get_client() -> docker.DockerClient:
 
 
 def daemon_info() -> dict:
-    """Cached `docker info` ({} when the daemon is unreachable)."""
+    """`docker info`, cached ({} when the daemon is unreachable).
+
+    Only SUCCESSES are cached. Caching the failure would pin the answer for the
+    lifetime of the process: one unlucky call at startup and is_docker_desktop()
+    would stay False forever, so a Windows host would be shown the Linux firewall
+    command for good (#85).
+    """
     global _info
-    if _info is None:
-        try:
-            _info = get_client().info()
-        except DockerException as exc:
-            logger.warning("Could not read docker info: %s", exc)
-            _info = {}
+    if _info is not None:
+        return _info
+    try:
+        _info = get_client().info()
+    except DockerException as exc:
+        logger.warning("Could not read docker info: %s", exc)
+        return {}  # not cached: ask again next time
     return _info
 
 

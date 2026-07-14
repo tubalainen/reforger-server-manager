@@ -43,33 +43,41 @@ async def lifespan(_app: FastAPI):
     elif not config.settings.admin_password or config.settings.admin_password == "change-me-now":
         logger.warning("ADMIN_PASSWORD is unset or still the example value — change it in .env")
     models.init_db()
-    monitor_task = None
-    if await asyncio.to_thread(docker_service.ping):
-        await asyncio.to_thread(
-            docker_service.remove_exited, docker_service.ROLE_STEAMCMD
-        )
-        monitor_task = asyncio.create_task(_crash_monitor())
-    else:
+    if not await asyncio.to_thread(docker_service.ping):
         logger.warning(
-            "Docker daemon not reachable — downloads and server instances are disabled"
+            "Docker daemon not reachable — downloads and server instances are "
+            "disabled until it comes back"
         )
+    # Started unconditionally. It used to be created only if this first ping
+    # succeeded, so a daemon that was merely slow to come up (a host reboot, a
+    # cold Docker Desktop) silently cost you crash recovery, scheduled restarts
+    # AND log pruning for the lifetime of the process — precisely when auto-restart
+    # matters most (#85). Each pass now checks the daemon itself and no-ops.
+    monitor_task = asyncio.create_task(_crash_monitor())
     try:
         yield
     finally:
-        if monitor_task:
-            monitor_task.cancel()
+        monitor_task.cancel()
 
 
 async def _crash_monitor():
     """Restart crashed instances, apply scheduled restarts (every 15s), and
-    prune old logs (hourly)."""
+    prune old logs (hourly). Waits the daemon out rather than giving up on it."""
     ticks = 0
+    steamcmd_cleaned = False
     while True:
         try:
-            await asyncio.to_thread(instance_service.reconcile_and_recover)
-            await asyncio.to_thread(instance_service.apply_scheduled_restarts)
-            if ticks % 240 == 0:  # ~hourly at a 15s cadence
-                await asyncio.to_thread(instance_service.prune_old_logs)
+            if await asyncio.to_thread(docker_service.ping):
+                if not steamcmd_cleaned:
+                    # One-time startup cleanup, deferred until Docker is actually there.
+                    await asyncio.to_thread(
+                        docker_service.remove_exited, docker_service.ROLE_STEAMCMD
+                    )
+                    steamcmd_cleaned = True
+                await asyncio.to_thread(instance_service.reconcile_and_recover)
+                await asyncio.to_thread(instance_service.apply_scheduled_restarts)
+                if ticks % 240 == 0:  # ~hourly at a 15s cadence
+                    await asyncio.to_thread(instance_service.prune_old_logs)
         except Exception as exc:  # never let the monitor die silently
             logger.warning("Crash monitor pass failed: %s", exc)
         ticks += 1
