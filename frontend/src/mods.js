@@ -11,6 +11,16 @@
 
 export const MODS_FILE_FORMAT = 'reforger-server-manager/mods@1'
 
+// Workshop asset ids are 16 hex digits. Pull one out of a bare id, "{id}-slug",
+// or a full workshop URL — mirrors the backend's normalize_asset_id. Returns the
+// upper-cased id, or null when there is none (treat the text as a search query).
+const ASSET_ID_RE = /[0-9a-fA-F]{16}/
+
+export function extractModId(raw) {
+  const m = ASSET_ID_RE.exec(raw || '')
+  return m ? m[0].toUpperCase() : null
+}
+
 export function normalizeMod(m) {
   return {
     modId: m.modId,

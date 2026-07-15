@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   clearScenarioMods,
+  extractModId,
   mergeResolved,
   neededSet,
   normalizeMod,
@@ -11,6 +12,22 @@ import {
   requiredBy,
   stillRequiredWithoutExplicit,
 } from '../mods'
+
+describe('extractModId', () => {
+  it('pulls a 16-hex id out of a bare id, "{id}-slug" or a full URL', () => {
+    expect(extractModId('59D64ADD6FC59CBF')).toBe('59D64ADD6FC59CBF')
+    expect(extractModId('59d64add6fc59cbf-projectredline-uh-60')).toBe('59D64ADD6FC59CBF')
+    expect(
+      extractModId('https://reforger.armaplatform.com/workshop/59D64ADD6FC59CBF-ProjectRedline-UH-60'),
+    ).toBe('59D64ADD6FC59CBF')
+  })
+
+  it('returns null for free-text so the caller treats it as a search query', () => {
+    expect(extractModId('Project Redline')).toBe(null)
+    expect(extractModId('')).toBe(null)
+    expect(extractModId(null)).toBe(null)
+  })
+})
 
 // The mod dependency graph is the most intricate logic in the frontend and had no
 // tests at all. Shape: A (explicit) -> B -> C, and D (explicit) -> C  (C shared).
