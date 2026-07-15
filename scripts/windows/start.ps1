@@ -5,11 +5,20 @@
 
 .DESCRIPTION
     Safe to run at any time: if everything is already running it just opens the GUI.
-    Use -Update to pull the newest manager image first.
+
+    By default it pulls the manager image before starting, so a double-click of the
+    Desktop shortcut keeps you on the newest release. The tag it pulls comes from
+    MANAGER_VERSION in .env ('latest' by default); pin it to a release such as
+    v0.31.0 to LOCK the version, and this pull will then just confirm that one is
+    present instead of moving you forward. Pass -NoUpdate to skip the pull entirely
+    (e.g. offline, or to start as fast as possible).
 #>
 [CmdletBinding()]
 param(
-    # Pull the latest manager image before starting.
+    # Skip pulling the manager image; start whatever is already on disk.
+    [switch] $NoUpdate,
+
+    # Accepted for backwards compatibility — pulling is now the default.
     [switch] $Update,
 
     # Do not open the browser at the end.
@@ -83,14 +92,32 @@ if (-not (Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContin
 }
 
 # --- 3. The manager itself ---------------------------------------------------
-if ($Update) {
-    Write-Step 'Pulling the latest manager image'
-    & $docker compose -f $Compose pull
-    if ($LASTEXITCODE -ne 0) { Pause-OnExit 'docker compose pull failed - see the output above.' }
+# Which manager build .env asks for. 'latest' follows every release; a pinned
+# tag (e.g. v0.31.0) locks it. --env-file makes the ${MANAGER_VERSION} in the
+# compose file resolve to it for both the pull and the up.
+$managerVersion = Get-EnvValue -Key 'MANAGER_VERSION' -Default 'latest'
+$composeArgs = @('compose', '-f', $Compose, '--env-file', $EnvFile)
+
+if ($NoUpdate) {
+    Write-Info "Skipping the image pull (-NoUpdate); running manager version '$managerVersion'."
+} elseif ($managerVersion -eq 'latest') {
+    Write-Step 'Updating the manager image (following latest)'
+    & $docker @composeArgs pull
+    if ($LASTEXITCODE -ne 0) {
+        # A pull failure (usually just offline) must not stop a server that is
+        # already installed from starting — carry on with the image on disk.
+        Write-Warn2 'Could not pull the manager image (offline?) - starting the version already on disk.'
+    }
+} else {
+    Write-Step "Making sure the locked manager image ($managerVersion) is present"
+    & $docker @composeArgs pull
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn2 "Could not pull $managerVersion (offline?) - starting the version already on disk."
+    }
 }
 
 Write-Step 'Starting the manager'
-& $docker compose -f $Compose up -d
+& $docker @composeArgs up -d
 if ($LASTEXITCODE -ne 0) { Pause-OnExit 'docker compose up failed - see the output above.' }
 
 # --- 4. Wait for the API, then open the GUI ---------------------------------
@@ -111,6 +138,11 @@ if (-not $NoBrowser) { Start-Process $url }
 
 Write-Host ''
 Write-Host "  Web GUI : $url   (user: admin, password: see .env)"
+if ($managerVersion -eq 'latest') {
+    Write-Host '  Version : latest (updates on every start; set MANAGER_VERSION in .env to lock it)'
+} else {
+    Write-Host "  Version : locked to $managerVersion (set MANAGER_VERSION=latest in .env to follow releases)"
+}
 Write-Host '  Running Arma servers keep running even if you close this window.'
 Write-Host ''
 Start-Sleep -Seconds 4

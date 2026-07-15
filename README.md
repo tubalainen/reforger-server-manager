@@ -261,13 +261,50 @@ opens `http://localhost:7780`. Options if you prefer to drive it by hand:
 
 ```powershell
 cd $env:USERPROFILE\ReforgerServerManager
-.\start.ps1 -Update     # pull the newest manager image, then start
-.\stop.ps1              # stop the manager (running Arma servers stay up)
-.\stop.ps1 -All         # also stop every Arma server instance
+.\start.ps1            # pull the newest manager image (unless locked), then start
+.\start.ps1 -NoUpdate  # start the version already on disk, no pull (e.g. offline)
+.\stop.ps1             # stop the manager (running Arma servers stay up)
+.\stop.ps1 -All        # also stop every Arma server instance
 ```
 
 Then do the [First run](#first-run) steps in the GUI (pull the runtime image, download
 the server files) and create an instance.
+
+### Updating (and locking a version)
+
+**The manager updates itself on start.** Every time you launch it (the Desktop shortcut,
+or `start.ps1`), it pulls the newest manager image first, so you are always on the latest
+release. Your data, settings and running Arma servers are untouched. To start without
+pulling — offline, or just faster — use `.\start.ps1 -NoUpdate`.
+
+**To lock the manager to one version,** set `MANAGER_VERSION` in
+`$env:USERPROFILE\ReforgerServerManager\.env` to a release tag, then restart it:
+
+```powershell
+# in .env — pin to a release so it never changes:
+MANAGER_VERSION=v0.31.0
+# ...or follow every release (the default):
+MANAGER_VERSION=latest
+```
+
+Release tags are listed on the
+[Releases page](https://github.com/tubalainen/reforger-server-manager/releases). With a
+version pinned, start still confirms that exact image is present but never moves you
+forward until you change the value back.
+
+**To update the scripts and compose file themselves** (not just the image) — for instance
+when a release changes how the stack is wired — re-run the installer. It refreshes the
+files in place and **keeps your existing `.env`**:
+
+```powershell
+$installer = "$env:TEMP\reforger-install.ps1"
+Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/scripts/windows/install.ps1 -OutFile $installer
+powershell -ExecutionPolicy Bypass -File $installer
+```
+
+The Arma **server runtime image** and the **server files** are updated separately from the
+GUI, on the [First run](#first-run) / Downloads screens — pull the runtime image and
+re-download the branch when you want those refreshed.
 
 ### Uninstalling (or starting over after a failed install)
 
