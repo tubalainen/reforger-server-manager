@@ -5,10 +5,10 @@ import { api } from '../api'
 import { formatBytes } from '../format'
 import {
   MODS_FILE_FORMAT,
+  extractModId,
   normalizeMods,
   requiredBy,
   stillRequiredWithoutExplicit,
-  orphansAfterRemoving,
   clearScenarioMods,
   mergeResolved,
   orderedMods,
@@ -264,9 +264,11 @@ function resetMaxPlayers() {
 // ---- Step 2: mods ----------------------------------------------------------
 const modAdd = reactive({ busy: false, error: '' })
 const modNotice = ref('')
-const manualId = ref('')
-const removePrompt = ref(null) // { mod, orphans } when a remove needs confirming
 const modsFileInput = ref(null)
+
+// One field adds both ways: paste a Workshop id / URL to add that mod directly,
+// or type free text to search. The button label follows suit.
+const searchIsModId = computed(() => !!extractModId(search.q))
 
 const byModId = (id) => spec.mods.find((m) => m.modId === id)
 
@@ -417,18 +419,29 @@ function unlockAll() {
   modNotice.value = 'All mods now follow the latest Workshop version.'
 }
 
+// Add a single addon (#97): a Reforger server config lists only the top-level
+// mod — its sub-dependencies are downloaded by the server automatically, so we
+// never resolve, add or list them here. (Scenarios/terrains are different: they
+// DO carry their dependency tree, and that path is left untouched on step 1.)
 async function addModById(id) {
   modAdd.busy = true
   modAdd.error = ''
   modNotice.value = ''
   try {
-    const res = await api(`/api/workshop/resolve/${id}`)
-    spec.mods = mergeResolved(normalizeMods(spec.mods), res)
-    if (res.missing?.length) {
-      modAdd.error = `Added, but ${res.missing.length} dependency(ies) could not be resolved.`
+    const asset = await api(`/api/workshop/asset/${id}`)
+    const resolved = {
+      root: asset.id,
+      mods: [{
+        modId: asset.id,
+        name: asset.name,
+        versions: asset.versions || [],
+        provides_scenarios: !!asset.scenarios?.length,
+        dependencies: [], // top-level only — deps download automatically (#97)
+      }],
     }
+    spec.mods = mergeResolved(normalizeMods(spec.mods), resolved)
     // Warn if the mod just added carries its own scenario (#69).
-    const rootMod = byModId(res.root)
+    const rootMod = byModId(asset.id)
     if (rootMod && isExtraScenarioMod(rootMod)) {
       modNotice.value =
         `"${rootMod.name || rootMod.modId}" publishes its own scenario(s). A server runs only ` +
@@ -446,11 +459,18 @@ function addModByRow(row) {
   return addModById(row.id)
 }
 
-async function addManualMod() {
-  const id = manualId.value.trim()
-  if (!id) return
-  await addModById(id)
-  if (!modAdd.error) manualId.value = ''
+// The single Mods-step field: a pasted id / Workshop URL adds that mod directly;
+// anything else is a free-text Workshop search (#97).
+async function submitModSearch() {
+  const raw = search.q.trim()
+  if (!raw) return
+  const id = extractModId(raw)
+  if (id) {
+    await addModById(id)
+    if (!modAdd.error) search.q = ''
+    return
+  }
+  await runSearch()
 }
 
 function removeMod(id) {
@@ -461,7 +481,7 @@ function removeMod(id) {
     modNotice.value = `"${mod.name || id}" backs the selected scenario — change the scenario on step 1 to remove it.`
     return
   }
-  // Still required by another explicit mod → demote to a dependency, don't drop.
+  // Still required by the scenario's mod → demote to a dependency, don't drop.
   if (stillRequiredWithoutExplicit(spec.mods, id)) {
     const reqs = requiredByNames(id)
     spec.mods = spec.mods.map((m) =>
@@ -470,27 +490,7 @@ function removeMod(id) {
     modNotice.value = `Kept "${mod.name || id}" as a dependency — still required by ${reqs}.`
     return
   }
-  const orphans = orphansAfterRemoving(spec.mods, id)
-  if (!orphans.length) {
-    spec.mods = spec.mods.filter((m) => m.modId !== id)
-  } else {
-    removePrompt.value = { mod, orphans }
-  }
-}
-
-function resolveRemovePrompt(alsoRemoveDeps) {
-  const { mod, orphans } = removePrompt.value
-  const orphanIds = new Set(orphans.map((o) => o.modId))
-  let next = spec.mods.filter((m) => m.modId !== mod.modId)
-  if (alsoRemoveDeps) {
-    next = next.filter((m) => !orphanIds.has(m.modId))
-  } else {
-    // Keep them: promote to explicit so they read as intentional and aren't
-    // re-flagged as orphans later.
-    next = next.map((m) => (orphanIds.has(m.modId) ? { ...m, explicit: true } : m))
-  }
-  spec.mods = next
-  removePrompt.value = null
+  spec.mods = spec.mods.filter((m) => m.modId !== id)
 }
 
 function moveExplicit(id, dir) {
@@ -831,17 +831,16 @@ onMounted(async () => {
         <!-- STEP 2: MODS -->
         <div v-show="step === 2">
           <p class="text-secondary">
-            Search the Workshop and add mods on top of the scenario. Dependencies are pulled
-            in automatically; remove a mod and you'll be asked whether to drop the
-            dependencies it brought along. Mods follow the latest Workshop release unless
-            you lock a version — only locked versions are written to config.json.
+            Add mods on top of the scenario. Only the mod itself goes in the config — its
+            sub-dependencies are downloaded by the server automatically, so you don't add or
+            manage them here. Mods follow the latest Workshop release unless you lock a
+            version — only locked versions are written to config.json.
           </p>
           <p class="text-secondary small">
             <span class="badge text-bg-info">scenario</span> provides the selected scenario ·
             <span class="badge text-bg-secondary">scenario dependency</span> needed for the
             scenario to work ·
             <span class="badge text-bg-primary">addon</span> extra mod you chose ·
-            <span class="badge text-bg-secondary">dependency</span> pulled in by an addon ·
             <span class="badge text-bg-warning">scenario mod</span> an addon that carries its
             own (unused) scenario
           </p>
@@ -862,16 +861,20 @@ onMounted(async () => {
             </template>
           </div>
 
-          <!-- Add mods: Workshop search + manual id -->
+          <!-- Add mods: one field takes free text OR a mod id / Workshop URL (#97) -->
           <div class="input-group mb-2">
             <input
               v-model="search.q"
               class="form-control"
-              placeholder="Search the Workshop for mods to add…"
-              @keyup.enter="runSearch"
+              placeholder="Search the Workshop, or paste a mod id / Workshop URL…"
+              @keyup.enter="submitModSearch"
             />
-            <button class="btn btn-primary" :disabled="search.busy" @click="runSearch">
-              {{ search.busy ? 'Searching…' : 'Search' }}
+            <button
+              class="btn btn-primary"
+              :disabled="search.busy || modAdd.busy || !search.q.trim()"
+              @click="submitModSearch"
+            >
+              {{ search.busy || modAdd.busy ? 'Working…' : searchIsModId ? 'Add' : 'Search' }}
             </button>
           </div>
           <div v-if="search.error" class="alert alert-warning py-2 small mb-2">{{ search.error }}</div>
@@ -896,20 +899,8 @@ onMounted(async () => {
               >{{ isEnabled(row.id) ? 'Added' : 'Add' }}</button>
             </div>
           </div>
-          <div class="input-group input-group-sm mb-2">
-            <input
-              v-model="manualId"
-              class="form-control"
-              placeholder="…or paste a mod id / Workshop URL"
-              @keyup.enter="addManualMod"
-            />
-            <button class="btn btn-outline-secondary" :disabled="modAdd.busy || !manualId.trim()" @click="addManualMod">
-              Add by id
-            </button>
-          </div>
-
           <div v-if="modAdd.busy" class="text-secondary small mb-2">
-            <span class="spinner-border spinner-border-sm me-1"></span>Resolving dependencies…
+            <span class="spinner-border spinner-border-sm me-1"></span>Adding mod…
           </div>
           <div v-if="modAdd.error" class="alert alert-info py-2 small mb-2">{{ modAdd.error }}</div>
           <div v-if="modNotice" class="alert alert-secondary py-2 small mb-2">{{ modNotice }}</div>
@@ -1363,30 +1354,6 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- Remove-with-dependencies prompt (issue #55) -->
-    <div v-if="removePrompt" class="rsm-modal-backdrop" @click.self="removePrompt = null">
-      <div class="card rsm-modal shadow">
-        <div class="card-body">
-          <h2 class="h6">Remove "{{ removePrompt.mod.name || removePrompt.mod.modId }}"?</h2>
-          <p class="small text-secondary mb-2">
-            It brought in {{ removePrompt.orphans.length }} dependency(ies) that nothing else
-            needs anymore:
-          </p>
-          <ul class="small mb-3">
-            <li v-for="o in removePrompt.orphans" :key="o.modId">{{ o.name || o.modId }}</li>
-          </ul>
-          <div class="d-flex flex-wrap gap-2 justify-content-end">
-            <button class="btn btn-sm btn-outline-secondary" @click="removePrompt = null">Cancel</button>
-            <button class="btn btn-sm btn-outline-primary" @click="resolveRemovePrompt(false)">
-              Keep dependencies
-            </button>
-            <button class="btn btn-sm btn-danger" @click="resolveRemovePrompt(true)">
-              Remove them too
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
