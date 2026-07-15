@@ -1,6 +1,9 @@
 services:
   manager:
-    image: ghcr.io/tubalainen/reforger-server-manager:latest
+    # Tag comes from MANAGER_VERSION in .env: 'latest' follows every release,
+    # or pin e.g. v0.31.0 to lock the manager to one version. Run
+    # `docker compose pull` to update when following latest.
+    image: ghcr.io/tubalainen/reforger-server-manager:${MANAGER_VERSION:-latest}
     # To build locally from source instead: comment 'image:', uncomment 'build:'
     # build: .
     container_name: reforger-manager
