@@ -13,6 +13,46 @@ from pydantic import BaseModel, Field
 DEFAULT_SUPPORTED_PLATFORMS = ["PLATFORM_PC", "PLATFORM_XBL", "PLATFORM_PSN"]
 
 
+def merge_patch(base: dict, patch: dict) -> dict:
+    """Apply an RFC 7386 JSON Merge Patch to `base`, returning a new dict.
+
+    Standard semantics: objects merge recursively, a null value deletes the key,
+    and everything else (including arrays) replaces wholesale.
+    """
+    out = dict(base)
+    for key, value in patch.items():
+        if value is None:
+            out.pop(key, None)
+        elif isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = merge_patch(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def diff_patch(base: dict, target: dict) -> dict:
+    """The minimal RFC 7386 merge patch that turns `base` into `target`.
+
+    Inverse of merge_patch: merge_patch(base, diff_patch(base, target)) == target.
+    Used to split a hand-edited config into "what the model already renders" and
+    "what only the user knows about" (#29).
+    """
+    patch: dict = {}
+    for key, value in target.items():
+        if key not in base:
+            patch[key] = value
+        elif isinstance(value, dict) and isinstance(base[key], dict):
+            sub = diff_patch(base[key], value)
+            if sub:
+                patch[key] = sub
+        elif base[key] != value:
+            patch[key] = value
+    for key in base:
+        if key not in target:
+            patch[key] = None  # null = delete, per RFC 7386
+    return patch
+
+
 class ModEntry(BaseModel):
     modId: str
     name: str | None = None
@@ -176,6 +216,12 @@ class TemplateSpec(BaseModel):
     rcon_permission: str = Field(default="admin", pattern="^(admin|monitor)$")
     rcon_max_clients: int = Field(default=16, ge=1, le=16)
 
+    # Config keys the GUI doesn't model — scenario-specific gameProperties, or
+    # anything Bohemia adds faster than this wizard does — held as an RFC 7386
+    # merge patch and re-applied over every render so hand-edits survive a wizard
+    # save instead of being dropped by to_config's dict literal (#29).
+    extras: dict = {}
+
     def to_config(self) -> dict:
         """Render the full server config.json.
 
@@ -250,6 +296,11 @@ class TemplateSpec(BaseModel):
                 "whitelist": [],
                 "maxClients": self.rcon_max_clients,
             }
+        # The user's own keys win over the rendered defaults. Applying last means
+        # every consumer of to_config (render_config_json, /preview, and the
+        # instance layer via template.config_json) is overlay-aware for free.
+        if self.extras:
+            config = merge_patch(config, self.extras)
         return config
 
 
@@ -273,11 +324,17 @@ def persistence_summary(config_json: str) -> dict:
     return {"persistence": True, "hive_id": p.get("hiveId", 0)}
 
 
-def spec_from_config(config_json: str) -> dict:
+def spec_from_config(config_json: str, clamp: bool = True) -> dict:
     """Reconstruct the wizard's editable fields from a saved config.json.
 
     Returns a plain dict (not a validated TemplateSpec) so partial/legacy
     configs still load into the wizard for editing.
+
+    clamp=True nudges out-of-range legacy values into the model's range so an old
+    template still opens. Pass clamp=False when validating a hand-edited config
+    (#29): there the user's exact value must reach the model, or an invalid one
+    gets silently "fixed" here, diffed against the fixed baseline, and smuggled
+    back in as an `extras` override that the server then rejects.
     """
     cfg = json.loads(config_json)
     game = cfg.get("game", {})
@@ -303,7 +360,11 @@ def spec_from_config(config_json: str) -> dict:
         "mods_required_by_default": game.get("modsRequiredByDefault", False),
         "battleye": props.get("battlEye", True),
         "server_max_view_distance": props.get("serverMaxViewDistance", 1600),
-        "server_min_grass_distance": max(50, props.get("serverMinGrassDistance", 50)),
+        "server_min_grass_distance": (
+            max(50, props.get("serverMinGrassDistance", 50))
+            if clamp
+            else props.get("serverMinGrassDistance", 50)
+        ),
         "network_view_distance": props.get("networkViewDistance", 1500),
         "disable_third_person": props.get("disableThirdPerson", False),
         "fast_validation": props.get("fastValidation", True),

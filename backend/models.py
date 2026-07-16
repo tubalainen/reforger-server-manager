@@ -33,6 +33,9 @@ class Template(SQLModel, table=True):
     # Enriched mod list with dependency metadata the flat config.json can't hold
     # (explicit vs dependency, edges) — the editing source of truth for mods (#55)
     mods_json: str = ""
+    # Hand-edited config keys the wizard doesn't model, as an RFC 7386 merge patch
+    # re-applied over every render so they survive a wizard save (#29)
+    extras_json: str = "{}"
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
 
@@ -135,5 +138,12 @@ def _migrate(engine) -> None:
         if "scenario_player_count" not in tcols:
             conn.execute(text(
                 "ALTER TABLE template ADD COLUMN scenario_player_count INTEGER"
+            ))
+            conn.commit()
+        # hand-edited config overlay (issue #29); '{}' = no custom keys, which is
+        # what every template predating the JSON editor has
+        if "extras_json" not in tcols:
+            conn.execute(text(
+                "ALTER TABLE template ADD COLUMN extras_json VARCHAR NOT NULL DEFAULT '{}'"
             ))
             conn.commit()

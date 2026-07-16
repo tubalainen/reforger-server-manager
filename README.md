@@ -40,6 +40,11 @@ Docker image: `ghcr.io/tubalainen/reforger-server-manager:latest`
 - [x] **Max players follows the scenario** — the wizard seeds the player limit from the
       count the scenario declares on the Workshop (a 12-player co-op scenario no longer
       gets a 64-slot server), and you can override it whenever you like
+- [x] **Edit `config.json` by hand** — the preview panel flips into a real JSON editor
+      (syntax highlighting, line numbers, indent guides, live error marks). Keys the GUI
+      knows flow back into the wizard's fields; **any key it doesn't know — including
+      scenario-specific `gameProperties` — is kept and re-applied on every future save**.
+      Validation blocks broken JSON and out-of-range values, but never blocks a custom key
 - [x] Multiple concurrent server instances (stable + experimental side by side), each a
       Docker container spawned and supervised by the manager
 - [x] Live server logs in the browser (with a clear-window button), crash auto-restart
@@ -205,6 +210,39 @@ On the **Downloads** tab, do both one-time steps before creating a server instan
    ~10 GB of game data mounted into every instance of that branch.
 
 Then head to **Instances** and create your first server from a template.
+
+### Editing `config.json` by hand
+
+The template wizard covers the settings most servers need, but it can't model every key:
+`gameProperties` is **scenario-specific**, and mod authors and Bohemia both add keys of
+their own. So the `config.json` panel on the right of the wizard has an **Edit JSON**
+button that turns it into a full editor — syntax highlighting, line numbers, indent
+guides, and errors marked as you type.
+
+When you hit **Apply**, your edit is split in two:
+
+- **Keys the wizard models** are read back into its fields. Change `maxPlayers` in the
+  JSON and the Settings step's player limit moves with it.
+- **Everything else is kept as a custom key** and re-applied over the config every time
+  the template is rendered — so it survives later edits in the wizard, and lands in the
+  `config.json` your servers actually run. The panel badges how many a template carries.
+
+Validation is deliberately asymmetric:
+
+| | Behaviour |
+|---|---|
+| Broken JSON | **Blocked** — marked inline, Apply disabled |
+| Missing `game.scenarioId` | **Blocked** — the server would have no mission to load |
+| A modelled key out of range (e.g. `maxPlayers: 9999`) | **Blocked** — the server would reject it |
+| A key the GUI doesn't recognise | **Allowed**, listed as "kept as-is" |
+
+That last row is the point: an unfamiliar key is usually you configuring your scenario,
+not a typo — so it's flagged for visibility and never rejected.
+
+> **Ports are the one exception.** `bindPort`, `publicPort`, `a2s.port` and `rcon.port`
+> are assigned per instance from the manager's port ranges, so each server gets its own —
+> a value you type for them here is kept in the template but overwritten when an instance
+> runs. Set ports on the instance, not in the template's JSON.
 
 ## Running on Windows 11 / 10
 
