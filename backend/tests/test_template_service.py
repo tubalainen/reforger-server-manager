@@ -215,3 +215,85 @@ def test_launch_params_bounds():
         LaunchParams(spatial_map_resolution=50)   # below 100
     with pytest.raises(ValidationError):
         LaunchParams(max_fps=5)
+
+
+# ---- Hand-edited config overlay (issue #29) ---------------------------------
+
+def test_merge_patch_semantics():
+    from services.template_service import merge_patch
+
+    base = {"a": 1, "nest": {"keep": 1, "drop": 2}, "arr": [1, 2]}
+    patch = {"a": 9, "new": True, "nest": {"drop": None, "added": 3}, "arr": [3]}
+    assert merge_patch(base, patch) == {
+        "a": 9,
+        "new": True,
+        "nest": {"keep": 1, "added": 3},   # merged recursively, null deleted "drop"
+        "arr": [3],                         # arrays replace wholesale, per RFC 7386
+    }
+    assert base == {"a": 1, "nest": {"keep": 1, "drop": 2}, "arr": [1, 2]}  # not mutated
+
+
+def test_diff_patch_is_minimal_and_inverts_merge_patch():
+    from services.template_service import diff_patch, merge_patch
+
+    base = {"same": 1, "changed": 2, "gone": 3, "nest": {"same": 1, "changed": 2}}
+    target = {"same": 1, "changed": 9, "nest": {"same": 1, "changed": 9}, "added": 5}
+    patch = diff_patch(base, target)
+    # only what actually differs; untouched keys stay out of the patch
+    assert patch == {"changed": 9, "gone": None, "nest": {"changed": 9}, "added": 5}
+    assert merge_patch(base, patch) == target
+
+
+def test_diff_patch_of_identical_configs_is_empty():
+    from services.template_service import diff_patch
+
+    cfg = render_config_json(_spec())
+    assert diff_patch(json.loads(cfg), json.loads(cfg)) == {}
+
+
+def test_extras_overlay_custom_game_properties():
+    # The issue #29 driver: a scenario-specific gameProperties key the GUI has
+    # never heard of must reach config.json intact.
+    spec = _spec(extras={"game": {"gameProperties": {"myScenarioKey": {"tickRate": 30}}}})
+    props = spec.to_config()["game"]["gameProperties"]
+    assert props["myScenarioKey"] == {"tickRate": 30}
+    assert props["battlEye"] is True  # modelled keys still rendered alongside
+
+
+def test_extras_can_override_a_modelled_value():
+    spec = _spec(max_players=64, extras={"game": {"maxPlayers": 99}})
+    assert spec.to_config()["game"]["maxPlayers"] == 99
+
+
+def test_extras_survive_a_render_read_render_round_trip():
+    # The regression the whole overlay exists to prevent: edit in the wizard,
+    # save, and the custom key must still be there.
+    extras = {"game": {"gameProperties": {"customKey": "keep-me"}}}
+    first = render_config_json(_spec(extras=extras))
+
+    # simulate the wizard reloading the template and saving an unrelated change
+    reloaded = spec_from_config(first)
+    reloaded["name"] = "My Server"
+    reloaded["extras"] = extras
+    reloaded["max_players"] = 100
+    second = json.loads(render_config_json(TemplateSpec(**reloaded)))
+
+    assert second["game"]["gameProperties"]["customKey"] == "keep-me"
+    assert second["game"]["maxPlayers"] == 100
+
+
+def test_no_extras_renders_exactly_as_before():
+    # Templates without custom keys must be byte-identical to pre-#29 output.
+    assert "extras" not in json.loads(render_config_json(_spec()))
+
+
+def test_spec_from_config_clamps_legacy_values_but_not_when_validating():
+    # clamp=True keeps an old out-of-range template openable (#28); clamp=False
+    # is what validation uses, so a hand-typed bad value is reported instead of
+    # being silently corrected and then smuggled back in via extras (#29).
+    cfg = json.loads(render_config_json(_spec()))
+    cfg["game"]["gameProperties"]["serverMinGrassDistance"] = 10
+    raw = json.dumps(cfg)
+
+    assert spec_from_config(raw)["server_min_grass_distance"] == 50
+    assert spec_from_config(raw, clamp=False)["server_min_grass_distance"] == 10

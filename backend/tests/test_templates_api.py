@@ -215,3 +215,199 @@ def test_workshop_search_bubbles_unavailable(logged_in, monkeypatch):
 
 def test_workshop_bad_id_400(logged_in):
     assert logged_in.get("/api/workshop/asset/notanid").status_code == 400
+
+
+# ---- Hand-edited JSON: validate + reconcile (issue #29) ---------------------
+
+def _config_of(logged_in, tid):
+    return logged_in.get(f"/api/templates/{tid}/config.json").json()
+
+
+def test_validate_and_reconcile_require_auth(client):
+    assert client.post("/api/templates/validate", json={}).status_code == 401
+    assert client.post("/api/templates/reconcile", json={}).status_code == 401
+
+
+def test_validate_accepts_a_clean_config(logged_in):
+    cfg = logged_in.post("/api/templates/preview", json=_spec()).json()
+    assert logged_in.post("/api/templates/validate", json=cfg).json() == {
+        "errors": [], "warnings": []
+    }
+
+
+def test_validate_warns_on_custom_keys_without_erroring(logged_in):
+    cfg = logged_in.post("/api/templates/preview", json=_spec()).json()
+    cfg["game"]["gameProperties"]["myScenarioKey"] = 42
+    result = logged_in.post("/api/templates/validate", json=cfg).json()
+    assert result["errors"] == []
+    assert [w["path"] for w in result["warnings"]] == ["game.gameProperties.myScenarioKey"]
+
+
+def test_validate_errors_on_a_bad_modelled_value(logged_in):
+    cfg = logged_in.post("/api/templates/preview", json=_spec()).json()
+    cfg["game"]["maxPlayers"] = 9999  # le=256
+    result = logged_in.post("/api/templates/validate", json=cfg).json()
+    assert [e["path"] for e in result["errors"]] == ["game.maxPlayers"]
+
+
+def test_reconcile_splits_known_keys_into_the_spec_and_the_rest_into_extras(logged_in):
+    spec = _spec()
+    cfg = logged_in.post("/api/templates/preview", json=spec).json()
+    cfg["game"]["maxPlayers"] = 128                       # modelled -> spec field
+    cfg["game"]["gameProperties"]["customKey"] = "mine"   # unmodelled -> extras
+
+    r = logged_in.post("/api/templates/reconcile", json={"spec": spec, "config": cfg})
+    assert r.status_code == 200
+    out = r.json()["spec"]
+    assert out["max_players"] == 128
+    assert out["extras"] == {"game": {"gameProperties": {"customKey": "mine"}}}
+    # the known key flowed into the spec, so it must NOT also be an extras override
+    assert "maxPlayers" not in out["extras"].get("game", {})
+    assert [w["path"] for w in r.json()["warnings"]] == ["game.gameProperties.customKey"]
+
+
+def test_reconcile_keeps_db_only_fields_from_the_incoming_spec(logged_in):
+    # name/description/scenario_name/launch aren't in config.json; a raw edit
+    # must not wipe them.
+    spec = _spec() | {"scenario_name": "Conflict", "launch": {"max_fps": 60}}
+    cfg = logged_in.post("/api/templates/preview", json=spec).json()
+    out = logged_in.post(
+        "/api/templates/reconcile", json={"spec": spec, "config": cfg}
+    ).json()["spec"]
+    assert out["name"] == "API Server"
+    assert out["description"] == "test"
+    assert out["scenario_name"] == "Conflict"
+    assert out["launch"]["max_fps"] == 60
+
+
+def test_reconcile_preserves_mod_dependency_metadata_when_mods_are_untouched(logged_in):
+    # config.json holds a flat mods[]; taking it back verbatim would drop the
+    # dependency graph the mod manager needs (#55).
+    spec = _spec() | {"mods": [{
+        "modId": "591AF5BDA9F7CE8B", "name": "RHS", "version": "1.0",
+        "explicit": True, "dependencies": ["AAAAAAAAAAAAAAAA"], "versions": ["1.0", "0.9"],
+    }]}
+    cfg = logged_in.post("/api/templates/preview", json=spec).json()
+    cfg["game"]["gameProperties"]["customKey"] = 1  # touch something *other* than mods
+
+    out = logged_in.post(
+        "/api/templates/reconcile", json={"spec": spec, "config": cfg}
+    ).json()["spec"]
+    assert out["mods"][0]["dependencies"] == ["AAAAAAAAAAAAAAAA"]
+    assert out["mods"][0]["versions"] == ["1.0", "0.9"]
+    assert "mods" not in out["extras"].get("game", {})
+
+
+def test_reconcile_takes_the_new_mods_when_they_were_edited_by_hand(logged_in):
+    spec = _spec()
+    cfg = logged_in.post("/api/templates/preview", json=spec).json()
+    cfg["game"]["mods"] = [{"modId": "BBBBBBBBBBBBBBBB", "name": "Hand added"}]
+    out = logged_in.post(
+        "/api/templates/reconcile", json={"spec": spec, "config": cfg}
+    ).json()["spec"]
+    assert [m["modId"] for m in out["mods"]] == ["BBBBBBBBBBBBBBBB"]
+    assert "mods" not in out["extras"].get("game", {})
+
+
+def test_reconcile_rejects_an_invalid_config(logged_in):
+    spec = _spec()
+    cfg = logged_in.post("/api/templates/preview", json=spec).json()
+    cfg["game"]["scenarioId"] = ""
+    r = logged_in.post("/api/templates/reconcile", json={"spec": spec, "config": cfg})
+    assert r.status_code == 400
+    assert "scenarioId" in r.json()["detail"]
+
+
+def test_reconcile_rejects_a_malformed_payload(logged_in):
+    assert logged_in.post("/api/templates/reconcile", json={"spec": {}}).status_code == 400
+
+
+def test_custom_keys_survive_saving_and_editing_a_template(logged_in):
+    # The end-to-end regression the overlay exists to prevent (#29).
+    extras = {"game": {"gameProperties": {"customKey": "keep-me"}}}
+    tid = logged_in.post("/api/templates", json=_spec() | {"extras": extras}).json()["id"]
+
+    assert _config_of(logged_in, tid)["game"]["gameProperties"]["customKey"] == "keep-me"
+
+    # reload as the wizard does, change an unrelated field, save
+    spec = logged_in.get(f"/api/templates/{tid}").json()["spec"]
+    assert spec["extras"] == extras
+    spec["name"] = "API Server"
+    spec["max_players"] = 100
+    logged_in.put(f"/api/templates/{tid}", json=spec)
+
+    cfg = _config_of(logged_in, tid)
+    assert cfg["game"]["gameProperties"]["customKey"] == "keep-me"
+    assert cfg["game"]["maxPlayers"] == 100
+
+
+def test_templates_without_extras_are_unaffected(logged_in):
+    tid = logged_in.post("/api/templates", json=_spec()).json()["id"]
+    assert logged_in.get(f"/api/templates/{tid}").json()["spec"]["extras"] == {}
+
+
+def test_extras_paths_matches_the_editor_warnings(logged_in):
+    # The badge and the editor's warning list must never disagree about how many
+    # custom keys a template has, so both read the same server-side definition:
+    # top-most unknown paths, not leaf scalars (customBlock counts once, not twice).
+    extras = {"game": {"gameProperties": {
+        "myScenarioTickRate": 30,
+        "customBlock": {"enabled": True, "mode": "hardcore"},
+    }}}
+    tid = logged_in.post("/api/templates", json=_spec() | {"extras": extras}).json()["id"]
+
+    paths = logged_in.get(f"/api/templates/{tid}").json()["extras_paths"]
+    assert paths == ["game.gameProperties.myScenarioTickRate", "game.gameProperties.customBlock"]
+
+    cfg = _config_of(logged_in, tid)
+    warned = [w["path"] for w in logged_in.post("/api/templates/validate", json=cfg).json()["warnings"]]
+    assert warned == paths
+
+
+def test_extras_paths_is_empty_for_a_plain_template(logged_in):
+    tid = logged_in.post("/api/templates", json=_spec()).json()["id"]
+    assert logged_in.get(f"/api/templates/{tid}").json()["extras_paths"] == []
+
+
+def test_reconcile_works_before_the_template_is_named(logged_in):
+    # "Edit JSON" is reachable from step 1, but the wizard doesn't collect a name
+    # until step 4. The name isn't part of config.json, so it must not gate Apply.
+    spec = _spec() | {"name": ""}
+    cfg = logged_in.post("/api/templates/preview", json=_spec()).json()
+    cfg["game"]["gameProperties"]["customKey"] = 1
+
+    r = logged_in.post("/api/templates/reconcile", json={"spec": spec, "config": cfg})
+    assert r.status_code == 200
+    out = r.json()["spec"]
+    assert out["name"] == ""  # still the user's to fill in — not the placeholder
+    assert out["extras"] == {"game": {"gameProperties": {"customKey": 1}}}
+
+
+def test_deleting_a_managed_key_does_not_become_a_permanent_override(logged_in):
+    # Removing a key the wizard owns must not store a null that silently kills the
+    # matching GUI control; the wizard re-renders it instead.
+    spec = _spec()
+    cfg = logged_in.post("/api/templates/preview", json=spec).json()
+    del cfg["game"]["gameProperties"]["battlEye"]
+
+    out = logged_in.post(
+        "/api/templates/reconcile", json={"spec": spec, "config": cfg}
+    ).json()["spec"]
+    assert out["extras"] == {}
+    # and it comes back on the next render, still controlled by the wizard
+    rendered = logged_in.post("/api/templates/preview", json=out | {"name": "x"}).json()
+    assert rendered["game"]["gameProperties"]["battlEye"] is True
+
+
+def test_deleting_a_custom_key_removes_it_from_extras(logged_in):
+    # The other direction still works: custom keys are the user's to delete.
+    extras = {"game": {"gameProperties": {"customKey": "bye"}}}
+    spec = _spec() | {"extras": extras}
+    cfg = logged_in.post("/api/templates/preview", json=spec).json()
+    assert cfg["game"]["gameProperties"]["customKey"] == "bye"
+    del cfg["game"]["gameProperties"]["customKey"]
+
+    out = logged_in.post(
+        "/api/templates/reconcile", json={"spec": spec, "config": cfg}
+    ).json()["spec"]
+    assert out["extras"] == {}

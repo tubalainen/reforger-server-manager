@@ -1,8 +1,13 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
 import { formatBytes } from '../format'
+
+// CodeMirror is ~130 KB gzipped and only needed once someone clicks "Edit JSON",
+// which most users never will — so it gets its own chunk instead of riding along
+// in the bundle every page load (#29).
+const JsonEditor = defineAsyncComponent(() => import('../components/JsonEditor.vue'))
 import {
   MODS_FILE_FORMAT,
   extractModId,
@@ -62,6 +67,9 @@ const spec = reactive({
   rcon_password: '',
   rcon_permission: 'admin',
   rcon_max_clients: 16,
+  // Hand-edited keys the wizard doesn't model, as a merge patch the backend
+  // re-applies over every render (#29). Set by the JSON editor's Apply.
+  extras: {},
   launch: {
     max_fps: null,
     network_dynamic_simulation: null,
@@ -548,7 +556,12 @@ async function refreshPreview() {
     return
   }
   try {
-    const cfg = await api('/api/templates/preview', { method: 'POST', body: spec })
+    // The template name isn't part of config.json, but the spec model requires
+    // one — so a new template previewed before step 4 would render an error
+    // instead of a config, and "Edit JSON" would open on that error text. Send a
+    // placeholder: it changes nothing in the output (#29).
+    const body = { ...spec, name: spec.name || 'Untitled' }
+    const cfg = await api('/api/templates/preview', { method: 'POST', body })
     preview.value = JSON.stringify(cfg, null, 2)
   } catch (e) {
     preview.value = `// ${e.message}`
@@ -558,10 +571,103 @@ async function refreshPreview() {
 watch(
   () => JSON.stringify(spec),
   () => {
+    if (rawMode.value) return // don't re-render under the user's cursor mid-edit
     clearTimeout(previewTimer)
     previewTimer = setTimeout(refreshPreview, 250)
   },
 )
+
+// ---- Edit the config.json by hand (issue #29) -------------------------------
+// The preview panel doubles as the editor. Known keys typed here flow back into
+// the wizard's fields; anything the wizard doesn't model is kept as `extras` and
+// re-applied on every future save, so custom (often scenario-specific)
+// gameProperties survive.
+const rawMode = ref(false)
+const draft = ref('')
+const rawErrors = ref([])
+const rawWarnings = ref([])
+const rawSyntaxError = ref('')
+const applying = ref(false)
+let validateTimer = null
+
+// The custom-key paths the backend found, for the panel badge. Server-derived on
+// purpose: "what counts as a custom key" is the validator's call, so the badge
+// and the editor's warnings always report the same number.
+const extrasPaths = ref([])
+const extrasCount = computed(() => extrasPaths.value.length)
+
+function startRawEdit() {
+  draft.value = preview.value
+  rawErrors.value = []
+  rawWarnings.value = []
+  rawSyntaxError.value = ''
+  rawMode.value = true
+  validateDraft()
+}
+
+function cancelRawEdit() {
+  rawMode.value = false
+  clearTimeout(validateTimer)
+  refreshPreview()
+}
+
+function parseDraft() {
+  try {
+    const parsed = JSON.parse(draft.value)
+    rawSyntaxError.value = ''
+    return parsed
+  } catch (e) {
+    // CodeMirror already marks the spot; this line says what's wrong in words.
+    rawSyntaxError.value = e.message
+    return null
+  }
+}
+
+async function validateDraft() {
+  const parsed = parseDraft()
+  if (parsed === null) {
+    rawErrors.value = []
+    rawWarnings.value = []
+    return
+  }
+  try {
+    const res = await api('/api/templates/validate', { method: 'POST', body: parsed })
+    rawErrors.value = res.errors
+    rawWarnings.value = res.warnings
+  } catch (e) {
+    rawErrors.value = [{ path: '', message: e.message }]
+  }
+}
+
+watch(draft, () => {
+  clearTimeout(validateTimer)
+  validateTimer = setTimeout(validateDraft, 400)
+})
+
+const canApply = computed(
+  () => !applying.value && !rawSyntaxError.value && rawErrors.value.length === 0,
+)
+
+async function applyRawEdit() {
+  const parsed = parseDraft()
+  if (parsed === null) return
+  applying.value = true
+  error.value = ''
+  try {
+    const res = await api('/api/templates/reconcile', {
+      method: 'POST',
+      body: { spec, config: parsed },
+    })
+    Object.assign(spec, res.spec)
+    extrasPaths.value = res.warnings.map((w) => w.path)
+    rawMode.value = false
+    refreshPreview()
+  } catch (e) {
+    rawErrors.value = [{ path: '', message: e.message }]
+  } finally {
+    applying.value = false
+  }
+}
 
 // ---- Import an existing config.json (issue #35) ----------------------------
 const importing = ref(false)
@@ -650,6 +756,7 @@ onMounted(async () => {
       spec.mods = normalizeMods(t.spec.mods)
       spec.name = t.name
       spec.description = t.description
+      extrasPaths.value = t.extras_paths || []
       hydrateVersionHistories() // deliberately not awaited — fills pickers as results land
     } catch (e) {
       error.value = e.message
@@ -1284,14 +1391,75 @@ onMounted(async () => {
         </div>
       </div>
 
-      <!-- Live config.json preview -->
+      <!-- Live config.json preview, and the hand editor it turns into (#29) -->
       <div class="col-lg-5">
         <div class="card position-sticky" style="top: 1rem">
-          <div class="card-header d-flex justify-content-between align-items-center py-2">
-            <span class="small fw-semibold">config.json preview</span>
-            <span v-if="spec.scenario_id" class="badge text-bg-secondary">scenario set</span>
+          <div class="card-header d-flex justify-content-between align-items-center py-2 gap-2">
+            <span class="small fw-semibold">
+              config.json {{ rawMode ? 'editor' : 'preview' }}
+            </span>
+            <div class="d-flex align-items-center gap-2">
+              <span
+                v-if="extrasCount"
+                class="badge text-bg-info"
+                :title="'This template carries ' + extrasCount + ' hand-edited key(s) the GUI does not manage. They are preserved on every save.'"
+              >
+                {{ extrasCount }} custom key{{ extrasCount === 1 ? '' : 's' }}
+              </span>
+              <span v-if="!rawMode && spec.scenario_id" class="badge text-bg-secondary">
+                scenario set
+              </span>
+              <template v-if="rawMode">
+                <button class="btn btn-sm btn-outline-secondary" @click="cancelRawEdit">
+                  Cancel
+                </button>
+                <button class="btn btn-sm btn-primary" :disabled="!canApply" @click="applyRawEdit">
+                  {{ applying ? 'Applying…' : 'Apply' }}
+                </button>
+              </template>
+              <button
+                v-else
+                class="btn btn-sm btn-outline-primary"
+                :disabled="!spec.scenario_id"
+                title="Edit the raw config.json — including keys this GUI doesn't manage"
+                @click="startRawEdit"
+              >
+                Edit JSON
+              </button>
+            </div>
           </div>
+
+          <!-- Editing -->
+          <template v-if="rawMode">
+            <JsonEditor v-model="draft" max-height="60vh" />
+            <div class="card-body py-2 small">
+              <div v-if="rawSyntaxError" class="alert alert-danger py-1 px-2 mb-2 small">
+                <strong>Invalid JSON:</strong> {{ rawSyntaxError }}
+              </div>
+              <div v-for="e in rawErrors" :key="e.path" class="alert alert-danger py-1 px-2 mb-2 small">
+                <code v-if="e.path" class="text-danger">{{ e.path }}</code>
+                {{ e.message }}
+              </div>
+              <div v-if="rawWarnings.length" class="alert alert-warning py-1 px-2 mb-2 small">
+                <div class="fw-semibold mb-1">
+                  {{ rawWarnings.length }} key(s) this GUI doesn't manage — kept as-is:
+                </div>
+                <ul class="mb-0 ps-3">
+                  <li v-for="w in rawWarnings" :key="w.path"><code>{{ w.path }}</code></li>
+                </ul>
+              </div>
+              <p
+                v-if="!rawSyntaxError && !rawErrors.length && !rawWarnings.length"
+                class="text-secondary mb-0"
+              >
+                Valid. Custom and scenario-specific keys are allowed — they'll be preserved.
+              </p>
+            </div>
+          </template>
+
+          <!-- Previewing -->
           <pre
+            v-else
             class="card-body bg-black text-light small mb-0 rounded-bottom"
             style="max-height: 70vh; overflow: auto; white-space: pre-wrap"
           >{{ preview || '// pick a scenario to see the config' }}</pre>
