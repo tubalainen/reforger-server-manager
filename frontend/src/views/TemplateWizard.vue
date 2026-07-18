@@ -1,7 +1,7 @@
 <script setup>
-import { computed, defineAsyncComponent, onMounted, reactive, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { api } from '../api'
+import { api, clientId } from '../api'
 import { formatBytes } from '../format'
 
 // CodeMirror is ~130 KB gzipped and only needed once someone clicks "Edit JSON",
@@ -27,6 +27,36 @@ const step = ref(1)
 const steps = ['Scenario', 'Mods', 'Settings', 'Save']
 const error = ref('')
 const saving = ref(false)
+
+// ---- Edit lock (#102) ------------------------------------------------------
+// Editing an existing template takes a lock so two sessions can't race each
+// other to Save. Acquire on open, heartbeat every 30s (the lock expires after
+// 90 without one), release on leave. `locked` = someone else holds it: the
+// page stays viewable but Save is disabled — and since the heartbeat keeps
+// trying, it unlocks by itself once the other editor leaves.
+const locked = ref(false)
+let lockTimer = null
+
+async function heartbeatLock() {
+  try {
+    await api(`/api/templates/${props.id}/lock`, { method: 'POST' })
+    locked.value = false
+  } catch (e) {
+    if (e.status === 423) locked.value = true
+    // anything else (network blip): keep the current state, next beat retries
+  }
+}
+
+function releaseLock() {
+  if (!editing.value || locked.value) return
+  // keepalive lets the request outlive a closing tab; best-effort by design
+  fetch(`/api/templates/${props.id}/lock`, {
+    method: 'DELETE',
+    credentials: 'same-origin',
+    headers: { 'X-Client-Id': clientId },
+    keepalive: true,
+  })
+}
 
 // The working spec sent to the backend
 const spec = reactive({
@@ -746,6 +776,9 @@ const canNext = computed(() => {
 
 onMounted(async () => {
   if (editing.value) {
+    await heartbeatLock()
+    lockTimer = setInterval(heartbeatLock, 30000)
+    window.addEventListener('pagehide', releaseLock)
     try {
       const t = await api(`/api/templates/${props.id}`)
       const launchDefaults = { ...spec.launch }
@@ -764,6 +797,12 @@ onMounted(async () => {
   }
   refreshPreview()
 })
+
+onBeforeUnmount(() => {
+  clearInterval(lockTimer)
+  window.removeEventListener('pagehide', releaseLock)
+  releaseLock()
+})
 </script>
 
 <template>
@@ -773,6 +812,11 @@ onMounted(async () => {
       <button class="btn btn-outline-secondary btn-sm" @click="router.push({ name: 'templates' })">
         Cancel
       </button>
+    </div>
+
+    <div v-if="locked" class="alert alert-warning py-2">
+      🔒 This template is being edited in another session, so Save is disabled here.
+      You can still look around — this page unlocks by itself when the other editor leaves.
     </div>
 
     <!-- Stepper -->
@@ -1373,7 +1417,7 @@ onMounted(async () => {
             <input v-model="spec.description" class="form-control" />
           </div>
           <div class="d-flex gap-2">
-            <button class="btn btn-primary" :disabled="!canNext || saving" @click="save">
+            <button class="btn btn-primary" :disabled="!canNext || saving || locked" @click="save">
               {{ saving ? 'Saving…' : editing ? 'Save changes' : 'Save template' }}
             </button>
             <button class="btn btn-outline-secondary" @click="downloadJson">Download config.json</button>

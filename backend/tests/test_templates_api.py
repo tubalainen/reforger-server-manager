@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 
 def _spec(name="API Server"):
     return {
@@ -411,3 +413,73 @@ def test_deleting_a_custom_key_removes_it_from_extras(logged_in):
         "/api/templates/reconcile", json={"spec": spec, "config": cfg}
     ).json()["spec"]
     assert out["extras"] == {}
+
+
+# ---- Edit locks (#102) -------------------------------------------------------
+
+TAB_A = {"X-Client-Id": "tab-a"}
+TAB_B = {"X-Client-Id": "tab-b"}
+
+
+@pytest.fixture(autouse=True)
+def _clean_locks():
+    from services import edit_locks
+
+    edit_locks._locks.clear()
+    yield
+    edit_locks._locks.clear()
+
+
+def test_lock_blocks_other_sessions_writes(logged_in):
+    tid = logged_in.post("/api/templates", json=_spec("Locky")).json()["id"]
+    assert logged_in.post(f"/api/templates/{tid}/lock", headers=TAB_A).status_code == 200
+    # the holder renews (heartbeat); another tab is refused
+    assert logged_in.post(f"/api/templates/{tid}/lock", headers=TAB_A).status_code == 200
+    assert logged_in.post(f"/api/templates/{tid}/lock", headers=TAB_B).status_code == 423
+    # writes from the other tab bounce — the race is closed server-side, not
+    # just by a disabled Save button
+    assert (
+        logged_in.put(f"/api/templates/{tid}", json=_spec("Locky"), headers=TAB_B).status_code
+        == 423
+    )
+    assert logged_in.delete(f"/api/templates/{tid}", headers=TAB_B).status_code == 423
+    # the holder's own save goes through
+    assert (
+        logged_in.put(f"/api/templates/{tid}", json=_spec("Locky"), headers=TAB_A).status_code
+        == 200
+    )
+
+
+def test_list_marks_locked_only_for_other_sessions(logged_in):
+    tid = logged_in.post("/api/templates", json=_spec("Badge")).json()["id"]
+    logged_in.post(f"/api/templates/{tid}/lock", headers=TAB_A)
+    mine = {t["id"]: t for t in logged_in.get("/api/templates", headers=TAB_A).json()}
+    theirs = {t["id"]: t for t in logged_in.get("/api/templates", headers=TAB_B).json()}
+    assert mine[tid]["locked"] is False
+    assert theirs[tid]["locked"] is True
+
+
+def test_unlock_and_clear_locks(logged_in):
+    tid = logged_in.post("/api/templates", json=_spec("Clearable")).json()["id"]
+    logged_in.post(f"/api/templates/{tid}/lock", headers=TAB_A)
+    # a non-holder's release is a lenient no-op — the lock stays
+    assert logged_in.delete(f"/api/templates/{tid}/lock", headers=TAB_B).status_code == 204
+    assert logged_in.post(f"/api/templates/{tid}/lock", headers=TAB_B).status_code == 423
+    # the holder releases, freeing it for the next editor
+    assert logged_in.delete(f"/api/templates/{tid}/lock", headers=TAB_A).status_code == 204
+    assert logged_in.post(f"/api/templates/{tid}/lock", headers=TAB_B).status_code == 200
+    # the reset button force-releases everything
+    assert logged_in.post("/api/templates/locks/clear").json()["cleared"] == 1
+    assert logged_in.put(f"/api/templates/{tid}", json=_spec("Clearable"), headers=TAB_A).status_code == 200
+
+
+def test_lock_needs_client_id_and_existing_template(logged_in):
+    tid = logged_in.post("/api/templates", json=_spec("Strict")).json()["id"]
+    assert logged_in.post(f"/api/templates/{tid}/lock").status_code == 400
+    assert logged_in.post("/api/templates/999999/lock", headers=TAB_A).status_code == 404
+
+
+def test_lock_endpoints_require_auth(client):
+    assert client.post("/api/templates/1/lock", headers=TAB_A).status_code == 401
+    assert client.delete("/api/templates/1/lock", headers=TAB_A).status_code == 401
+    assert client.post("/api/templates/locks/clear").status_code == 401

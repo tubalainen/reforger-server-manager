@@ -2,17 +2,27 @@
 import json
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import ValidationError
 from sqlmodel import Session, select
 
 import auth
 from models import Template, get_engine
-from services import config_validator, instance_service, template_service
+from services import config_validator, edit_locks, instance_service, template_service
 from services.template_service import TemplateSpec
 
 router = APIRouter(prefix="/api/templates", tags=["templates"])
+
+_LOCKED_DETAIL = (
+    "This template is being edited in another session. Wait for them to finish, "
+    "or use 'Clear edit locks' on the Templates page if a lock is stuck."
+)
+
+
+def _client_id(request: Request) -> str:
+    """The per-tab id the frontend sends on every request; '' for bare curl."""
+    return request.headers.get("X-Client-Id", "").strip()
 
 
 def _out(t: Template) -> dict:
@@ -99,17 +109,60 @@ def _custom_keys_only(patch: dict, prefix: str = "") -> dict:
 
 
 @router.get("")
-async def list_templates(_user: str = Depends(auth.require_session)):
+async def list_templates(request: Request, _user: str = Depends(auth.require_session)):
+    cid = _client_id(request)
     with Session(get_engine()) as session:
         rows = session.exec(select(Template).order_by(Template.name)).all()
         return [
             {"id": t.id, "name": t.name, "description": t.description,
              "updated_at": t.updated_at.isoformat(),
+             # someone else is editing this right now (#102) — the list polls,
+             # so the badge and the disabled Edit button stay current
+             "locked": edit_locks.held_by_other(t.id, cid),
              # persistence/hiveId so the instance template-swap UI can warn when
              # the save target changes (issue #31)
              **template_service.persistence_summary(t.config_json)}
             for t in rows
         ]
+
+
+@router.post("/locks/clear")
+async def clear_edit_locks(_user: str = Depends(auth.require_session)):
+    """Force-release every edit lock (#102) — the GUI's reset button.
+
+    Meant for locks whose tab is gone (crash, closed laptop); a still-open
+    editor simply re-acquires on its next heartbeat.
+    """
+    return {"cleared": edit_locks.clear_all()}
+
+
+@router.post("/{template_id}/lock")
+async def lock_template(
+    template_id: int, request: Request, _user: str = Depends(auth.require_session)
+):
+    """Acquire — or, for the current holder, renew — a template's edit lock (#102).
+
+    The wizard calls this on open and then every 30s as a heartbeat; locks
+    expire on their own when the heartbeats stop (see services/edit_locks).
+    """
+    cid = _client_id(request)
+    if not edit_locks.valid_client_id(cid):
+        raise HTTPException(status_code=400, detail="Missing or invalid X-Client-Id header")
+    with Session(get_engine()) as session:
+        if not session.get(Template, template_id):
+            raise HTTPException(status_code=404, detail="Template not found")
+    if not edit_locks.acquire(template_id, cid):
+        raise HTTPException(status_code=423, detail=_LOCKED_DETAIL)
+    return {"ok": True}
+
+
+@router.delete("/{template_id}/lock", status_code=204)
+async def unlock_template(
+    template_id: int, request: Request, _user: str = Depends(auth.require_session)
+):
+    """Release the caller's lock. Deliberately lenient — this is fired best-effort
+    from a closing tab, so a lock that's already gone is not an error."""
+    edit_locks.release(template_id, _client_id(request))
 
 
 @router.post("", status_code=201)
@@ -143,8 +196,15 @@ async def get_template(template_id: int, _user: str = Depends(auth.require_sessi
 
 @router.put("/{template_id}")
 async def update_template(
-    template_id: int, spec: TemplateSpec, _user: str = Depends(auth.require_session)
+    template_id: int,
+    spec: TemplateSpec,
+    request: Request,
+    _user: str = Depends(auth.require_session),
 ):
+    # Enforced server-side, not just by disabling the Save button: without this
+    # two editors' last write silently wins (#102).
+    if edit_locks.held_by_other(template_id, _client_id(request)):
+        raise HTTPException(status_code=423, detail=_LOCKED_DETAIL)
     with Session(get_engine()) as session:
         t = session.get(Template, template_id)
         if not t:
@@ -170,7 +230,11 @@ async def update_template(
 
 
 @router.delete("/{template_id}", status_code=204)
-async def delete_template(template_id: int, _user: str = Depends(auth.require_session)):
+async def delete_template(
+    template_id: int, request: Request, _user: str = Depends(auth.require_session)
+):
+    if edit_locks.held_by_other(template_id, _client_id(request)):
+        raise HTTPException(status_code=423, detail=_LOCKED_DETAIL)
     with Session(get_engine()) as session:
         t = session.get(Template, template_id)
         if not t:
