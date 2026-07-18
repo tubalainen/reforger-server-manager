@@ -481,7 +481,21 @@ async function mergeModFromWorkshop(id) {
   return byModId(asset.id)
 }
 
+// Adding an id that is already on the list is harmless (the merge deduplicates)
+// but silently saying "Added" hid what happened — say it out loud instead (#106).
+function alreadyEnabledNotice(mods) {
+  const names = mods.map((m) => m.name || m.modId).join(', ')
+  return mods.length === 1
+    ? `"${names}" is already enabled — nothing was added.`
+    : `Already enabled, nothing added: ${names}.`
+}
+
 async function addModById(id) {
+  if (isEnabled(id)) {
+    modAdd.error = ''
+    modNotice.value = alreadyEnabledNotice([byModId(id)])
+    return
+  }
   modAdd.busy = true
   modAdd.error = ''
   modNotice.value = ''
@@ -507,9 +521,10 @@ async function addModsByIds(ids) {
   modAdd.busy = true
   modAdd.error = ''
   modNotice.value = ''
+  const dupes = ids.filter(isEnabled).map(byModId)
   const added = []
   const failed = []
-  for (const id of ids) {
+  for (const id of ids.filter((i) => !isEnabled(i))) {
     try {
       added.push(await mergeModFromWorkshop(id))
     } catch (e) {
@@ -517,9 +532,12 @@ async function addModsByIds(ids) {
     }
   }
   modAdd.busy = false
+  const notices = []
   if (added.length) {
-    modNotice.value = `Added ${added.length} mod(s): ${added.map((m) => m.name || m.modId).join(', ')}.`
+    notices.push(`Added ${added.length} mod(s): ${added.map((m) => m.name || m.modId).join(', ')}.`)
   }
+  if (dupes.length) notices.push(alreadyEnabledNotice(dupes))
+  modNotice.value = notices.join(' ')
   if (failed.length) {
     modAdd.error = `Could not add: ${failed.map((f) => `${f.id} (${f.msg})`).join('; ')}`
     search.q = failed.map((f) => f.id).join(', ')
@@ -790,16 +808,42 @@ async function importConfigFile(event) {
 }
 
 // ---- Save ------------------------------------------------------------------
+const savedFlash = ref(false)
+let savedFlashTimer = null
+
+async function persistTemplate() {
+  if (editing.value) {
+    await api(`/api/templates/${props.id}`, { method: 'PUT', body: spec })
+  } else {
+    await api('/api/templates', { method: 'POST', body: spec })
+  }
+}
+
 async function save() {
   error.value = ''
   saving.value = true
   try {
-    if (editing.value) {
-      await api(`/api/templates/${props.id}`, { method: 'PUT', body: spec })
-    } else {
-      await api('/api/templates', { method: 'POST', body: spec })
-    }
+    await persistTemplate()
     router.push({ name: 'templates' })
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    saving.value = false
+  }
+}
+
+// The header's save button (#107): saves where you are and stays, so a mod or
+// setting change doesn't need a trip to step 4. Only offered while editing —
+// a new template can't be saved before it's named, and that happens on step 4,
+// where the classic save-and-return button already is.
+async function saveAndStay() {
+  error.value = ''
+  saving.value = true
+  try {
+    await persistTemplate()
+    savedFlash.value = true
+    clearTimeout(savedFlashTimer)
+    savedFlashTimer = setTimeout(() => (savedFlash.value = false), 2500)
   } catch (e) {
     error.value = e.message
   } finally {
@@ -847,6 +891,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  clearTimeout(savedFlashTimer)
   clearInterval(lockTimer)
   window.removeEventListener('pagehide', releaseLock)
   releaseLock()
@@ -857,9 +902,21 @@ onBeforeUnmount(() => {
   <div class="container">
     <div class="d-flex justify-content-between align-items-center mb-3">
       <h1 class="h3 mb-0">{{ editing ? 'Edit template' : 'New template' }}</h1>
-      <button class="btn btn-outline-secondary btn-sm" @click="router.push({ name: 'templates' })">
-        Cancel
-      </button>
+      <div class="d-flex align-items-center gap-2">
+        <span v-if="savedFlash" class="text-success small">✓ Saved</span>
+        <button
+          v-if="editing && step > 1"
+          class="btn btn-primary btn-sm"
+          :disabled="saving || locked"
+          title="Save the template and keep editing"
+          @click="saveAndStay"
+        >
+          {{ saving ? 'Saving…' : 'Save changes' }}
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" @click="router.push({ name: 'templates' })">
+          Cancel
+        </button>
+      </div>
     </div>
 
     <div v-if="locked" class="alert alert-warning py-2">

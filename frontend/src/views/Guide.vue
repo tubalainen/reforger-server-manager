@@ -54,7 +54,7 @@ const faq = [
        own log says it is up (it registers with the Reforger backend and enters the online
        game state), and only then turns green ("Started and online"). If it never goes
        green, read the server log on the instance page — a missing mod or a bad config
-       shows up there.`,
+       shows up there, and error lines are highlighted in red.`,
   },
   {
     q: "Players can't find or join my server. What should I check?",
