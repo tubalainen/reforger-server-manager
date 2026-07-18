@@ -10,13 +10,15 @@ import { formatBytes } from '../format'
 const JsonEditor = defineAsyncComponent(() => import('../components/JsonEditor.vue'))
 import {
   MODS_FILE_FORMAT,
-  extractModId,
+  extractModIds,
   normalizeMods,
   requiredBy,
   stillRequiredWithoutExplicit,
   clearScenarioMods,
   mergeResolved,
   orderedMods,
+  sortModsByAdded,
+  sortModsByName,
 } from '../mods'
 
 const props = defineProps({ id: { type: [String, Number], default: null } })
@@ -304,9 +306,11 @@ const modAdd = reactive({ busy: false, error: '' })
 const modNotice = ref('')
 const modsFileInput = ref(null)
 
-// One field adds both ways: paste a Workshop id / URL to add that mod directly,
-// or type free text to search. The button label follows suit.
-const searchIsModId = computed(() => !!extractModId(search.q))
+// One field adds both ways: paste Workshop ids / URLs (several, comma-separated,
+// #104) to add them directly, or type free text to search. The button label
+// follows suit.
+const searchModIds = computed(() => extractModIds(search.q))
+const searchIsModId = computed(() => searchModIds.value.length > 0)
 
 const byModId = (id) => spec.mods.find((m) => m.modId === id)
 
@@ -461,25 +465,29 @@ function unlockAll() {
 // mod — its sub-dependencies are downloaded by the server automatically, so we
 // never resolve, add or list them here. (Scenarios/terrains are different: they
 // DO carry their dependency tree, and that path is left untouched on step 1.)
+async function mergeModFromWorkshop(id) {
+  const asset = await api(`/api/workshop/asset/${id}`)
+  const resolved = {
+    root: asset.id,
+    mods: [{
+      modId: asset.id,
+      name: asset.name,
+      versions: asset.versions || [],
+      provides_scenarios: !!asset.scenarios?.length,
+      dependencies: [], // top-level only — deps download automatically (#97)
+    }],
+  }
+  spec.mods = mergeResolved(normalizeMods(spec.mods), resolved)
+  return byModId(asset.id)
+}
+
 async function addModById(id) {
   modAdd.busy = true
   modAdd.error = ''
   modNotice.value = ''
   try {
-    const asset = await api(`/api/workshop/asset/${id}`)
-    const resolved = {
-      root: asset.id,
-      mods: [{
-        modId: asset.id,
-        name: asset.name,
-        versions: asset.versions || [],
-        provides_scenarios: !!asset.scenarios?.length,
-        dependencies: [], // top-level only — deps download automatically (#97)
-      }],
-    }
-    spec.mods = mergeResolved(normalizeMods(spec.mods), resolved)
+    const rootMod = await mergeModFromWorkshop(id)
     // Warn if the mod just added carries its own scenario (#69).
-    const rootMod = byModId(asset.id)
     if (rootMod && isExtraScenarioMod(rootMod)) {
       modNotice.value =
         `"${rootMod.name || rootMod.modId}" publishes its own scenario(s). A server runs only ` +
@@ -493,19 +501,48 @@ async function addModById(id) {
   }
 }
 
-function addModByRow(row) {
-  return addModById(row.id)
+// Several ids pasted at once (#104): add what resolves, keep what didn't in the
+// field so a typo doesn't cost the rest of the list.
+async function addModsByIds(ids) {
+  modAdd.busy = true
+  modAdd.error = ''
+  modNotice.value = ''
+  const added = []
+  const failed = []
+  for (const id of ids) {
+    try {
+      added.push(await mergeModFromWorkshop(id))
+    } catch (e) {
+      failed.push({ id, msg: e.message })
+    }
+  }
+  modAdd.busy = false
+  if (added.length) {
+    modNotice.value = `Added ${added.length} mod(s): ${added.map((m) => m.name || m.modId).join(', ')}.`
+  }
+  if (failed.length) {
+    modAdd.error = `Could not add: ${failed.map((f) => `${f.id} (${f.msg})`).join('; ')}`
+    search.q = failed.map((f) => f.id).join(', ')
+  } else {
+    search.q = ''
+  }
 }
 
-// The single Mods-step field: a pasted id / Workshop URL adds that mod directly;
-// anything else is a free-text Workshop search (#97).
+// The single Mods-step field: pasted ids / Workshop URLs add those mods
+// directly — several at once, comma-separated (#104); anything else is a
+// free-text Workshop search (#97).
 async function submitModSearch() {
   const raw = search.q.trim()
   if (!raw) return
-  const id = extractModId(raw)
-  if (id) {
-    await addModById(id)
+  const ids = extractModIds(raw)
+  if (ids.length === 1) {
+    // Single id keeps the richer one-mod flow (scenario-mod warning, #69)
+    await addModById(ids[0])
     if (!modAdd.error) search.q = ''
+    return
+  }
+  if (ids.length > 1) {
+    await addModsByIds(ids)
     return
   }
   await runSearch()
@@ -529,6 +566,17 @@ function removeMod(id) {
     return
   }
   spec.mods = spec.mods.filter((m) => m.modId !== id)
+}
+
+// Real sorts, not view toggles (#105): the list order is what config.json gets.
+function sortByName() {
+  spec.mods = sortModsByName(spec.mods)
+  modNotice.value = 'Mods sorted by name.'
+}
+
+function sortByAdded() {
+  spec.mods = sortModsByAdded(spec.mods)
+  modNotice.value = 'Mods sorted in the order they were added.'
 }
 
 function moveExplicit(id, dir) {
@@ -1017,7 +1065,7 @@ onBeforeUnmount(() => {
             <input
               v-model="search.q"
               class="form-control"
-              placeholder="Search the Workshop, or paste a mod id / Workshop URL…"
+              placeholder="Search the Workshop, or paste mod ids / Workshop URLs (comma-separated)…"
               @keyup.enter="submitModSearch"
             />
             <button
@@ -1025,7 +1073,15 @@ onBeforeUnmount(() => {
               :disabled="search.busy || modAdd.busy || !search.q.trim()"
               @click="submitModSearch"
             >
-              {{ search.busy || modAdd.busy ? 'Working…' : searchIsModId ? 'Add' : 'Search' }}
+              {{
+                search.busy || modAdd.busy
+                  ? 'Working…'
+                  : searchModIds.length > 1
+                    ? `Add ${searchModIds.length} mods`
+                    : searchIsModId
+                      ? 'Add'
+                      : 'Search'
+              }}
             </button>
           </div>
           <div v-if="search.error" class="alert alert-warning py-2 small mb-2">{{ search.error }}</div>
@@ -1066,6 +1122,18 @@ onBeforeUnmount(() => {
               </small>
             </h2>
             <div class="btn-group btn-group-sm">
+              <button
+                class="btn btn-outline-secondary"
+                :disabled="explicitMods.length < 2"
+                title="Sort the enabled mods alphabetically — this is the order saved to config.json"
+                @click="sortByName"
+              >Sort A–Z</button>
+              <button
+                class="btn btn-outline-secondary"
+                :disabled="explicitMods.length < 2"
+                title="Sort the enabled mods in the order they were added"
+                @click="sortByAdded"
+              >Sort as added</button>
               <button
                 class="btn btn-outline-secondary"
                 :disabled="!anyLocked"

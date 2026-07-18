@@ -21,6 +21,14 @@ export function extractModId(raw) {
   return m ? m[0].toUpperCase() : null
 }
 
+// Every mod id in the text, deduplicated, in the order written — so a
+// comma-separated list of ids (or several pasted Workshop URLs) can be added
+// in one go (#104).
+export function extractModIds(raw) {
+  const found = (raw || '').match(new RegExp(ASSET_ID_RE, 'g')) || []
+  return [...new Set(found.map((id) => id.toUpperCase()))]
+}
+
 export function normalizeMod(m) {
   return {
     modId: m.modId,
@@ -31,6 +39,9 @@ export function normalizeMod(m) {
     from_scenario: m.from_scenario ?? false,
     provides_scenarios: m.provides_scenarios ?? false,
     dependencies: Array.isArray(m.dependencies) ? m.dependencies.filter(Boolean) : [],
+    // When this mod was added, as a sequence number (#105). null = added before
+    // the counter existed; those sort as oldest, keeping their current order.
+    added_order: Number.isInteger(m.added_order) ? m.added_order : null,
   }
 }
 
@@ -113,6 +124,7 @@ export function clearScenarioMods(mods) {
 export function mergeResolved(current, resolved, { fromScenario = false } = {}) {
   const byId = new Map(current.map((m) => [m.modId, { ...m }]))
   const rootId = resolved.root
+  let nextOrder = nextAddedOrder(current)
   for (const rm of resolved.mods || []) {
     const isRoot = rm.modId === rootId
     const existing = byId.get(rm.modId)
@@ -133,10 +145,37 @@ export function mergeResolved(current, resolved, { fromScenario = false } = {}) 
         from_scenario: isRoot && fromScenario,
         provides_scenarios: rm.provides_scenarios ?? false,
         dependencies: rm.dependencies || [],
+        added_order: nextOrder++,
       })
     }
   }
   return [...byId.values()]
+}
+
+// The sequence number the next added mod should get (#105).
+function nextAddedOrder(mods) {
+  return Math.max(0, ...mods.map((m) => m.added_order ?? 0)) + 1
+}
+
+// ---- Sorting (#105) --------------------------------------------------------
+// Both sorts reorder the explicit tier only — dependencies always render (and
+// export) after it, per orderedMods — and both are real reorders: what you see
+// is the order config.json gets.
+
+export function sortModsByName(mods) {
+  const explicit = mods.filter((m) => m.explicit)
+  explicit.sort((a, b) =>
+    (a.name || a.modId).localeCompare(b.name || b.modId, undefined, { sensitivity: 'base' }),
+  )
+  return [...explicit, ...mods.filter((m) => !m.explicit)]
+}
+
+export function sortModsByAdded(mods) {
+  const explicit = mods.filter((m) => m.explicit)
+  // Mods from before the counter existed have no number: treat them as oldest
+  // and keep their relative order (sort is stable).
+  explicit.sort((a, b) => (a.added_order ?? 0) - (b.added_order ?? 0))
+  return [...explicit, ...mods.filter((m) => !m.explicit)]
 }
 
 // Keep explicit mods in their chosen order, dependencies after them — this is
