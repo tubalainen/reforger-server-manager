@@ -262,10 +262,12 @@ const faq = [
             with it; your own mods are kept).
           </li>
           <li class="mb-2">
-            <strong>Mods:</strong> add mods by search or by pasting a Workshop id/URL.
+            <strong>Mods:</strong> add mods by search or by pasting Workshop ids/URLs —
+            several at once, comma-separated, if you like.
             Dependencies (and their dependencies) come along automatically and are removed
             again when nothing needs them. Mods follow the latest Workshop release unless
-            you lock a version. The mod list can be exported/imported as JSON to share
+            you lock a version. The list can be sorted by name or by the order you added
+            mods, or rearranged by hand, and exported/imported as JSON to share
             between templates or friends. Badges show each mod's role:
             <em>scenario</em> (provides the scenario), <em>scenario dependency</em>
             (needed for the scenario to work), <em>addon</em> (an extra you chose),

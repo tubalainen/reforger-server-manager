@@ -483,3 +483,18 @@ def test_lock_endpoints_require_auth(client):
     assert client.post("/api/templates/1/lock", headers=TAB_A).status_code == 401
     assert client.delete("/api/templates/1/lock", headers=TAB_A).status_code == 401
     assert client.post("/api/templates/locks/clear").status_code == 401
+
+
+def test_mod_added_order_roundtrips_but_stays_out_of_config(logged_in):
+    # The wizard's "sort as added" needs the counter back on edit (#105), but
+    # config.json mods stay the flat modId/name/version the server expects.
+    spec = _spec("Ordered")
+    spec["mods"] = [
+        {"modId": "591AF5BDA9F7CE8B", "name": "RHS", "added_order": 2},
+        {"modId": "1337C0DE5DABBEEF", "name": "Alpha", "added_order": 1},
+    ]
+    tid = logged_in.post("/api/templates", json=spec).json()["id"]
+    got = logged_in.get(f"/api/templates/{tid}").json()["spec"]["mods"]
+    assert [m["added_order"] for m in got] == [2, 1]
+    cfg = json.loads(logged_in.get(f"/api/templates/{tid}/config.json").text)
+    assert all("added_order" not in m for m in cfg["game"]["mods"])

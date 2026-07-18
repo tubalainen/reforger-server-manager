@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   clearScenarioMods,
   extractModId,
+  extractModIds,
   mergeResolved,
   neededSet,
   normalizeMod,
@@ -10,6 +11,8 @@ import {
   orphansAfterRemoving,
   pruneOrphans,
   requiredBy,
+  sortModsByAdded,
+  sortModsByName,
   stillRequiredWithoutExplicit,
 } from '../mods'
 
@@ -155,5 +158,93 @@ describe('mergeResolved', () => {
 describe('orderedMods', () => {
   it('puts explicit mods first — config.json mod order is load order', () => {
     expect(orderedMods(graph()).map((m) => m.modId)).toEqual(['A', 'D', 'B', 'C'])
+  })
+})
+
+describe('extractModIds (#104)', () => {
+  it('pulls every id out of a comma-separated list, upper-cased', () => {
+    expect(extractModIds('1337C0DE5DABBEEF, badc0dedabbeda5e, 595F2BF2F44836FB')).toEqual([
+      '1337C0DE5DABBEEF',
+      'BADC0DEDABBEDA5E',
+      '595F2BF2F44836FB',
+    ])
+  })
+
+  it('copes with mixed URLs and ids, and deduplicates', () => {
+    expect(
+      extractModIds(
+        'https://reforger.armaplatform.com/workshop/59D64ADD6FC59CBF-UH-60, 1337C0DE5DABBEEF, 59d64add6fc59cbf',
+      ),
+    ).toEqual(['59D64ADD6FC59CBF', '1337C0DE5DABBEEF'])
+  })
+
+  it('returns [] for free-text so the caller searches instead', () => {
+    expect(extractModIds('Project Redline')).toEqual([])
+    expect(extractModIds('')).toEqual([])
+    expect(extractModIds(null)).toEqual([])
+  })
+})
+
+describe('added_order (#105)', () => {
+  it('stamps new mods with an increasing counter on merge', () => {
+    let mods = mergeResolved([], { root: 'A', mods: [{ modId: 'A' }] })
+    mods = mergeResolved(mods, { root: 'B', mods: [{ modId: 'B' }] })
+    const byId = Object.fromEntries(mods.map((m) => [m.modId, m.added_order]))
+    expect(byId.A).toBe(1)
+    expect(byId.B).toBe(2)
+  })
+
+  it('never renumbers a mod that is merged again', () => {
+    let mods = mergeResolved([], { root: 'A', mods: [{ modId: 'A' }] })
+    mods = mergeResolved(mods, { root: 'B', mods: [{ modId: 'B' }] })
+    mods = mergeResolved(mods, { root: 'A', mods: [{ modId: 'A' }] }) // re-add
+    expect(mods.find((m) => m.modId === 'A').added_order).toBe(1)
+  })
+
+  it('counts on from the highest existing number, ignoring null legacy rows', () => {
+    const current = [mod('OLD', { added_order: null }), mod('X', { added_order: 7 })]
+    const merged = mergeResolved(current, { root: 'Y', mods: [{ modId: 'Y' }] })
+    expect(merged.find((m) => m.modId === 'Y').added_order).toBe(8)
+  })
+
+  it('survives normalizeMod, so it round-trips through save and JSON export', () => {
+    expect(normalizeMod({ modId: 'A', added_order: 3 }).added_order).toBe(3)
+    expect(normalizeMod({ modId: 'A' }).added_order).toBe(null)
+    expect(normalizeMod({ modId: 'A', added_order: 'x' }).added_order).toBe(null)
+  })
+})
+
+describe('sorting (#105)', () => {
+  const list = () => [
+    mod('B1', { name: 'bravo', explicit: true, added_order: 2 }),
+    mod('A1', { name: 'Alpha', explicit: true, added_order: 3 }),
+    mod('C1', { name: 'Charlie', explicit: true, added_order: 1 }),
+    mod('D1', { name: 'zz-dep', explicit: false }),
+  ]
+
+  it('sortModsByName orders the explicit tier case-insensitively, deps stay after', () => {
+    expect(sortModsByName(list()).map((m) => m.modId)).toEqual(['A1', 'B1', 'C1', 'D1'])
+  })
+
+  it('sortModsByName falls back to the modId when a mod has no name yet', () => {
+    const mods = [
+      mod('BBBBBBBBBBBBBBBB', { name: null, explicit: true }),
+      mod('A1', { name: 'zulu', explicit: true }),
+    ]
+    expect(sortModsByName(mods).map((m) => m.modId)).toEqual(['BBBBBBBBBBBBBBBB', 'A1'])
+  })
+
+  it('sortModsByAdded restores the add order after a name sort', () => {
+    const sorted = sortModsByAdded(sortModsByName(list()))
+    expect(sorted.map((m) => m.modId)).toEqual(['C1', 'B1', 'A1', 'D1'])
+  })
+
+  it('sortModsByAdded keeps legacy un-numbered mods first, in their current order', () => {
+    const mods = [
+      mod('N1', { added_order: 5, explicit: true }),
+      mod('L1', { added_order: null, explicit: true }),
+      mod('L2', { added_order: null, explicit: true }),
+    ]
+    expect(sortModsByAdded(mods).map((m) => m.modId)).toEqual(['L1', 'L2', 'N1'])
   })
 })

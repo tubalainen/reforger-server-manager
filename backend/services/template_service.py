@@ -69,6 +69,10 @@ class ModEntry(BaseModel):
     # This asset publishes its own scenario(s). Used to flag a mod that would
     # add a *second* scenario as a plain addon (#69) — a server runs only one.
     provides_scenarios: bool = False
+    # Sequence number of when the user added the mod, so the wizard's "sort as
+    # added" can restore that order after a name sort (#105). None = added
+    # before the counter existed (sorts as oldest, keeping current order).
+    added_order: int | None = None
 
 
 class LaunchParams(BaseModel):
