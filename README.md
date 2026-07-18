@@ -190,6 +190,13 @@ to an unprivileged user (uid 1000).
 By default the GUI binds to `127.0.0.1` — put a reverse proxy (nginx/Caddy) with TLS in
 front for VPS use, or set `WEB_BIND=0.0.0.0` at your own risk (login is still required).
 
+Several people can use the GUI at once: lists refresh every few seconds, and editing a
+server template locks it against the other sessions until that editor leaves (stuck
+locks expire on their own, or use **Clear edit locks** on the Templates page). This
+works over plain HTTP polling, so no extra nginx/Cloudflare-tunnel configuration is
+needed — only the live server-log and download-progress views use WebSockets, which
+both pass through by default.
+
 > **Security note:** the manager mounts `/var/run/docker.sock`, which is root-equivalent
 > on the host — that is what lets it create server containers. Treat the web GUI
 > credentials accordingly and firewall the port.

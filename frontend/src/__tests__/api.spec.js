@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { ApiError, errorMessage } from '../api'
+import { ApiError, api, clientId, errorMessage } from '../api'
 
 describe('errorMessage', () => {
   it('reads a FastAPI 422 instead of showing "[object Object]" (#85)', () => {
@@ -33,6 +33,20 @@ describe('errorMessage', () => {
 
   it('copes with a malformed detail entry rather than throwing', () => {
     expect(errorMessage([{}], 422)).toBe('invalid value')
+  })
+})
+
+describe('clientId', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('rides along on every request so the backend can tell tabs apart (#102)', async () => {
+    expect(clientId).toBeTruthy()
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({}) })
+    vi.stubGlobal('fetch', fetchMock)
+    await api('/api/templates')
+    await api('/api/templates/1/lock', { method: 'POST' })
+    const headers = fetchMock.mock.calls.map(([, init]) => init.headers['X-Client-Id'])
+    expect(headers).toEqual([clientId, clientId]) // present and stable
   })
 })
 

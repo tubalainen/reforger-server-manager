@@ -23,11 +23,39 @@ export class ApiError extends Error {
   }
 }
 
+// Per-tab identity for template edit locks (#102), sent on every request.
+// sessionStorage scopes it to the tab — two tabs of the same login are still
+// two editors racing each other, which is exactly what the lock protects
+// against. crypto.randomUUID needs a secure context, which a plain-HTTP LAN
+// deployment (WEB_BIND=0.0.0.0) is not, hence the getRandomValues fallback.
+function newClientId() {
+  if (crypto.randomUUID) return crypto.randomUUID()
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) =>
+    b.toString(16).padStart(2, '0'),
+  ).join('')
+}
+
+export const clientId = (() => {
+  try {
+    let id = sessionStorage.getItem('rsm_client_id')
+    if (!id) {
+      id = newClientId()
+      sessionStorage.setItem('rsm_client_id', id)
+    }
+    return id
+  } catch {
+    return newClientId() // no sessionStorage (tests); a fresh id per load is fine
+  }
+})()
+
 export async function api(path, { method = 'GET', body } = {}) {
   const res = await fetch(path, {
     method,
     credentials: 'same-origin',
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
+    headers: {
+      'X-Client-Id': clientId,
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+    },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
   if (!res.ok) {
