@@ -60,10 +60,11 @@ async def lifespan(_app: FastAPI):
         monitor_task.cancel()
         # Graceful shutdown (#113): stop every running game server and remove
         # the sibling containers, so nothing keeps the compose network 'in use'
-        # and `docker compose down` can remove it. The instances that were
-        # running are recorded and resumed on the next boot (see _crash_monitor).
-        # Needs the stop_grace_period set in docker-compose.yaml — with the
-        # default 10s compose would SIGKILL us mid-stop.
+        # and `docker compose down` can remove it. desired_state stays 'running',
+        # so reconcile_and_recover brings the auto_start ones back on the next
+        # boot (see _crash_monitor). Needs the stop_grace_period set in
+        # docker-compose.yaml — with the default 10s compose would SIGKILL us
+        # mid-stop.
         await asyncio.to_thread(instance_service.shutdown_all_instances)
 
 
@@ -72,7 +73,6 @@ async def _crash_monitor():
     prune old logs (hourly). Waits the daemon out rather than giving up on it."""
     ticks = 0
     steamcmd_cleaned = False
-    resumed = False
     while True:
         try:
             if await asyncio.to_thread(docker_service.ping):
@@ -82,10 +82,8 @@ async def _crash_monitor():
                         docker_service.remove_exited, docker_service.ROLE_STEAMCMD
                     )
                     steamcmd_cleaned = True
-                if not resumed:
-                    # Restart the servers the previous shutdown stopped (#113).
-                    await asyncio.to_thread(instance_service.resume_interrupted_instances)
-                    resumed = True
+                # Recover crashed servers, and bring auto_start ones back after a
+                # reboot / the #113 shutdown that removed their containers.
                 await asyncio.to_thread(instance_service.reconcile_and_recover)
                 await asyncio.to_thread(instance_service.apply_scheduled_restarts)
                 if ticks % 240 == 0:  # ~hourly at a 15s cadence

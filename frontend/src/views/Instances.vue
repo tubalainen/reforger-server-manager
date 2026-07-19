@@ -198,6 +198,13 @@ onUnmounted(() => clearInterval(poll))
               <a href="#server-files">get them below</a> before starting.
             </div>
 
+            <!-- Template edited since this server started: its config is stale
+                 until a restart (#116). -->
+            <div v-if="inst.template_changed" class="alert alert-warning py-1 px-2 small mb-2">
+              ⚠️ Template changed —
+              <a href="#" @click.prevent="action(inst, 'restart')">restart</a> to apply.
+            </div>
+
             <div class="d-flex gap-2 flex-wrap">
               <button
                 v-if="inst.status !== 'running'"

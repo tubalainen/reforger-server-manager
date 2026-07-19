@@ -790,11 +790,9 @@ class _FakeLifecycleContainer:
         self.removed = True
 
 
-def test_shutdown_all_instances_stops_records_and_removes(tmp_path, monkeypatch):
-    import config
+def test_shutdown_all_instances_stops_running_and_removes_all(monkeypatch):
     from services import docker_service
 
-    monkeypatch.setattr(config.settings, "data_dir", str(tmp_path))
     monkeypatch.setattr(docker_service, "ping", lambda: True)
     running = _FakeLifecycleContainer("running")
     exited = _FakeLifecycleContainer("exited")
@@ -803,38 +801,102 @@ def test_shutdown_all_instances_stops_records_and_removes(tmp_path, monkeypatch)
 
     instance_service.shutdown_all_instances()
 
-    # the running server was stopped gracefully; BOTH containers were removed
-    # so no endpoint keeps the compose network 'in use' (#113)
+    # the running server is stopped gracefully; BOTH containers are removed so
+    # no endpoint keeps the compose network 'in use' (#113). desired_state is
+    # left alone, so reconcile brings the auto_start ones back next boot (#115).
     assert running.stopped and running.removed
     assert not exited.stopped and exited.removed
-    # ...and only the running one is recorded for resume on next boot
-    assert json.loads((tmp_path / "resume_instances.json").read_text()) == [1]
 
 
-def test_resume_interrupted_instances_starts_recorded_and_clears(tmp_path, monkeypatch):
-    import config
+# --------------------------------------------------------------------------- #
+# #115: the two toggles must keep distinct meanings — a reboot is not a crash
+# --------------------------------------------------------------------------- #
 
-    monkeypatch.setattr(config.settings, "data_dir", str(tmp_path))
-    (tmp_path / "resume_instances.json").write_text("[1, 2]")
+def _reconcile_harness(monkeypatch, instances, statuses):
+    """Wire reconcile_and_recover against fake DB instances + container statuses.
+
+    `statuses` maps instance id -> the current container status reconcile sees;
+    returns the list of instance ids that got (re)started.
+    """
+    from services import docker_service
+
+    monkeypatch.setattr(docker_service, "ping", lambda: True)
+    monkeypatch.setattr(instance_service, "_all_instances", lambda _s: instances)
+    monkeypatch.setattr(instance_service, "server_files_ready", lambda _b: True)
+    monkeypatch.setattr(instance_service, "container_status",
+                        lambda iid, *a, **k: statuses.get(iid, "absent"))
     started = []
-    monkeypatch.setattr(instance_service, "start_instance",
-                        lambda iid: started.append(iid))
-
-    instance_service.resume_interrupted_instances()
-
-    assert started == [1, 2]
-    # the record is consumed: a crash loop must not replay it forever
-    assert not (tmp_path / "resume_instances.json").exists()
-    instance_service.resume_interrupted_instances()
-    assert started == [1, 2]
+    monkeypatch.setattr(instance_service, "start_instance", lambda iid: started.append(iid))
+    # a clean slate for the crash-detection memory each test
+    monkeypatch.setattr(instance_service, "_seen_running", set())
+    return started
 
 
-def test_resume_interrupted_instances_tolerates_garbage(tmp_path, monkeypatch):
-    import config
+def test_reboot_does_not_restart_a_no_autostart_server(monkeypatch):
+    # auto_restart on, auto_start OFF: after a reboot the manager restarts fresh,
+    # has never seen this server running, so it must NOT bring it back (#115).
+    inst = _inst(id=1, auto_restart=True, auto_start=False, desired_state="running")
+    started = _reconcile_harness(monkeypatch, [inst], {1: "exited"})
 
-    monkeypatch.setattr(config.settings, "data_dir", str(tmp_path))
-    (tmp_path / "resume_instances.json").write_text("not json")
+    instance_service.reconcile_and_recover()
 
-    instance_service.resume_interrupted_instances()  # must not raise
+    assert started == []  # the bug was that it started here
 
-    assert not (tmp_path / "resume_instances.json").exists()
+
+def test_autostart_server_comes_back_after_reboot(monkeypatch):
+    inst = _inst(id=1, auto_restart=False, auto_start=True, desired_state="running")
+    started = _reconcile_harness(monkeypatch, [inst], {1: "absent"})
+
+    instance_service.reconcile_and_recover()
+
+    assert started == [1]
+
+
+def test_crash_while_running_is_recovered_by_autorestart(monkeypatch):
+    # auto_restart on, auto_start OFF: once the manager has SEEN it running, a
+    # later exit is a genuine crash and must be recovered.
+    inst = _inst(id=1, auto_restart=True, auto_start=False, desired_state="running")
+    started = _reconcile_harness(monkeypatch, [inst], {1: "running"})
+
+    instance_service.reconcile_and_recover()      # sees it running -> remembers it
+    assert started == []
+    # now it crashes; _seen_running still holds id 1, so this is a real crash
+    monkeypatch.setattr(instance_service, "container_status", lambda iid, *a, **k: "exited")
+    instance_service.reconcile_and_recover()
+
+    assert started == [1]
+
+
+def test_stopped_server_is_never_recovered(monkeypatch):
+    inst = _inst(id=1, auto_restart=True, auto_start=True, desired_state="stopped")
+    started = _reconcile_harness(monkeypatch, [inst], {1: "exited"})
+
+    instance_service.reconcile_and_recover()
+
+    assert started == []
+
+
+# --------------------------------------------------------------------------- #
+# #116: warn when a running server's template changed since it started
+# --------------------------------------------------------------------------- #
+
+def test_template_changed_since_start(monkeypatch):
+    from datetime import timedelta
+
+    class _C:
+        def __init__(self, started_iso):
+            self.attrs = {"State": {"StartedAt": started_iso}}
+
+    start = datetime(2026, 7, 19, 12, 0, 0, tzinfo=UTC)
+    container = _C("2026-07-19T12:00:00.000000000Z")
+
+    changed = instance_service._template_changed_since_start
+    # template edited AFTER the server started -> stale, warn
+    assert changed(container, start + timedelta(minutes=5)) is True
+    # template last edited BEFORE the start -> current, no warning
+    assert changed(container, start - timedelta(minutes=5)) is False
+    # naive (SQLite) timestamps are treated as UTC, not rejected
+    assert changed(container, (start + timedelta(minutes=5)).replace(tzinfo=None)) is True
+    # missing pieces never claim a change
+    assert changed(None, start) is False
+    assert changed(container, None) is False
