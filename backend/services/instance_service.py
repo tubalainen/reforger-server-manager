@@ -1508,10 +1508,15 @@ def shutdown_all_instances() -> None:
         except DockerException as exc:
             logger.warning("Stop of %s failed: %s", container.name, exc)
 
-    # Parallel: several servers × 30s each serially would blow through the
-    # compose stop_grace_period and get the manager SIGKILLed mid-cleanup.
+    # Stop every running server AT ONCE, not one after another: serial stops
+    # (up to 30s each) would blow through the compose stop_grace_period on a
+    # multi-server host and get the manager SIGKILLed with servers still on the
+    # network (#113). Concurrency is capped below docker-py's connection pool
+    # (25) so the stop calls don't queue on a full pool; 16 covers any realistic
+    # host in a single ~30s window, and even more servers just take one extra
+    # window — still well inside the 2m grace period.
     if running:
-        with ThreadPoolExecutor(max_workers=min(8, len(running))) as pool:
+        with ThreadPoolExecutor(max_workers=min(16, len(running))) as pool:
             list(pool.map(_stop, running))
     for container in containers.values():
         try:

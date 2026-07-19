@@ -776,10 +776,10 @@ def test_container_network_ok_never_destroys_what_it_cannot_verify(monkeypatch):
 
 
 class _FakeLifecycleContainer:
-    def __init__(self, status):
+    def __init__(self, status, cid=None):
         self.status = status
-        self.id = f"cid-{status}"
-        self.name = f"c-{status}"
+        self.id = cid or f"cid-{status}"
+        self.name = self.id
         self.stopped = False
         self.removed = False
 
@@ -806,6 +806,22 @@ def test_shutdown_all_instances_stops_running_and_removes_all(monkeypatch):
     # left alone, so reconcile brings the auto_start ones back next boot (#115).
     assert running.stopped and running.removed
     assert not exited.stopped and exited.removed
+
+
+def test_shutdown_handles_many_running_instances(monkeypatch):
+    # The reporter runs several servers at once: EVERY running one must be
+    # stopped and EVERY container removed, or a leftover keeps the network in
+    # use and `docker compose down` fails again (#113).
+    from services import docker_service
+
+    monkeypatch.setattr(docker_service, "ping", lambda: True)
+    servers = {i: _FakeLifecycleContainer("running", cid=f"inst-{i}") for i in range(1, 6)}
+    monkeypatch.setattr(docker_service, "instance_containers", lambda: servers)
+
+    instance_service.shutdown_all_instances()
+
+    assert all(c.stopped for c in servers.values())
+    assert all(c.removed for c in servers.values())
 
 
 # --------------------------------------------------------------------------- #
