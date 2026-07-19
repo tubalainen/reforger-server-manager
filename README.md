@@ -21,6 +21,38 @@ by soda3x — reimagined as a Dockerized web application.
 
 Docker image: `ghcr.io/tubalainen/reforger-server-manager:latest`
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/images/01-server-templates.png" alt="The Server Templates list" width="820"><br>
+  <em>The template library — each template bundles a scenario, its mods and every server
+  setting. Edit one, download its <code>config.json</code>, or delete it.</em>
+</p>
+
+<p align="center">
+  <img src="docs/images/02-template-scenario.png" alt="Editing a template: the Scenario step" width="820"><br>
+  <em>Editing a template: pick a scenario straight from the Workshop, with a live
+  <code>config.json</code> preview beside every step.</em>
+</p>
+
+<p align="center">
+  <img src="docs/images/03-template-mods.png" alt="The mod manager" width="820"><br>
+  <em>The mod manager: enable mods on top of the scenario — dependencies are pulled in and
+  labelled automatically, and any mod can be locked to a specific version.</em>
+</p>
+
+<p align="center">
+  <img src="docs/images/04-template-settings.png" alt="The template settings step" width="820"><br>
+  <em>Every server setting in one place — player limit, view distances, VON, persistence,
+  RCON and the full set of engine launch parameters.</em>
+</p>
+
+<p align="center">
+  <img src="docs/images/05-instance-detail.png" alt="A running server instance" width="820"><br>
+  <em>A running server instance: live status (players, FPS, CPU, memory), scheduled daily
+  restarts, and the streaming server log.</em>
+</p>
+
 ## Features
 
 - [x] Single `docker-compose.yaml` + single `.env` deployment, built-in login
