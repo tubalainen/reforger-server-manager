@@ -9,7 +9,13 @@ from sqlmodel import Session, select
 
 import auth
 from models import Template, get_engine
-from services import config_validator, edit_locks, instance_service, template_service
+from services import (
+    change_log,
+    config_validator,
+    edit_locks,
+    instance_service,
+    template_service,
+)
 from services.template_service import TemplateSpec
 
 router = APIRouter(prefix="/api/templates", tags=["templates"])
@@ -180,6 +186,8 @@ async def create_template(spec: TemplateSpec, _user: str = Depends(auth.require_
             extras_json=json.dumps(spec.extras),
         )
         session.add(t)
+        session.flush()  # assign the id before the log references it
+        change_log.record_creation(session, t)  # start the change log (#112)
         session.commit()
         session.refresh(t)
         return _out(t)
@@ -214,6 +222,7 @@ async def update_template(
         ).first()
         if clash:
             raise HTTPException(status_code=409, detail=f"A template named '{spec.name}' already exists")
+        before = change_log.snapshot(t)  # capture before mutating (#112)
         t.name = spec.name
         t.description = spec.description
         t.config_json = template_service.render_config_json(spec)
@@ -223,6 +232,8 @@ async def update_template(
         t.mods_json = _mods_json(spec)
         t.extras_json = json.dumps(spec.extras)
         t.updated_at = datetime.now(UTC)
+        # Log what this edit changed; writes nothing when nothing changed (#112).
+        change_log.record_update(session, t.id, before, change_log.snapshot(t), t.updated_at)
         session.add(t)
         session.commit()
         session.refresh(t)
@@ -251,8 +262,23 @@ async def delete_template(
                     f"{listed}. Repoint or delete them first."
                 ),
             )
+        change_log.delete_for_template(session, template_id)  # the log dies with it (#112)
         session.delete(t)
         session.commit()
+
+
+@router.get("/{template_id}/changelog")
+async def template_changelog(
+    template_id: int, q: str | None = None, _user: str = Depends(auth.require_session)
+):
+    """The template's change log, newest event first, optionally filtered by `q`.
+
+    Read-only — the log is append-only and has no edit/delete endpoint (#112).
+    """
+    with Session(get_engine()) as session:
+        if not session.get(Template, template_id):
+            raise HTTPException(status_code=404, detail="Template not found")
+        return change_log.entries(session, template_id, q)
 
 
 @router.get("/{template_id}/config.json")
