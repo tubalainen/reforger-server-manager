@@ -2,7 +2,6 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
-import { formatDateTime } from '../format'
 
 const router = useRouter()
 const templates = ref([])
@@ -49,7 +48,8 @@ const logGroups = computed(() => {
   for (const e of filteredLog.value) {
     const last = groups[groups.length - 1]
     if (last && last.at === e.changed_at) last.items.push(e)
-    else groups.push({ at: e.changed_at, items: [e] })
+    // `display` is pre-formatted server-side in the manager's timezone (#112).
+    else groups.push({ at: e.changed_at, display: e.display, items: [e] })
   }
   return groups
 })
@@ -61,7 +61,6 @@ const CATEGORY = {
   setting: { label: 'setting', cls: 'text-bg-info' },
 }
 const catBadge = (c) => CATEGORY[c] || { label: c, cls: 'text-bg-secondary' }
-const fmtTime = formatDateTime
 
 async function load() {
   try {
@@ -205,7 +204,7 @@ onUnmounted(() => clearInterval(poll))
             </div>
             <div v-else class="d-flex flex-column gap-3">
               <div v-for="g in logGroups" :key="g.at + g.items[0].id">
-                <div class="small text-secondary border-bottom pb-1 mb-2">{{ fmtTime(g.at) }}</div>
+                <div class="small text-secondary border-bottom pb-1 mb-2">{{ g.display }}</div>
                 <ul class="list-unstyled mb-0 d-flex flex-column gap-1">
                   <li v-for="e in g.items" :key="e.id" class="d-flex align-items-start gap-2">
                     <span class="badge mt-1" :class="catBadge(e.category).cls" style="min-width: 4.5rem">

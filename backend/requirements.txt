@@ -8,3 +8,7 @@ itsdangerous~=2.2.0
 sqlmodel~=0.0.39
 docker~=7.1.0
 httpx~=0.28.1
+# IANA timezone database for zoneinfo, so TZ=Europe/Stockholm resolves without
+# relying on OS tz files (the slim image has none) — used to show change-log
+# timestamps in the manager's configured timezone (#112).
+tzdata~=2025.2
