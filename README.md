@@ -48,9 +48,10 @@ Docker image: `ghcr.io/tubalainen/reforger-server-manager:latest`
 </p>
 
 <p align="center">
-  <img src="docs/images/05-instance-detail.png" alt="A running server instance" width="820"><br>
-  <em>A running server instance: live status (players, FPS, CPU, memory), scheduled daily
-  restarts, and the streaming server log.</em>
+  <img src="docs/images/05-instance-detail.png" alt="The Server Instances page" width="820"><br>
+  <em>The Server Instances page: a live status bar and per-instance controls (start/stop,
+  restart, logs) up top, and one-click SteamCMD server-file downloads and the runtime-image
+  pull below.</em>
 </p>
 
 ## Features
