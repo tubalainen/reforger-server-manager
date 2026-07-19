@@ -66,6 +66,23 @@ class Instance(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_utcnow)
 
 
+class TemplateChange(SQLModel, table=True):
+    """One immutable audit line in a template's change log (#112).
+
+    Append-only: written by the template create/update handlers, read by the
+    change-log view, and removed only when the template itself is deleted.
+    Nothing in the API mutates or deletes an individual row, so the log can't
+    be altered or trimmed by the user. Rows from one save event share a
+    changed_at so the UI can group them.
+    """
+
+    id: int | None = Field(default=None, primary_key=True)
+    template_id: int = Field(index=True, foreign_key="template.id")
+    changed_at: datetime = Field(default_factory=_utcnow, index=True)
+    category: str = "setting"  # meta | scenario | mod | setting
+    summary: str = ""
+
+
 _engine = None
 
 

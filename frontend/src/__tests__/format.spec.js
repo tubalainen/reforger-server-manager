@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatBytes, formatTimestamp, formatUptime } from '../format'
+import { formatBytes, formatDateTime, formatTimestamp, formatUptime } from '../format'
 
 describe('formatBytes', () => {
   it('has a GB tier — a baked mod folder is not "3242.5 MB"', () => {
@@ -45,5 +45,17 @@ describe('formatTimestamp', () => {
     expect(formatTimestamp(null)).toBe('')
     expect(formatTimestamp(0)).toBe('')
     expect(formatTimestamp(1768000000)).not.toBe('')
+  })
+})
+
+describe('formatDateTime', () => {
+  it('formats an ISO string and never shows "Invalid Date" (#112)', () => {
+    expect(formatDateTime('')).toBe('')
+    expect(formatDateTime(null)).toBe('')
+    // an unparseable value yields '' rather than the literal "Invalid Date"
+    expect(formatDateTime('not-a-date')).toBe('')
+    const out = formatDateTime('2026-07-19T16:39:05+00:00')
+    expect(out).not.toBe('')
+    expect(out).not.toMatch(/Invalid/)
   })
 })

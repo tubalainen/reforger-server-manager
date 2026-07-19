@@ -47,6 +47,7 @@ def _clean_db():
 
     models.init_db()
     with Session(models.get_engine()) as session:
+        session.exec(delete(models.TemplateChange))
         session.exec(delete(models.Template))
         session.exec(delete(models.Instance))
         session.commit()
