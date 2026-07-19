@@ -1,5 +1,30 @@
 """Per-template change log (#112)."""
+from datetime import UTC, datetime
+
 from services import change_log
+
+
+def test_format_local_uses_the_configured_timezone(monkeypatch):
+    # 14:42 UTC on a summer day is 16:42 in Stockholm (CEST, UTC+2), shown
+    # 24-hour and yyyy-mm-dd — the standard the user asked for.
+    when = datetime(2026, 7, 19, 14, 42, 5, tzinfo=UTC)
+    monkeypatch.setenv("TZ", "Europe/Stockholm")
+    assert change_log.format_local(when).startswith("2026-07-19 16:42:05")
+
+    # A different zone shifts the wall-clock time but keeps the syntax.
+    monkeypatch.setenv("TZ", "America/New_York")  # UTC-4 in summer
+    assert change_log.format_local(when).startswith("2026-07-19 10:42:05")
+
+    # No TZ set: still 24-hour yyyy-mm-dd (European syntax), in the process zone.
+    monkeypatch.delenv("TZ", raising=False)
+    out = change_log.format_local(when)
+    assert out[:11] == "2026-07-19 " and out[13] == ":"
+
+
+def test_format_local_falls_back_when_tz_is_bogus(monkeypatch):
+    monkeypatch.setenv("TZ", "Not/AZone")
+    out = change_log.format_local(datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC))
+    assert out.startswith("2026-01-0")  # didn't crash; still ISO-formatted
 
 
 def _snap(name="T", description="", scenario_name="", **game):
@@ -80,6 +105,8 @@ def test_changelog_starts_at_creation(logged_in):
     summaries = [e["summary"] for e in log]
     assert "Template created" in summaries
     assert any("Added mod 'RHS'" in s for s in summaries)
+    # every entry carries a manager-timezone display string (#112)
+    assert all(e["display"][:2] == "20" and ":" in e["display"] for e in log)
 
 
 def test_changelog_records_edits_newest_first(logged_in):

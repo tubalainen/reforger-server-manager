@@ -36,10 +36,3 @@ export function formatUptime(seconds) {
 export function formatTimestamp(ts) {
   return ts ? new Date(ts * 1000).toLocaleString() : ''
 }
-
-/** An ISO-8601 datetime string in the viewer's locale; '' when absent/invalid. */
-export function formatDateTime(iso) {
-  if (!iso) return ''
-  const d = new Date(iso)
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleString()
-}

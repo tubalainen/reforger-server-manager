@@ -12,7 +12,9 @@ The rendered config already carries every setting plus game.mods and
 game.scenarioId, so one comparison of two snapshots covers mods, the scenario
 and all settings; name/description live outside config and are compared directly.
 """
+import os
 from datetime import UTC
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlmodel import Session, select
 
@@ -138,6 +140,30 @@ def diff(old: dict, new: dict) -> list[tuple[str, str]]:
     return items
 
 
+def _manager_tz():
+    """The manager's configured timezone from the TZ env (e.g. Europe/Stockholm),
+    or None to fall back to the process's local timezone when TZ is unset."""
+    name = (os.environ.get("TZ") or "").strip()
+    if name:
+        try:
+            return ZoneInfo(name)
+        except (ZoneInfoNotFoundError, ValueError, ModuleNotFoundError):
+            pass
+    return None
+
+
+def format_local(dt) -> str:
+    """A UTC datetime rendered in the manager's timezone, 24-hour and
+    yyyy-mm-dd — the European/ISO standard the change log uses (#112). The zone
+    abbreviation is appended so a log read from another region is unambiguous.
+    Falls back to the process's local zone (UTC in a bare container) when TZ
+    isn't set — the format stays European either way.
+    """
+    tz = _manager_tz()
+    local = dt.astimezone(tz) if tz else dt.astimezone()
+    return f"{local.strftime('%Y-%m-%d %H:%M:%S')} {local.strftime('%Z')}".strip()
+
+
 def _append(session: Session, template_id: int, items, when) -> None:
     for category, summary in items:
         session.add(TemplateChange(
@@ -177,19 +203,18 @@ def entries(session: Session, template_id: int, query: str | None = None) -> lis
     if query:
         needle = query.strip().lower()
         rows = [r for r in rows if needle in r.summary.lower()]
-    return [
-        {
+    out = []
+    for r in rows:
+        # SQLite hands datetimes back naive; they are UTC.
+        aware = r.changed_at if r.changed_at.tzinfo else r.changed_at.replace(tzinfo=UTC)
+        out.append({
             "id": r.id,
-            # SQLite hands datetimes back naive; they are UTC, so stamp that
-            # explicitly or the browser would read them as local time.
-            "changed_at": (
-                r.changed_at if r.changed_at.tzinfo else r.changed_at.replace(tzinfo=UTC)
-            ).isoformat(),
+            "changed_at": aware.isoformat(),          # machine-readable, grouping key
+            "display": format_local(aware),           # manager-timezone, for the UI (#112)
             "category": r.category,
             "summary": r.summary,
-        }
-        for r in rows
-    ]
+        })
+    return out
 
 
 def delete_for_template(session: Session, template_id: int) -> None:
