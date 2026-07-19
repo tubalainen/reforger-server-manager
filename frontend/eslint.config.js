@@ -17,6 +17,11 @@ export default [
     },
     rules: {
       'no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      // Catch a template that calls a handler the script no longer defines — the
+      // exact regression in #111, where a refactor dropped addModByRow but left
+      // @click="addModByRow(row)" behind, so "Add" silently did nothing. Not part
+      // of Vue's "essential" set, so it has to be turned on explicitly.
+      'vue/no-undef-properties': 'error',
       // Route views are named after their route (Instances, Templates, Login...).
       // That is the convention here, not an accident.
       'vue/multi-word-component-names': 'off',

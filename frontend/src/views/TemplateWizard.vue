@@ -1159,7 +1159,7 @@ onBeforeUnmount(() => {
               <button
                 class="btn btn-sm btn-outline-primary flex-shrink-0"
                 :disabled="modAdd.busy || isEnabled(row.id)"
-                @click="addModByRow(row)"
+                @click="addModById(row.id)"
               >{{ isEnabled(row.id) ? 'Added' : 'Add' }}</button>
             </div>
           </div>
