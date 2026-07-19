@@ -16,6 +16,12 @@ services:
     image: ghcr.io/tubalainen/reforger-server-manager:${MANAGER_VERSION:-latest}
     container_name: reforger-manager
     restart: unless-stopped
+    # On stop/down the manager gracefully stops every running game server and
+    # removes their sibling containers (they are recorded and resumed on the
+    # next start), so the network below has no leftover endpoints and
+    # `docker compose down` succeeds. Stopping several Arma servers takes a
+    # while — give the manager time before compose SIGKILLs it (default 10s).
+    stop_grace_period: 2m
     env_file: .env
     ports:
       # The web GUI. Server instances do NOT need port entries here: the

@@ -717,3 +717,124 @@ def test_create_container_applies_launch_params(tmp_path, monkeypatch):
     assert env["ARMA_MAX_FPS"] == "90"
     assert "-noBackend" in env["ARMA_PARAMS"]
     assert "-autoreload 300" in env["ARMA_PARAMS"]
+
+
+# --------------------------------------------------------------------------- #
+# #113: network staleness detection + graceful manager shutdown/resume
+# --------------------------------------------------------------------------- #
+
+class _FakeNetContainer:
+    def __init__(self, networks, fail=False):
+        self.attrs = {"NetworkSettings": {"Networks": networks}}
+        self._fail = fail
+
+    def reload(self):
+        if self._fail:
+            raise AttributeError("cannot inspect")
+
+
+def _patch_live_network(monkeypatch, net_id="live-id", missing=False):
+    from docker.errors import NotFound
+
+    from services import docker_service
+
+    class FakeNetworks:
+        def get(self, name):
+            if missing:
+                raise NotFound("no such network")
+            return type("N", (), {"id": net_id})()
+
+    monkeypatch.setattr(docker_service, "get_client",
+                        lambda: type("Cl", (), {"networks": FakeNetworks()})())
+
+
+def test_container_network_ok_detects_disconnect_and_stale_id(monkeypatch):
+    # A container disconnected from the network (the manual workaround for the
+    # compose-down failure) or pointing at a removed-and-recreated network's old
+    # id starts without DNS: 'Curl error=Could not resolve hostname' (#113).
+    _patch_live_network(monkeypatch, net_id="live-id")
+    ok = instance_service._container_network_ok
+
+    assert ok(_FakeNetContainer({"reforger-net": {"NetworkID": "live-id"}})) is True
+    # empty NetworkID (stopped container): nothing to compare -> keep it
+    assert ok(_FakeNetContainer({"reforger-net": {"NetworkID": ""}})) is True
+    # endpoint gone entirely -> the docker-network-disconnect case
+    assert ok(_FakeNetContainer({})) is False
+    # endpoint referencing the OLD network id -> the down/up recreate case
+    assert ok(_FakeNetContainer({"reforger-net": {"NetworkID": "old-id"}})) is False
+
+
+def test_container_network_ok_never_destroys_what_it_cannot_verify(monkeypatch):
+    _patch_live_network(monkeypatch, missing=True)
+    # the network itself is unreadable/absent -> recreating the container
+    # cannot help; keep it and let the start fail loudly
+    assert instance_service._container_network_ok(
+        _FakeNetContainer({"reforger-net": {"NetworkID": "x"}})) is True
+    _patch_live_network(monkeypatch)
+    assert instance_service._container_network_ok(
+        _FakeNetContainer({}, fail=True)) is True
+
+
+class _FakeLifecycleContainer:
+    def __init__(self, status):
+        self.status = status
+        self.id = f"cid-{status}"
+        self.name = f"c-{status}"
+        self.stopped = False
+        self.removed = False
+
+    def stop(self, timeout=None):
+        self.stopped = True
+
+    def remove(self, force=False):
+        self.removed = True
+
+
+def test_shutdown_all_instances_stops_records_and_removes(tmp_path, monkeypatch):
+    import config
+    from services import docker_service
+
+    monkeypatch.setattr(config.settings, "data_dir", str(tmp_path))
+    monkeypatch.setattr(docker_service, "ping", lambda: True)
+    running = _FakeLifecycleContainer("running")
+    exited = _FakeLifecycleContainer("exited")
+    monkeypatch.setattr(docker_service, "instance_containers",
+                        lambda: {1: running, 2: exited})
+
+    instance_service.shutdown_all_instances()
+
+    # the running server was stopped gracefully; BOTH containers were removed
+    # so no endpoint keeps the compose network 'in use' (#113)
+    assert running.stopped and running.removed
+    assert not exited.stopped and exited.removed
+    # ...and only the running one is recorded for resume on next boot
+    assert json.loads((tmp_path / "resume_instances.json").read_text()) == [1]
+
+
+def test_resume_interrupted_instances_starts_recorded_and_clears(tmp_path, monkeypatch):
+    import config
+
+    monkeypatch.setattr(config.settings, "data_dir", str(tmp_path))
+    (tmp_path / "resume_instances.json").write_text("[1, 2]")
+    started = []
+    monkeypatch.setattr(instance_service, "start_instance",
+                        lambda iid: started.append(iid))
+
+    instance_service.resume_interrupted_instances()
+
+    assert started == [1, 2]
+    # the record is consumed: a crash loop must not replay it forever
+    assert not (tmp_path / "resume_instances.json").exists()
+    instance_service.resume_interrupted_instances()
+    assert started == [1, 2]
+
+
+def test_resume_interrupted_instances_tolerates_garbage(tmp_path, monkeypatch):
+    import config
+
+    monkeypatch.setattr(config.settings, "data_dir", str(tmp_path))
+    (tmp_path / "resume_instances.json").write_text("not json")
+
+    instance_service.resume_interrupted_instances()  # must not raise
+
+    assert not (tmp_path / "resume_instances.json").exists()
