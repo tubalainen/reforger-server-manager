@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, nextTick } from 'vue'
 import { api } from '../api'
+import { isErrorLine } from '../log'
 import { serverStatus } from '../status'
 import { formatBytes, formatUptime, formatTimestamp } from '../format'
 
@@ -622,11 +623,18 @@ onUnmounted(() => {
             >Clear</button>
           </div>
         </div>
-        <pre
+        <!-- Line by line so errors can be painted red (#108); the font stack and
+             spacing aim for a terminal, not a paragraph. -->
+        <div
           ref="logPane"
-          class="card-body bg-black text-light small mb-0 rounded-bottom"
-          style="height: 55vh; overflow-y: auto; white-space: pre-wrap"
-        >{{ logLines.join('\n') || '// waiting for log output…' }}</pre>
+          class="card-body bg-black small mb-0 rounded-bottom log-pane"
+          style="height: 55vh; overflow-y: auto"
+        >
+          <template v-if="logLines.length">
+            <div v-for="(l, i) in logLines" :key="i" :class="{ 'log-error': isErrorLine(l) }">{{ l || ' ' }}</div>
+          </template>
+          <div v-else class="log-muted">// waiting for log output…</div>
+        </div>
       </div>
 
       <!-- Stored data: baked mods, saves, logs (issue #79). Always rendered — a failed
@@ -774,3 +782,24 @@ onUnmounted(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* A terminal, not a paragraph (#108): monospace stack (Cascadia ships with
+   Windows Terminal, the rest cover macOS/Linux), tight lines, wrap long ones
+   at any character like a real console. */
+.log-pane {
+  font-family: 'Cascadia Mono', Consolas, 'Ubuntu Mono', 'DejaVu Sans Mono', 'Liberation Mono',
+    Menlo, monospace;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: #d4d4d4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.log-error {
+  color: #ff6e6e;
+}
+.log-muted {
+  color: #8a8a8a;
+}
+</style>
