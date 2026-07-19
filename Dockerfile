@@ -40,4 +40,8 @@ RUN chmod +x /app/entrypoint.sh
 
 EXPOSE 8080
 ENTRYPOINT ["/app/entrypoint.sh"]
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+# --timeout-graceful-shutdown: without it uvicorn waits FOREVER for open
+# connections (an open GUI tab's log-stream WebSocket) before running the
+# lifespan shutdown that stops the game servers (#113) — compose would
+# SIGKILL us before the cleanup ever started.
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--timeout-graceful-shutdown", "5"]
