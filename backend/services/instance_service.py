@@ -16,6 +16,7 @@ import logging
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -508,6 +509,37 @@ def _container_env_matches(container, desired: dict) -> bool:
     return all(actual.get(key) == value for key, value in desired.items())
 
 
+def _container_network_ok(container) -> bool:
+    """True if the container is attached to the configured Docker network AND
+    that attachment points at the network that exists right now.
+
+    A container can silently lose its network: `docker network disconnect`
+    (the manual workaround people used for the compose-down failure, #113),
+    or the network being removed and recreated (compose down/up) while the
+    stopped container still references the old network id. Such a container
+    starts fine but has no working DNS — the server logs 'Curl error=Could
+    not resolve hostname' and never reaches the Reforger backend (#113).
+    start_instance recreates it instead, which re-attaches it cleanly.
+
+    On any read failure return True — never destroy a container we cannot
+    inspect. An unreadable/absent network also returns True: recreating the
+    container cannot conjure the network, so let the start fail loudly.
+    """
+    net_name = config.settings.docker_network
+    try:
+        container.reload()
+        endpoints = (container.attrs.get("NetworkSettings") or {}).get("Networks") or {}
+        endpoint = endpoints.get(net_name)
+        if not endpoint:
+            return False  # disconnected (or never attached) — recreate
+        current = docker_service.get_client().networks.get(net_name)
+        endpoint_id = endpoint.get("NetworkID")
+        # Stopped containers may report an empty NetworkID; nothing to compare then.
+        return not endpoint_id or endpoint_id == current.id
+    except (DockerException, NotFound, AttributeError):
+        return True
+
+
 def start_instance(instance_id: int) -> None:
     if not docker_service.ping():
         raise InstanceError("Docker daemon is not reachable")
@@ -534,6 +566,8 @@ def start_instance(instance_id: int) -> None:
                 reason = "published ports changed"
             elif not _container_env_matches(container, _desired_environment(inst, launch)):
                 reason = "launch parameters or server environment changed"
+            elif not _container_network_ok(container):
+                reason = "network attachment is missing or stale"
             if reason:
                 logger.info("Recreating container for %s: %s", inst.name, reason)
                 try:
@@ -1408,6 +1442,88 @@ def apply_scheduled_restarts() -> None:
 # --------------------------------------------------------------------------- #
 # Crash monitor / reconciliation
 # --------------------------------------------------------------------------- #
+
+def _resume_file() -> Path:
+    return Path(config.settings.data_dir) / "resume_instances.json"
+
+
+def shutdown_all_instances() -> None:
+    """Gracefully stop and remove every managed server container (#113).
+
+    Called when the manager itself shuts down (docker compose down/stop).
+    The server containers are siblings outside the compose project, so any
+    that were left attached to the compose network made `docker compose down`
+    fail with 'network reforger-net: resource is still in use'. Containers
+    are disposable by design — every piece of state lives in bind mounts —
+    so removing them frees the network cleanly; the ones that were running
+    are recorded first and started again on the next boot.
+    """
+    if not docker_service.ping():
+        return
+    containers = docker_service.instance_containers()
+    if not containers:
+        return
+    running = sorted(
+        iid for iid, c in containers.items() if getattr(c, "status", "") == "running"
+    )
+    if running:
+        try:
+            _resume_file().write_text(json.dumps(running), encoding="utf-8")
+        except OSError as exc:
+            logger.warning("Could not record running instances for resume: %s", exc)
+    logger.info(
+        "Manager shutdown: stopping %d running server(s), removing %d container(s)",
+        len(running), len(containers),
+    )
+
+    def _stop(container) -> None:
+        forget_run(container.id)
+        try:
+            container.stop(timeout=30)
+        except DockerException as exc:
+            logger.warning("Stop of %s failed: %s", container.name, exc)
+
+    # Parallel: several servers × 30s each serially would blow through the
+    # compose stop_grace_period and get the manager SIGKILLed mid-cleanup.
+    to_stop = [c for iid, c in containers.items() if iid in set(running)]
+    if to_stop:
+        with ThreadPoolExecutor(max_workers=min(8, len(to_stop))) as pool:
+            list(pool.map(_stop, to_stop))
+    for container in containers.values():
+        try:
+            container.remove(force=True)
+        except DockerException as exc:
+            logger.warning("Removing %s failed: %s", container.name, exc)
+
+
+def resume_interrupted_instances() -> None:
+    """Start the instances a previous shutdown_all_instances stopped.
+
+    Runs once per boot (from the background monitor, once Docker answers).
+    The record is deleted before starting anything so a crash loop cannot
+    replay it forever.
+    """
+    path = _resume_file()
+    if not path.is_file():
+        return
+    try:
+        ids = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        logger.warning("Unreadable resume record %s: %s", path, exc)
+        ids = []
+    if not isinstance(ids, list):
+        ids = []
+    try:
+        path.unlink()
+    except OSError:
+        pass
+    for iid in ids:
+        try:
+            logger.info("Resuming instance %s after manager restart", iid)
+            start_instance(int(iid))
+        except (InstanceError, TypeError, ValueError) as exc:
+            logger.warning("Resume of instance %s failed: %s", iid, exc)
+
 
 def reconcile_and_recover() -> None:
     """Restart instances that should be running but whose container died.
