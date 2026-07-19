@@ -916,3 +916,39 @@ def test_template_changed_since_start(monkeypatch):
     # missing pieces never claim a change
     assert changed(None, start) is False
     assert changed(container, None) is False
+
+
+# --------------------------------------------------------------------------- #
+# CPU % must be a real 0-100% of the whole machine, not the Docker per-core
+# figure that read as "over max" to users.
+# --------------------------------------------------------------------------- #
+
+class _StatsContainer:
+    def __init__(self, stats):
+        self._stats = stats
+
+    def stats(self, stream=False):
+        return self._stats
+
+
+def test_cpu_percent_is_share_of_the_whole_machine():
+    # In the window the container used 100 of the host's 1000 ns of CPU time on
+    # a 2-core box: that's 10% of the whole machine, not the 20% per-core figure
+    # the old formula produced by multiplying by the core count.
+    c = _StatsContainer({
+        "cpu_stats": {"cpu_usage": {"total_usage": 200}, "system_cpu_usage": 2000, "online_cpus": 2},
+        "precpu_stats": {"cpu_usage": {"total_usage": 100}, "system_cpu_usage": 1000},
+        "memory_stats": {"usage": 1000, "limit": 2000},
+    })
+    assert instance_service._docker_cpu_mem(c)["cpu_percent"] == 10.0
+
+
+def test_cpu_percent_caps_at_100_when_every_core_is_maxed():
+    # Container CPU time == the host's total CPU time => all cores pinned => 100%,
+    # never core_count * 100.
+    c = _StatsContainer({
+        "cpu_stats": {"cpu_usage": {"total_usage": 5000}, "system_cpu_usage": 5000, "online_cpus": 8},
+        "precpu_stats": {"cpu_usage": {"total_usage": 1000}, "system_cpu_usage": 1000},
+        "memory_stats": {"usage": 1, "limit": 2},
+    })
+    assert instance_service._docker_cpu_mem(c)["cpu_percent"] == 100.0

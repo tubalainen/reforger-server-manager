@@ -107,8 +107,14 @@ def _docker_cpu_mem(container) -> dict:
         pre = s["precpu_stats"]
         cpu_delta = cpu["cpu_usage"]["total_usage"] - pre["cpu_usage"]["total_usage"]
         sys_delta = cpu.get("system_cpu_usage", 0) - pre.get("system_cpu_usage", 0)
-        online = cpu.get("online_cpus") or len(cpu["cpu_usage"].get("percpu_usage") or [1])
-        cpu_pct = (cpu_delta / sys_delta) * online * 100 if sys_delta > 0 else 0.0
+        # Share of the WHOLE machine: system_cpu_usage is the host's total CPU
+        # time summed over every core, so cpu_delta/sys_delta is 0-1 and *100 is
+        # a real 0-100% where 100% = every core/thread maxed. The Docker CLI
+        # multiplies this by the core count to get a per-core figure (100% = one
+        # core), which is what showed ~291% for ~3 busy cores and read as "over
+        # max" to users. Clamp for sampling jitter between the two counters.
+        cpu_pct = (cpu_delta / sys_delta) * 100 if sys_delta > 0 else 0.0
+        cpu_pct = min(100.0, max(0.0, cpu_pct))
         mem = s["memory_stats"]
         return {
             "cpu_percent": round(cpu_pct, 1),
