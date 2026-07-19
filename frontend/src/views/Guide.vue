@@ -281,10 +281,17 @@ const faq = [
             parameters under "advanced". Max players is seeded from the player count the
             chosen scenario declares on the Workshop — override it freely, it is yours.
           </li>
-          <li>
+          <li class="mb-2">
             <strong>Import/export:</strong> upload an existing <code>config.json</code> to
             pre-fill the whole wizard, or download the rendered one from the Save step —
             handy for moving from a hand-managed server or another tool.
+          </li>
+          <li>
+            <strong>Change log:</strong> every template keeps a searchable history of what
+            changed and when — mods added or removed, the scenario, and each setting
+            (old&nbsp;→&nbsp;new) — opened from the <strong>Change log</strong> button on the
+            templates list, newest first. It is read-only (it can't be edited or deleted) and
+            is removed only when the template is; times are shown in the server's timezone.
           </li>
         </ul>
       </div>
@@ -301,20 +308,25 @@ const faq = [
         <ul class="mb-0">
           <li class="mb-2">
             <strong>Lifecycle:</strong> start, stop and restart from the UI; live server
-            logs stream into the instance page, alongside players, FPS, CPU and memory.
-            The Connect line shows the address players use — auto-detected from the
-            server log unless <code>PUBLIC_ADDRESS</code> is set.
+            logs stream into the instance page, alongside players, FPS, CPU (a real
+            0–100% of the whole machine) and memory. The Connect line shows the address
+            players use — auto-detected from the server log unless
+            <code>PUBLIC_ADDRESS</code> is set. A compact status bar in the top banner
+            shows every server's online state and player count from any page.
           </li>
           <li class="mb-2">
-            <strong>Reliability:</strong> per instance you can toggle auto-restart on
-            crash, auto-start after a host/Docker reboot, and scheduled daily restarts at
+            <strong>Reliability:</strong> per instance you can toggle
+            <em>auto-restart on crash</em> (brings the server back only if its process
+            exits, not after a planned reboot), <em>auto-start on host/Docker restart</em>
+            (the one that brings it back after a reboot), and scheduled daily restarts at
             fixed times (server local time).
           </li>
           <li class="mb-2">
             <strong>Template changes:</strong> editing a template does not touch running
-            servers — restart an instance to apply it. Swapping an instance to a
-            different template warns you if the persistent-save target (hive id) would
-            change.
+            servers — the instance flags <strong>“Template changed — restart to apply”</strong>
+            once its template was edited after the server started, and one click restarts it.
+            Swapping an instance to a different template warns you if the persistent-save
+            target (hive id) would change.
           </li>
           <li>
             <strong>Server files:</strong> the shared per-branch install lives at the
