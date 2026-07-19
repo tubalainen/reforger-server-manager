@@ -78,9 +78,16 @@ Docker image: `ghcr.io/tubalainen/reforger-server-manager:latest`
       knows flow back into the wizard's fields; **any key it doesn't know — including
       scenario-specific `gameProperties` — is kept and re-applied on every future save**.
       Validation blocks broken JSON and out-of-range values, but never blocks a custom key
+- [x] **Per-template change log** — every template keeps a searchable, tamper-proof history
+      of what changed and when: mods added/removed and version locks, scenario changes, and
+      each setting edit (old → new), timestamped in your server's timezone. Read-only — it
+      can't be altered or deleted, and is removed only with the template
 - [x] Multiple concurrent server instances (stable + experimental side by side), each a
       Docker container spawned and supervised by the manager
 - [x] Live server logs in the browser (with a clear-window button), crash auto-restart
+- [x] A **status bar in the top banner** shows every server at a glance — online state and
+      player count — from any page, and the instance page flags when a template changed
+      since the server started, with a one-click restart to apply it
 - [x] **Stored-data controls** per instance: see how much disk the baked mods, saved game
       and logs take, and clear any of them — wiping the baked mods makes the next start
       re-download and re-bake the template's current mod list
@@ -241,7 +248,8 @@ both pass through by default.
 
 ### First run
 
-On the **Downloads** tab, do both one-time steps before creating a server instance:
+Under **Server Instances → Server files** (at the bottom of the Instances page), do both
+one-time steps before creating a server instance:
 
 1. **Pull the server runtime image** — the Docker image each instance runs from
    (`REFORGER_SERVER_IMAGE`). `docker compose up` only pulls the manager itself, so the
