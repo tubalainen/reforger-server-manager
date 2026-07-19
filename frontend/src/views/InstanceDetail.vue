@@ -359,6 +359,21 @@ onUnmounted(() => {
         <router-link to="/instances#server-files">download them under Server files on the Instances tab</router-link> before starting.
       </div>
 
+      <!-- The running server keeps the config it started with; a template edited
+           since then isn't live until a restart (#116). -->
+      <div
+        v-if="inst.template_changed"
+        class="alert alert-warning d-flex flex-wrap align-items-center justify-content-between gap-2 py-2"
+      >
+        <span>
+          ⚠️ Template <strong>{{ inst.template_name }}</strong> changed since this
+          server started — restart to apply the new configuration.
+        </span>
+        <button class="btn btn-sm btn-warning" :disabled="!!pending" @click="action('restart')">
+          Restart now
+        </button>
+      </div>
+
       <!-- Live status strip -->
       <div v-if="stats" class="card mb-3">
         <div class="card-body py-2">

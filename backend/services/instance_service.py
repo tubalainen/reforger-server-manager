@@ -676,6 +676,7 @@ def stop_instance(instance_id: int) -> None:
         inst.desired_state = "stopped"
         session.add(inst)
         session.commit()
+    forget_seen_running(instance_id)  # a user stop is not a crash to recover from (#115)
     container = docker_service.find_instance_container(instance_id)
     if container:
         forget_run(container.id)  # whatever it was, it is not online any more (#76)
@@ -694,6 +695,7 @@ def delete_instance(instance_id: int) -> None:
         except DockerException as exc:
             logger.warning("Removing container for instance %s failed: %s", instance_id, exc)
     forget_cpu_sample(instance_id)
+    forget_seen_running(instance_id)
     with Session(get_engine()) as session:
         inst = session.get(Instance, instance_id)
         if inst:
@@ -729,11 +731,31 @@ def container_status(instance_id: int, containers: dict | None = None) -> str:
     return status_of(docker_service.find_instance_container(instance_id))
 
 
+def _template_changed_since_start(container, template_updated_at) -> bool:
+    """True if the template was edited after this running container started (#116).
+
+    The container keeps the config.json it was created with, so a template
+    edited since then is not live until the server is restarted. updated_at
+    comes back naive (UTC) from SQLite; StartedAt is tz-aware — coerce before
+    comparing. On any missing piece, don't claim a change.
+    """
+    if container is None or template_updated_at is None:
+        return False
+    started = _started_at(container)
+    if started is None:
+        return False
+    updated = template_updated_at
+    if updated.tzinfo is None:
+        updated = updated.replace(tzinfo=UTC)
+    return updated > started
+
+
 def instance_view(
     inst: Instance,
     template_name: str | None,
     containers: dict | None = None,
     docker_up: bool | None = None,
+    template_updated_at=None,
 ) -> dict:
     # docker_up/containers are passed in by list_views, which resolves them ONCE for
     # the whole page. This used to ping the daemon per instance, inside a list
@@ -741,12 +763,20 @@ def instance_view(
     if docker_up is None:
         docker_up = docker_service.ping()
     status = container_status(inst.id, containers) if docker_up else "unknown"
+    container = containers.get(inst.id) if containers else None
+    template_changed = (
+        status == "running"
+        and _template_changed_since_start(container, template_updated_at)
+    )
     return {
         "id": inst.id,
         "name": inst.name,
         "branch": inst.branch,
         "template_id": inst.template_id,
         "template_name": template_name,
+        # True when the template has been edited since this running server
+        # started, so its live config is stale until restarted (#116).
+        "template_changed": template_changed,
         "game_port": inst.game_port,
         "a2s_port": inst.a2s_port,
         "rcon_port": inst.rcon_port,
@@ -1256,9 +1286,14 @@ def list_views() -> list[dict]:
     containers = docker_service.instance_containers() if docker_up else {}
     with Session(get_engine()) as session:
         instances = _all_instances(session)
-        names = {t.id: t.name for t in session.exec(select(Template)).all()}
+        templates = session.exec(select(Template)).all()
+        names = {t.id: t.name for t in templates}
+        updated = {t.id: t.updated_at for t in templates}
         return [
-            instance_view(i, names.get(i.template_id), containers, docker_up)
+            instance_view(
+                i, names.get(i.template_id), containers, docker_up,
+                updated.get(i.template_id),
+            )
             for i in instances
         ]
 
@@ -1443,10 +1478,6 @@ def apply_scheduled_restarts() -> None:
 # Crash monitor / reconciliation
 # --------------------------------------------------------------------------- #
 
-def _resume_file() -> Path:
-    return Path(config.settings.data_dir) / "resume_instances.json"
-
-
 def shutdown_all_instances() -> None:
     """Gracefully stop and remove every managed server container (#113).
 
@@ -1455,22 +1486,16 @@ def shutdown_all_instances() -> None:
     that were left attached to the compose network made `docker compose down`
     fail with 'network reforger-net: resource is still in use'. Containers
     are disposable by design — every piece of state lives in bind mounts —
-    so removing them frees the network cleanly; the ones that were running
-    are recorded first and started again on the next boot.
+    so removing them frees the network cleanly. Their desired_state stays
+    'running' in the DB, so reconcile_and_recover brings the auto_start ones
+    back on the next boot (and leaves auto_start=off ones down — #115).
     """
     if not docker_service.ping():
         return
     containers = docker_service.instance_containers()
     if not containers:
         return
-    running = sorted(
-        iid for iid, c in containers.items() if getattr(c, "status", "") == "running"
-    )
-    if running:
-        try:
-            _resume_file().write_text(json.dumps(running), encoding="utf-8")
-        except OSError as exc:
-            logger.warning("Could not record running instances for resume: %s", exc)
+    running = [c for c in containers.values() if getattr(c, "status", "") == "running"]
     logger.info(
         "Manager shutdown: stopping %d running server(s), removing %d container(s)",
         len(running), len(containers),
@@ -1485,10 +1510,9 @@ def shutdown_all_instances() -> None:
 
     # Parallel: several servers × 30s each serially would blow through the
     # compose stop_grace_period and get the manager SIGKILLed mid-cleanup.
-    to_stop = [c for iid, c in containers.items() if iid in set(running)]
-    if to_stop:
-        with ThreadPoolExecutor(max_workers=min(8, len(to_stop))) as pool:
-            list(pool.map(_stop, to_stop))
+    if running:
+        with ThreadPoolExecutor(max_workers=min(8, len(running))) as pool:
+            list(pool.map(_stop, running))
     for container in containers.values():
         try:
             container.remove(force=True)
@@ -1496,55 +1520,57 @@ def shutdown_all_instances() -> None:
             logger.warning("Removing %s failed: %s", container.name, exc)
 
 
-def resume_interrupted_instances() -> None:
-    """Start the instances a previous shutdown_all_instances stopped.
+# Instance ids this manager process has actually observed running. It is the
+# difference between a crash and a reboot: an exited server we have seen up is a
+# crash (honour auto_restart); one that has merely been down since the manager
+# booted is not (only auto_start may start it). Resets on manager restart — which
+# is exactly a reboot, so nothing is in it on the first pass after one (#115).
+_seen_running: set[int] = set()
 
-    Runs once per boot (from the background monitor, once Docker answers).
-    The record is deleted before starting anything so a crash loop cannot
-    replay it forever.
-    """
-    path = _resume_file()
-    if not path.is_file():
-        return
-    try:
-        ids = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        logger.warning("Unreadable resume record %s: %s", path, exc)
-        ids = []
-    if not isinstance(ids, list):
-        ids = []
-    try:
-        path.unlink()
-    except OSError:
-        pass
-    for iid in ids:
-        try:
-            logger.info("Resuming instance %s after manager restart", iid)
-            start_instance(int(iid))
-        except (InstanceError, TypeError, ValueError) as exc:
-            logger.warning("Resume of instance %s failed: %s", iid, exc)
+
+def forget_seen_running(instance_id: int) -> None:
+    _seen_running.discard(instance_id)
 
 
 def reconcile_and_recover() -> None:
-    """Restart instances that should be running but whose container died.
+    """Restart instances that should be running but whose container is down.
 
-    Called periodically and on startup. Non-fatal: logs and moves on.
+    Backs up Docker's own restart policy, keeping the two toggles' distinct
+    meanings (#115):
+
+      * auto_start ("start on host/Docker restart") — recover whenever the
+        server is down, including the manager's first pass after a reboot.
+        Mirrors Docker's 'unless-stopped'.
+      * auto_restart ("restart on crash") — recover ONLY a server we have seen
+        running under this manager that has since gone down, i.e. a genuine
+        crash. Mirrors 'on-failure', which Docker does NOT re-run after a clean
+        daemon restart.
+
+    Without the seen-running gate an auto_restart / no-auto_start server was
+    dragged back up after every reboot — the #115 bug. Called periodically and
+    on startup. Non-fatal: logs and moves on.
     """
     if not docker_service.ping():
         return
     with Session(get_engine()) as session:
         instances = _all_instances(session)
     for inst in instances:
-        # Backs up Docker's restart policy: recover a server that should be
-        # running if either toggle asks us to (crash-restart or start-on-boot).
-        if inst.desired_state != "running" or not (inst.auto_restart or inst.auto_start):
+        if inst.desired_state != "running":
+            continue
+        status = container_status(inst.id)
+        if status == "running":
+            _seen_running.add(inst.id)  # remember it for crash detection
+            continue
+        if status not in ("exited", "absent", "created"):
+            continue  # 'unknown' — a daemon hiccup; don't act on a blind read
+        crashed = inst.auto_restart and inst.id in _seen_running
+        if not (inst.auto_start or crashed):
             continue
         if not server_files_ready(inst.branch):
             continue  # can't run without server files; don't spam restart attempts
-        status = container_status(inst.id)
-        if status in ("exited", "absent", "created"):
-            logger.info("Recovering instance %s (was %s)", inst.name, status)
-            try:
-                start_instance(inst.id)
-            except InstanceError as exc:
-                logger.warning("Recovery of %s failed: %s", inst.name, exc)
+        logger.info("Recovering instance %s (was %s)", inst.name, status)
+        try:
+            start_instance(inst.id)
+            _seen_running.add(inst.id)
+        except InstanceError as exc:
+            logger.warning("Recovery of %s failed: %s", inst.name, exc)

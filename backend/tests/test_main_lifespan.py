@@ -43,16 +43,12 @@ async def test_shutdown_stops_the_game_servers(monkeypatch):
 @pytest.mark.anyio
 async def test_monitor_pass_no_ops_while_docker_is_down_then_recovers(monkeypatch):
     up = {"docker": False}
-    calls = {"reconcile": 0, "cleanup": 0, "resume": 0}
+    calls = {"reconcile": 0, "cleanup": 0}
 
     monkeypatch.setattr(docker_service, "ping", lambda: up["docker"])
     monkeypatch.setattr(
         docker_service, "remove_exited",
         lambda role: calls.__setitem__("cleanup", calls["cleanup"] + 1),
-    )
-    monkeypatch.setattr(
-        main.instance_service, "resume_interrupted_instances",
-        lambda: calls.__setitem__("resume", calls["resume"] + 1),
     )
     monkeypatch.setattr(
         main.instance_service, "reconcile_and_recover",
@@ -80,8 +76,6 @@ async def test_monitor_pass_no_ops_while_docker_is_down_then_recovers(monkeypatc
     assert calls["reconcile"] > 0
     # ...and the one-time steamcmd cleanup ran once Docker was actually there.
     assert calls["cleanup"] == 1
-    # ...as did the one-time resume of servers a previous shutdown stopped (#113).
-    assert calls["resume"] == 1
 
 
 class _Dummy:
