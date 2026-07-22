@@ -286,6 +286,13 @@ const faq = [
             pre-fill the whole wizard, or download the rendered one from the Save step —
             handy for moving from a hand-managed server or another tool.
           </li>
+          <li class="mb-2">
+            <strong>Copy:</strong> the <strong>Copy</strong> button on the templates list
+            duplicates a template into a new "Copy of…" one and opens it for editing — start
+            a variant (a different scenario, an extra mod, tighter settings) from a known-good
+            base instead of rebuilding it from scratch. The copy is fully independent: editing
+            or deleting it never touches the original.
+          </li>
           <li>
             <strong>Change log:</strong> every template keeps a searchable history of what
             changed and when — mods added or removed, the scenario, and each setting

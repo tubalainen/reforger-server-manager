@@ -87,6 +87,22 @@ function download(t) {
   window.location.href = `/api/templates/${t.id}/config.json`
 }
 
+// Duplicate a template (#129): the backend clones it under a free "Copy of …"
+// name, then we jump straight into the copy's editor so it can be tweaked.
+const copying = ref(0)
+async function copy(t) {
+  copying.value = t.id
+  error.value = ''
+  try {
+    const created = await api(`/api/templates/${t.id}/copy`, { method: 'POST' })
+    router.push({ name: 'template-edit', params: { id: created.id } })
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    copying.value = 0
+  }
+}
+
 const anyLocked = computed(() => templates.value.some((t) => t.locked))
 
 // Stuck locks (a crashed tab, a closed laptop) expire on their own within
@@ -161,6 +177,14 @@ onUnmounted(() => clearInterval(poll))
         <div class="btn-group">
           <button class="btn btn-sm btn-outline-secondary" @click="openLog(t)">Change log</button>
           <button class="btn btn-sm btn-outline-secondary" @click="download(t)">config.json</button>
+          <button
+            class="btn btn-sm btn-outline-secondary"
+            :disabled="copying === t.id"
+            title="Duplicate this template into a new, editable copy"
+            @click="copy(t)"
+          >
+            {{ copying === t.id ? 'Copying…' : 'Copy' }}
+          </button>
           <button
             class="btn btn-sm btn-outline-primary"
             :disabled="t.locked"

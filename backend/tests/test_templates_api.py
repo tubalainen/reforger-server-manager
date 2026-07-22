@@ -50,6 +50,57 @@ def test_duplicate_name_conflict(logged_in):
     assert logged_in.post("/api/templates", json=_spec("Dupe")).status_code == 409
 
 
+def test_copy_template_duplicates_under_a_new_name(logged_in):
+    # A copy is a faithful, independently-named twin (#129).
+    spec = _spec("Original") | {
+        "scenario_name": "Conflict Everon",
+        "scenario_player_count": 48,
+        "max_players": 48,
+        "extras": {"game": {"gameProperties": {"customKey": "keep-me"}}},
+        "launch": {"max_fps": 60},
+    }
+    src = logged_in.post("/api/templates", json=spec).json()
+
+    r = logged_in.post(f"/api/templates/{src['id']}/copy")
+    assert r.status_code == 201
+    copy = r.json()
+    assert copy["id"] != src["id"]
+    assert copy["name"] == "Copy of Original"
+    # every stored facet carries over verbatim
+    assert copy["spec"]["max_players"] == 48
+    assert copy["spec"]["scenario_name"] == "Conflict Everon"
+    assert copy["spec"]["scenario_player_count"] == 48
+    assert copy["spec"]["launch"]["max_fps"] == 60
+    assert copy["spec"]["extras"] == {"game": {"gameProperties": {"customKey": "keep-me"}}}
+    assert copy["spec"]["mods"][0]["modId"] == "591AF5BDA9F7CE8B"
+    # both templates now exist independently
+    names = {t["name"] for t in logged_in.get("/api/templates").json()}
+    assert {"Original", "Copy of Original"} <= names
+
+
+def test_copy_template_increments_the_name_when_taken(logged_in):
+    src = logged_in.post("/api/templates", json=_spec("Twin")).json()
+    first = logged_in.post(f"/api/templates/{src['id']}/copy").json()
+    second = logged_in.post(f"/api/templates/{src['id']}/copy").json()
+    assert first["name"] == "Copy of Twin"
+    assert second["name"] == "Copy of Twin (2)"
+
+
+def test_copy_template_seeds_its_own_change_log(logged_in):
+    src = logged_in.post("/api/templates", json=_spec("Logged")).json()
+    copy = logged_in.post(f"/api/templates/{src['id']}/copy").json()
+    log = logged_in.get(f"/api/templates/{copy['id']}/changelog").json()
+    assert any(e["summary"] == "Template created" for e in log)
+
+
+def test_copy_missing_template_404s(logged_in):
+    assert logged_in.post("/api/templates/999999/copy").status_code == 404
+
+
+def test_copy_requires_auth(client):
+    assert client.post("/api/templates/1/copy").status_code == 401
+
+
 def test_delete_blocked_while_instance_uses_template(logged_in):
     tid = logged_in.post("/api/templates", json=_spec("InUse")).json()["id"]
     logged_in.post("/api/instances", json={"name": "bound", "template_id": tid})

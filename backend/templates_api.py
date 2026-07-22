@@ -193,6 +193,56 @@ async def create_template(spec: TemplateSpec, _user: str = Depends(auth.require_
         return _out(t)
 
 
+def _unique_copy_name(session: Session, source_name: str) -> str:
+    """A free "Copy of …" name for a duplicated template (#129).
+
+    Names are unique, so a duplicate can't reuse the original's. Try "Copy of X"
+    first, then "Copy of X (2)", "(3)", … until one is free. Truncated to the
+    column's 100-char limit so a long source name still yields a valid name.
+    """
+    taken = set(session.exec(select(Template.name)).all())
+    base = f"Copy of {source_name}"[:100]
+    if base not in taken:
+        return base
+    n = 2
+    while True:
+        suffix = f" ({n})"
+        candidate = f"Copy of {source_name}"[: 100 - len(suffix)] + suffix
+        if candidate not in taken:
+            return candidate
+        n += 1
+
+
+@router.post("/{template_id}/copy", status_code=201)
+async def copy_template(template_id: int, _user: str = Depends(auth.require_session)):
+    """Duplicate a template into a new one under a fresh "Copy of …" name (#129).
+
+    Copies the stored config, scenario, launch params, enriched mod list and the
+    custom-key overlay verbatim, so the copy is a faithful, independently editable
+    twin. It gets its own change log, seeded like any freshly created template.
+    """
+    with Session(get_engine()) as session:
+        src = session.get(Template, template_id)
+        if not src:
+            raise HTTPException(status_code=404, detail="Template not found")
+        t = Template(
+            name=_unique_copy_name(session, src.name),
+            description=src.description,
+            config_json=src.config_json,
+            scenario_name=src.scenario_name,
+            scenario_player_count=src.scenario_player_count,
+            launch_params_json=src.launch_params_json,
+            mods_json=src.mods_json,
+            extras_json=src.extras_json,
+        )
+        session.add(t)
+        session.flush()  # assign the id before the log references it
+        change_log.record_creation(session, t)  # the copy starts its own log (#112)
+        session.commit()
+        session.refresh(t)
+        return _out(t)
+
+
 @router.get("/{template_id}")
 async def get_template(template_id: int, _user: str = Depends(auth.require_session)):
     with Session(get_engine()) as session:
