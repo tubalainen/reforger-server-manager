@@ -164,3 +164,47 @@ def _migrate(engine) -> None:
                 "ALTER TABLE template ADD COLUMN extras_json VARCHAR NOT NULL DEFAULT '{}'"
             ))
             conn.commit()
+
+        # container_id was removed from the Instance model in #88 (containers are
+        # located by Docker label now, not a stored id). create_all() never alters
+        # an existing table, so databases predating #88 keep the physical column
+        # with its original NOT NULL and no default. New inserts no longer supply
+        # it, so SQLite substitutes NULL and the insert dies with
+        # "NOT NULL constraint failed: instance.container_id" (#127). Drop the
+        # orphan so the table matches the model. This runs LAST, after the additive
+        # steps above, so the rebuild fallback copies a complete column set.
+        # DROP COLUMN needs SQLite >= 3.35 (Python 3.12 bundles far newer); if it is
+        # unavailable or blocked, rebuild the table without the column instead so
+        # startup still self-heals.
+        if "container_id" in icols:
+            try:
+                conn.execute(text("ALTER TABLE instance DROP COLUMN container_id"))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                _rebuild_instance_without_container_id(conn)
+                conn.commit()
+
+
+def _rebuild_instance_without_container_id(conn) -> None:
+    """Fallback for SQLite too old for ALTER TABLE ... DROP COLUMN (< 3.35).
+
+    Rebuilds `instance` from the current model definition and copies over every
+    column the old and new tables share, dropping the orphaned `container_id`.
+    """
+    from sqlalchemy import text
+
+    old_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(instance)"))}
+    new_cols = [c.name for c in Instance.__table__.columns]
+    shared = [c for c in new_cols if c in old_cols and c != "container_id"]
+    col_list = ", ".join(f'"{c}"' for c in shared)
+
+    conn.execute(text("PRAGMA foreign_keys=OFF"))
+    conn.execute(text("ALTER TABLE instance RENAME TO instance_legacy_pre88"))
+    Instance.__table__.create(bind=conn)
+    conn.execute(text(
+        f"INSERT INTO instance ({col_list}) "
+        f"SELECT {col_list} FROM instance_legacy_pre88"
+    ))
+    conn.execute(text("DROP TABLE instance_legacy_pre88"))
+    conn.execute(text("PRAGMA foreign_keys=ON"))
