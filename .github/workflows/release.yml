@@ -1,19 +1,23 @@
 name: Release
 
-# Cut a GitHub release from the version already on main, run manually from the
-# Actions tab (or via the API) after a version bump is merged.
+# Cut a GitHub release from the version already on main. Runs automatically when
+# a commit lands on main (e.g. a merged version bump) and can also be dispatched
+# by hand from the Actions tab.
 #
 # It exists because a version tag can't always be pushed from every environment
-# (e.g. Claude Code on the web pushes only its working branch); running the tag
-# and release creation here, on GitHub with the built-in token, sidesteps that.
+# (e.g. Claude Code on the web pushes only its working branch, and can't dispatch
+# workflows either); reacting to a push here, on GitHub with the built-in token,
+# sidesteps both limits.
 #
-# What it does:
+# On each run it:
 #   * reads APP_VERSION from backend/config.py — the single source of truth the
 #     CI drift check already enforces — and derives the vX.Y.Z tag;
-#   * creates that tag on the current main commit plus a GitHub Release (custom
-#     notes if given, otherwise auto-generated from commits);
+#   * does nothing if that release already exists (so ordinary pushes are no-ops);
+#   * otherwise creates the tag on the triggering commit plus a GitHub Release,
+#     taking notes from docs/release-notes/<tag>.md when that file exists, or the
+#     dispatch `notes` input, or GitHub's auto-generated notes;
 #   * publishes the semver-pinned Docker images (:X.Y.Z and :X.Y). The :latest
-#     image is already pushed by build-and-publish.yml on every push to main.
+#     image is pushed separately by build-and-publish.yml on every push to main.
 on:
   workflow_dispatch:
     inputs:
@@ -22,9 +26,11 @@ on:
         required: false
         type: string
       notes:
-        description: "Release notes in Markdown. Leave blank to auto-generate from commits."
+        description: "Release notes in Markdown. Leave blank to use the notes file or auto-generate."
         required: false
         type: string
+  push:
+    branches: [main]
 
 env:
   REGISTRY: ghcr.io
@@ -39,6 +45,7 @@ jobs:
       version: ${{ steps.ver.outputs.version }}
       tag: ${{ steps.ver.outputs.tag }}
       major_minor: ${{ steps.ver.outputs.major_minor }}
+      create: ${{ steps.gate.outputs.create }}
     steps:
       - uses: actions/checkout@v4
 
@@ -54,17 +61,22 @@ jobs:
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
           echo "major_minor=$(echo "$version" | cut -d. -f1,2)" >> "$GITHUB_OUTPUT"
 
-      - name: Refuse to re-release an existing tag
+      - name: Skip if this release already exists
+        id: gate
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${{ steps.ver.outputs.tag }}"
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "::error::Release $tag already exists — bump APP_VERSION before cutting a new release."
-            exit 1
+            echo "create=false" >> "$GITHUB_OUTPUT"
+            echo "Release $tag already exists — nothing to do."
+          else
+            echo "create=true" >> "$GITHUB_OUTPUT"
+            echo "Will cut release $tag."
           fi
 
       - name: Create the release (creating its tag on this commit)
+        if: steps.gate.outputs.create == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TITLE: ${{ inputs.title }}
@@ -72,23 +84,22 @@ jobs:
         run: |
           tag="${{ steps.ver.outputs.tag }}"
           title="${TITLE:-$tag}"
+          notes_file="docs/release-notes/$tag.md"
           if [ -n "$NOTES" ]; then
             printf '%s' "$NOTES" > "$RUNNER_TEMP/notes.md"
-            gh release create "$tag" \
-              --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" \
-              --title "$title" \
-              --notes-file "$RUNNER_TEMP/notes.md"
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "$title" --notes-file "$RUNNER_TEMP/notes.md"
+          elif [ -f "$notes_file" ]; then
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "$title" --notes-file "$notes_file"
           else
-            gh release create "$tag" \
-              --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" \
-              --title "$title" \
-              --generate-notes
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "$title" --generate-notes
           fi
 
   image:
     needs: release
+    if: needs.release.outputs.create == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
