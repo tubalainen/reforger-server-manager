@@ -78,6 +78,48 @@ def parse_server_state(log_text: str) -> str:
     return STATE_STARTING
 
 
+# The active-player roster (#126). Reforger logs each join and leave on its own
+# line, naming the player and a session number:
+#   ...  Player #3 SomeName 203.0.113.7:2001 connected
+#   ...  Player #3 SomeName disconnected
+# The name may contain spaces, so it is captured non-greedily and bounded by the
+# tokens that follow (an optional "ip:port" then "connected", or "disconnected").
+# The "#N" session number is the stable key we fold join/leave events on. The
+# exact wording is build-dependent — Bohemia has changed it across updates and a
+# server that does not emit these lines simply yields an empty roster, so this is
+# always additive to the authoritative player COUNT parsed above, never a
+# replacement for it. \bconnected\b intentionally does not match inside
+# "disconnected" (no word boundary between "dis" and "connected").
+_PLAYER_CONNECT_RE = re.compile(
+    r"Player #(\d+)\s+(.+?)"
+    r"(?:\s+\d{1,3}(?:\.\d{1,3}){3}:\d+)?"
+    r"\s+connected\b"
+)
+_PLAYER_DISCONNECT_RE = re.compile(r"Player #(\d+)\s+(.+?)\s+disconnected\b")
+
+
+def parse_roster(log_text: str) -> list[dict]:
+    """The players currently connected, folded from join/leave lines (#126).
+
+    Walks the log in order: a "connected" line adds (or refreshes) a player keyed
+    by their "#N" session number, a "disconnected" line removes them. Returns a
+    list of {"player_num": int, "name": str} in the order players joined. Empty
+    when the log carries no such lines (older builds, or a server that never had
+    anyone join) — callers pair this with the numeric count, which is the source
+    of truth for *how many* are online.
+    """
+    roster: dict[int, str] = {}
+    for line in log_text.splitlines():
+        m = _PLAYER_CONNECT_RE.search(line)
+        if m:
+            roster[int(m.group(1))] = m.group(2).strip()
+            continue
+        m = _PLAYER_DISCONNECT_RE.search(line)
+        if m:
+            roster.pop(int(m.group(1)), None)
+    return [{"player_num": num, "name": name} for num, name in roster.items()]
+
+
 def parse_server_status(log_text: str) -> dict | None:
     """Return the most recent {fps, mem_kb, players} from server log output.
 

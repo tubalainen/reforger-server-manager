@@ -315,6 +315,13 @@ const faq = [
             shows every server's online state and player count from any page.
           </li>
           <li class="mb-2">
+            <strong>Who's online:</strong> the instance page lists the connected players
+            by name, read from the server's own join/leave log lines. The player count
+            stays the source of truth for how many are on; the named list depends on the
+            server build actually logging names, so on builds that don't, you still get
+            the count.
+          </li>
+          <li class="mb-2">
             <strong>Reliability:</strong> per instance you can toggle
             <em>auto-restart on crash</em> (brings the server back only if its process
             exits, not after a planned reboot), <em>auto-start on host/Docker restart</em>

@@ -39,6 +39,7 @@ from services.server_log import (  # noqa: F401
     STATE_ONLINE,
     STATE_STARTING,
     parse_public_address,
+    parse_roster,
     parse_server_state,
     parse_server_status,
 )
@@ -139,6 +140,13 @@ STATS_LOG_ARG = "-logStats"
 # Reforger logs are chatty, so read a generous tail to be sure a periodic stats
 # line (emitted every STATS_LOG_INTERVAL_MS) is inside the window we parse.
 STATS_LOG_TAIL = 400
+# The roster (#126) is folded from join/leave lines that, unlike the periodic
+# stats line, appear once and never repeat — so a player who joined early scrolls
+# out of a 400-line tail on a busy server. Read a wider window when building the
+# roster so a whole typical session's joins stay visible. This is still bounded
+# (a very long, very chatty session can age a join out); the numeric count from
+# the stats line remains authoritative for how many are online.
+ROSTER_LOG_TAIL = 4000
 
 # The dedicated-server binary the image launches from /reforger (WORKDIR).
 # Its presence is our proof that a branch's server files are installed.
@@ -939,6 +947,7 @@ def instance_stats(instance_id: int) -> dict:
         "server_state": None,
         "uptime_seconds": None,
         "players": None,
+        "roster": [],
         "server_fps": None,
         "server_mem_kb": None,
         "cpu_percent": None,
@@ -953,13 +962,21 @@ def instance_stats(instance_id: int) -> dict:
     stats["uptime_seconds"] = _container_uptime_seconds(container)
 
     try:
-        log_text = current_run_log(container)
+        # One wider read serves both the status line (most-recent wins, so a
+        # bigger window is harmless) and the roster, which needs the whole
+        # session's join lines rather than just the last few (#126).
+        log_text = current_run_log(container, tail=ROSTER_LOG_TAIL)
         stats["server_state"] = server_state(container, log_text)
+        stats["roster"] = parse_roster(log_text)
         server = parse_server_status(log_text)
         if server:
             stats["players"] = server["players"]
             stats["server_fps"] = server["fps"]
             stats["server_mem_kb"] = server["mem_kb"]
+        # If the authoritative count says the server is empty, trust it over any
+        # stale join line whose matching "disconnected" aged out of the window.
+        if stats["players"] == 0:
+            stats["roster"] = []
         # Fall back to the IP the server registered with when PUBLIC_ADDRESS
         # isn't set, so the Connect field works without manual config (#46).
         if not public:

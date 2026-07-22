@@ -98,6 +98,53 @@ def test_parse_server_status_combines_separate_fps_and_player_lines():
     assert s == {"fps": 58.0, "mem_kb": 1000000, "players": 3}
 
 
+def test_parse_roster_lists_connected_players():
+    log = (
+        "boot noise\n"
+        "10:00:01:100 NETWORK : Player #0 Alice 203.0.113.7:2001 connected\n"
+        "10:00:02:200 NETWORK : Player #1 Bob 203.0.113.8:2001 connected\n"
+    )
+    assert instance_service.parse_roster(log) == [
+        {"player_num": 0, "name": "Alice"},
+        {"player_num": 1, "name": "Bob"},
+    ]
+
+
+def test_parse_roster_removes_players_who_left():
+    log = (
+        "Player #0 Alice 203.0.113.7:2001 connected\n"
+        "Player #1 Bob 203.0.113.8:2001 connected\n"
+        "Player #0 Alice disconnected\n"
+    )
+    assert instance_service.parse_roster(log) == [{"player_num": 1, "name": "Bob"}]
+
+
+def test_parse_roster_handles_names_with_spaces_and_missing_ip():
+    # Names may contain spaces; some builds omit the "ip:port" before "connected".
+    log = (
+        "Player #4 Foxtrot Actual 198.51.100.5:2001 connected\n"
+        "Player #5 Lone Wolf connected\n"
+    )
+    assert instance_service.parse_roster(log) == [
+        {"player_num": 4, "name": "Foxtrot Actual"},
+        {"player_num": 5, "name": "Lone Wolf"},
+    ]
+
+
+def test_parse_roster_reconnect_updates_name_keeps_slot():
+    log = (
+        "Player #2 OldName 203.0.113.7:2001 connected\n"
+        "Player #2 OldName disconnected\n"
+        "Player #2 NewName 203.0.113.7:2001 connected\n"
+    )
+    assert instance_service.parse_roster(log) == [{"player_num": 2, "name": "NewName"}]
+
+
+def test_parse_roster_empty_when_no_join_lines():
+    # "disconnected" must not be misread as a connect, and unrelated lines ignored.
+    assert instance_service.parse_roster("FPS: 60.0, Player: 0\nrandom noise\n") == []
+
+
 def test_parse_public_address_from_registration_line():
     # The real BACKEND registration line reveals the public IP (#46).
     log = (
@@ -952,3 +999,53 @@ def test_cpu_percent_caps_at_100_when_every_core_is_maxed():
         "memory_stats": {"usage": 1, "limit": 2},
     })
     assert instance_service._docker_cpu_mem(c)["cpu_percent"] == 100.0
+
+
+# --------------------------------------------------------------------------- #
+# instance_stats roster wiring (#126)
+# --------------------------------------------------------------------------- #
+
+def _stats_stubs(monkeypatch, log_text):
+    """Stub the Docker-facing pieces of instance_stats so only parsing runs."""
+    from sqlmodel import Session
+
+    import models
+
+    with Session(models.get_engine()) as s:
+        s.add(_inst(id=1))
+        s.commit()
+
+    fake_container = object()
+    monkeypatch.setattr(instance_service.docker_service,
+                        "find_instance_container", lambda _id: fake_container)
+    monkeypatch.setattr(instance_service, "status_of", lambda _c: "running")
+    monkeypatch.setattr(instance_service, "_container_uptime_seconds", lambda _c: 123)
+    monkeypatch.setattr(instance_service, "current_run_log", lambda _c, tail=None: log_text)
+    monkeypatch.setattr(instance_service, "server_state", lambda _c, _t: "online")
+    monkeypatch.setattr(instance_service, "cpu_mem_for", lambda _id, _c: {})
+
+
+def test_instance_stats_includes_the_roster(monkeypatch):
+    _stats_stubs(monkeypatch, (
+        "  NETWORK : Player #0 Alice 203.0.113.7:2001 connected\n"
+        "  NETWORK : Player #1 Bob 203.0.113.8:2001 connected\n"
+        "  DEFAULT : FPS: 60.0, Player: 2\n"
+    ))
+    stats = instance_service.instance_stats(1)
+    assert stats["players"] == 2
+    assert stats["roster"] == [
+        {"player_num": 0, "name": "Alice"},
+        {"player_num": 1, "name": "Bob"},
+    ]
+
+
+def test_instance_stats_clears_roster_when_count_is_zero(monkeypatch):
+    # A join whose matching "disconnected" scrolled out of the window must not
+    # linger once the authoritative count says the server is empty.
+    _stats_stubs(monkeypatch, (
+        "  NETWORK : Player #0 Ghost 203.0.113.7:2001 connected\n"
+        "  DEFAULT : FPS: 60.0, Player: 0\n"
+    ))
+    stats = instance_service.instance_stats(1)
+    assert stats["players"] == 0
+    assert stats["roster"] == []
