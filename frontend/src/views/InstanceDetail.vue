@@ -426,6 +426,34 @@ onUnmounted(() => {
         </div>
       </div>
 
+      <!-- Player roster (#126): names folded from the server log's join/leave
+           lines. The count in the strip above stays the source of truth for how
+           many are online; this list adds who, when the build logs it. -->
+      <div v-if="stats && inst.status === 'running'" class="card mb-3">
+        <div class="card-body py-2">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h2 class="h6 mb-0">
+              Players
+              <span v-if="stats.players != null" class="text-secondary fw-normal">({{ stats.players }})</span>
+            </h2>
+          </div>
+          <div v-if="stats.roster && stats.roster.length" class="d-flex flex-wrap gap-2">
+            <span
+              v-for="p in stats.roster"
+              :key="p.player_num"
+              class="badge text-bg-secondary"
+              style="font-size: .8rem"
+            >
+              <span class="opacity-75">#{{ p.player_num }}</span> {{ p.name }}
+            </span>
+          </div>
+          <div v-else-if="stats.players" class="text-secondary small fst-italic">
+            {{ stats.players }} online — this server build doesn’t print player names to the log.
+          </div>
+          <div v-else class="text-secondary small fst-italic">No one connected.</div>
+        </div>
+      </div>
+
       <div class="row g-3 mb-3">
         <div class="col-md-8">
           <div class="card">
