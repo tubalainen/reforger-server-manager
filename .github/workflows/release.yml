@@ -1,0 +1,119 @@
+name: Release
+
+# Cut a GitHub release from the version already on main, run manually from the
+# Actions tab (or via the API) after a version bump is merged.
+#
+# It exists because a version tag can't always be pushed from every environment
+# (e.g. Claude Code on the web pushes only its working branch); running the tag
+# and release creation here, on GitHub with the built-in token, sidesteps that.
+#
+# What it does:
+#   * reads APP_VERSION from backend/config.py — the single source of truth the
+#     CI drift check already enforces — and derives the vX.Y.Z tag;
+#   * creates that tag on the current main commit plus a GitHub Release (custom
+#     notes if given, otherwise auto-generated from commits);
+#   * publishes the semver-pinned Docker images (:X.Y.Z and :X.Y). The :latest
+#     image is already pushed by build-and-publish.yml on every push to main.
+on:
+  workflow_dispatch:
+    inputs:
+      title:
+        description: "Release title (defaults to the vX.Y.Z tag)"
+        required: false
+        type: string
+      notes:
+        description: "Release notes in Markdown. Leave blank to auto-generate from commits."
+        required: false
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      tag: ${{ steps.ver.outputs.tag }}
+      major_minor: ${{ steps.ver.outputs.major_minor }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version from backend/config.py
+        id: ver
+        run: |
+          version=$(grep -oP 'APP_VERSION = "\K[^"]+' backend/config.py)
+          if [ -z "$version" ]; then
+            echo "::error::Could not read APP_VERSION from backend/config.py"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "major_minor=$(echo "$version" | cut -d. -f1,2)" >> "$GITHUB_OUTPUT"
+
+      - name: Refuse to re-release an existing tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.ver.outputs.tag }}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Release $tag already exists — bump APP_VERSION before cutting a new release."
+            exit 1
+          fi
+
+      - name: Create the release (creating its tag on this commit)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: ${{ inputs.title }}
+          NOTES: ${{ inputs.notes }}
+        run: |
+          tag="${{ steps.ver.outputs.tag }}"
+          title="${TITLE:-$tag}"
+          if [ -n "$NOTES" ]; then
+            printf '%s' "$NOTES" > "$RUNNER_TEMP/notes.md"
+            gh release create "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "$title" \
+              --notes-file "$RUNNER_TEMP/notes.md"
+          else
+            gh release create "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "$title" \
+              --generate-notes
+          fi
+
+  image:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # A tag created above with the built-in token does not re-trigger
+      # build-and-publish.yml, so the semver-pinned images are built here.
+      - name: Build and push semver-tagged images
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.release.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.release.outputs.major_minor }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
