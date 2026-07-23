@@ -466,6 +466,68 @@ def test_instance_data_404s_for_an_instance_that_does_not_exist(tmp_path, monkey
         instance_service.instance_data(999)
 
 
+def _fake_purge_client(idir, monkeypatch, calls):
+    """Act out the sibling-container rm the same way the real purge would."""
+    instances_root = idir.parent
+
+    class FakeContainers:
+        def run(self, image, entrypoint=None, command=None, **kw):
+            import shutil
+            calls.append(command[1])
+            for part in command[1].split("rm -rf ")[1:]:
+                rel = part.split("'")[1].replace("/idata/", "")
+                shutil.rmtree(instances_root / rel, ignore_errors=True)
+
+    monkeypatch.setattr(
+        instance_service.docker_service, "get_client",
+        lambda: type("C", (), {"containers": FakeContainers()})(),
+    )
+    monkeypatch.setattr(instance_service.docker_service, "host_path_for", lambda p: p)
+    monkeypatch.setattr(instance_service.docker_service, "find_instance_container", lambda _id: None)
+
+
+def test_delete_instance_purges_the_whole_dir_when_asked(tmp_path, monkeypatch):
+    idir = _seed_instance_data(tmp_path, monkeypatch)
+    calls = []
+    _fake_purge_client(idir, monkeypatch, calls)
+
+    instance_service.delete_instance(1, purge_data=True)
+
+    assert not idir.exists()             # nothing left on disk — no orphan folder
+    assert len(calls) == 1               # one sibling-container wipe
+    from sqlmodel import Session
+
+    import models
+    with Session(models.get_engine()) as session:
+        assert session.get(Instance, 1) is None  # DB row gone too
+
+
+def test_delete_instance_keeps_data_by_default(tmp_path, monkeypatch):
+    idir = _seed_instance_data(tmp_path, monkeypatch)
+    calls = []
+    _fake_purge_client(idir, monkeypatch, calls)
+
+    instance_service.delete_instance(1)  # no purge
+
+    assert idir.exists()                 # data left behind, as before
+    assert calls == []                   # no wipe container spun up
+
+
+def test_delete_instance_purge_is_a_noop_without_a_data_dir(tmp_path, monkeypatch):
+    import config
+
+    monkeypatch.setattr(config.settings, "data_dir", str(tmp_path))
+    monkeypatch.setattr(instance_service.docker_service, "find_instance_container", lambda _id: None)
+    ran = []
+    monkeypatch.setattr(
+        instance_service.docker_service, "get_client",
+        lambda: ran.append(1) or (_ for _ in ()).throw(AssertionError("should not run")),
+    )
+    # An instance that never started has no folder — purge must not spin up a container.
+    instance_service.delete_instance(999, purge_data=True)
+    assert ran == []
+
+
 def test_list_and_resolve_log_files(tmp_path, monkeypatch):
     import config
 

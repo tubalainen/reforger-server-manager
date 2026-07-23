@@ -201,6 +201,25 @@ def test_stop_and_delete(logged_in):
     assert logged_in.get(f"/api/instances/{iid}").status_code == 404
 
 
+def test_delete_passes_purge_data_flag_through(logged_in, monkeypatch):
+    from services import instance_service
+
+    tid = _template(logged_in)
+    iid = logged_in.post("/api/instances", json={"name": "s", "template_id": tid}).json()["id"]
+
+    seen = {}
+    monkeypatch.setattr(
+        instance_service, "delete_instance",
+        lambda instance_id, purge_data=False: seen.update(id=instance_id, purge=purge_data),
+    )
+
+    assert logged_in.delete(f"/api/instances/{iid}").status_code == 204
+    assert seen == {"id": iid, "purge": False}          # default leaves data on disk
+
+    assert logged_in.delete(f"/api/instances/{iid}?purge_data=true").status_code == 204
+    assert seen == {"id": iid, "purge": True}           # opt-in wipes it too
+
+
 def test_stats_endpoint_shape(logged_in):
     tid = _template(logged_in)
     iid = logged_in.post("/api/instances", json={"name": "s", "template_id": tid}).json()["id"]
