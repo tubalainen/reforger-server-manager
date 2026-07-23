@@ -208,7 +208,9 @@ class WorkshopService:
 
         Returns {asset, root, mods, missing, total_size} where `mods` is a flat,
         deduped list of {modId, name, version, versions, provides_scenarios,
-        dependencies:[ids]} (the root asset first): `version` is the current
+        kind, tags, dependencies:[ids]} (the root asset first): `kind` is the
+        Workshop classification (scenario|terrain|addon) and `tags` its category
+        labels (#131); `version` is the current
         Workshop release, `versions` the published history for the version-lock
         picker (#60), `provides_scenarios` marks assets that publish their own
         scenario(s) so the UI can flag a second scenario added as a mod (#69),
@@ -230,6 +232,11 @@ class WorkshopService:
                     "version": entry.get("version"),
                     "versions": entry.get("versions") or [],
                     "provides_scenarios": bool(entry.get("scenarios")),
+                    # The Workshop's own classification (#131): kind is
+                    # scenario|terrain|addon, tags are its category labels
+                    # (Vehicles, Weapons, …). Absent for a dep we couldn't fetch.
+                    "kind": entry.get("kind"),
+                    "tags": entry.get("tags") or [],
                     "dependencies": dep_ids,
                 }
             elif dep_ids and not mods[mid]["dependencies"]:
@@ -263,7 +270,9 @@ class WorkshopService:
                  "name": dep.get("name") or child.get("name"),
                  "version": dep.get("version") or child.get("version"),
                  "versions": child.get("versions"),
-                 "scenarios": child.get("scenarios")},
+                 "scenarios": child.get("scenarios"),
+                 "kind": child.get("kind"),
+                 "tags": child.get("tags")},
                 dep_ids_of(child),
             )
             queue.extend(child.get("dependencies") or [])

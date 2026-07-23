@@ -70,6 +70,16 @@ def test_overview_reports_instances_and_version(logged_in):
     assert e["instances"][0]["version"] == "1.0"
 
 
+def test_overview_flags_scenario_publishing_mods(logged_in):
+    # A mod whose template entry marks it as publishing its own scenario(s) is
+    # flagged in the overview, so the UI can distinguish it even offline (#131).
+    logged_in.post("/api/templates", json=_spec(
+        "ScenMod",
+        mods=[{"modId": RHS, "name": "RHS", "provides_scenarios": True}],
+    ))
+    assert _entry(logged_in, RHS)["provides_scenarios"] is True
+
+
 def test_persist_flag_toggles(logged_in):
     logged_in.post("/api/templates", json=_spec())
     r = logged_in.patch(f"/api/mods/{RHS}", json={"persist": True})
@@ -133,8 +143,10 @@ def test_tree_resolves_dependencies(logged_in, monkeypatch):
         assert mid == RHS
         return {
             "mods": [
-                {"modId": RHS, "name": "RHS", "dependencies": ["DEADBEEFDEADBEEF"]},
-                {"modId": "DEADBEEFDEADBEEF", "name": "Core", "dependencies": []},
+                {"modId": RHS, "name": "RHS", "kind": "addon",
+                 "tags": ["Vehicles"], "dependencies": ["DEADBEEFDEADBEEF"]},
+                {"modId": "DEADBEEFDEADBEEF", "name": "Core", "kind": "addon",
+                 "tags": [], "dependencies": []},
             ],
             "missing": [],
         }
@@ -144,6 +156,8 @@ def test_tree_resolves_dependencies(logged_in, monkeypatch):
     assert tree["resolved"] is True
     assert tree["edges"][RHS] == ["DEADBEEFDEADBEEF"]
     assert tree["names"]["DEADBEEFDEADBEEF"] == "Core"
+    # The Workshop type/tags ride along so the UI can label each mod (#131).
+    assert tree["types"][RHS] == {"kind": "addon", "tags": ["Vehicles"]}
     assert tree["missing"] == []
 
 
