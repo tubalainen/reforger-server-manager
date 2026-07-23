@@ -158,6 +158,68 @@ function Test-ManagerHealth {
     }
 }
 
+function Update-ManagerScripts {
+    <#
+    Refresh the local copy of the manager's PowerShell scripts from GitHub, so a
+    Desktop-shortcut launch picks up script fixes without the user having to
+    re-run the installer (#135 follow-up: start.ps1 pulled the manager IMAGE but
+    never itself). Returns the list of file names whose contents changed (an empty
+    list when everything is already current), or $null when the check could not
+    run at all (offline) - in which case the caller keeps the scripts on disk.
+
+    Only the scripts are refreshed, always from `main`: they are host-side tooling
+    that just starts Docker and runs compose, so they stay compatible with any
+    pinned MANAGER_VERSION. The compose file and .env are deliberately left alone
+    (.env is the user's config; the compose file the installer owns).
+
+    All files are downloaded to temp first and only swapped in when every one
+    arrived, so a dropped connection never leaves a half-updated script set.
+    Change detection is by SHA-256; the installer and this function both write raw
+    bytes (LF, per .gitattributes), so an unchanged file hashes identically.
+    #>
+    param(
+        [Parameter(Mandatory)][string] $InstallDir,
+        [string] $Ref = 'main'
+    )
+    $repoRaw = "https://raw.githubusercontent.com/tubalainen/reforger-server-manager/$Ref/scripts/windows"
+    $names = @('start.ps1', 'stop.ps1', 'firewall.ps1', 'common.ps1', 'uninstall.ps1')
+
+    # Phase 1: fetch every script to a temp file; abandon quietly if any fails.
+    $temps = @{}
+    foreach ($name in $names) {
+        $tmp = Join-Path $InstallDir ($name + '.new')
+        try {
+            Invoke-WebRequest -Uri "$repoRaw/$name" -OutFile $tmp -UseBasicParsing -TimeoutSec 20
+            $temps[$name] = $tmp
+        } catch {
+            foreach ($t in $temps.Values) { Remove-Item $t -Force -ErrorAction SilentlyContinue }
+            Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+            return $null
+        }
+    }
+
+    # Phase 2: swap in only the ones whose contents actually changed.
+    $changed = @()
+    foreach ($name in $names) {
+        $dest = Join-Path $InstallDir $name
+        $tmp = $temps[$name]
+        $newHash = (Get-FileHash -Path $tmp -Algorithm SHA256).Hash
+        $oldHash = if (Test-Path $dest) { (Get-FileHash -Path $dest -Algorithm SHA256).Hash } else { '' }
+        if ($newHash -ne $oldHash) {
+            try {
+                Move-Item -Path $tmp -Destination $dest -Force
+                $changed += $name
+            } catch {
+                Write-Warn2 "Could not update $name ($($_.Exception.Message)) - keeping the current one."
+                Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+            }
+        } else {
+            Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+        }
+    }
+    return ,$changed
+}
+
 function Wait-ManagerHealth {
     <#
     Poll the manager until it answers or the budget runs out, printing a progress
