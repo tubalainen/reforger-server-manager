@@ -5,6 +5,7 @@ import Instances from './views/Instances.vue'
 import InstanceDetail from './views/InstanceDetail.vue'
 import Templates from './views/Templates.vue'
 import TemplateWizard from './views/TemplateWizard.vue'
+import ModsOverview from './views/ModsOverview.vue'
 import Guide from './views/Guide.vue'
 
 const router = createRouter({
@@ -22,6 +23,7 @@ const router = createRouter({
     { path: '/', name: 'templates', component: Templates },
     { path: '/templates/new', name: 'template-new', component: TemplateWizard },
     { path: '/templates/:id/edit', name: 'template-edit', component: TemplateWizard, props: true },
+    { path: '/mods', name: 'mods', component: ModsOverview },
     { path: '/instances', name: 'instances', component: Instances },
     { path: '/instances/:id', name: 'instance-detail', component: InstanceDetail, props: true },
     { path: '/guide', name: 'guide', component: Guide },

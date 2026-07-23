@@ -15,6 +15,7 @@ import auth
 import config
 import instances_api
 import models
+import mods_api
 import serverfiles_api
 import system_api
 import templates_api
@@ -43,6 +44,13 @@ async def lifespan(_app: FastAPI):
     elif not config.settings.admin_password or config.settings.admin_password == "change-me-now":
         logger.warning("ADMIN_PASSWORD is unset or still the example value — change it in .env")
     models.init_db()
+    # Seed the Mods Overview registry from existing templates so mods that were
+    # baked in before the registry existed still show up (#131). Idempotent.
+    try:
+        from services import mod_registry
+        await asyncio.to_thread(mod_registry.backfill_from_templates)
+    except Exception as exc:  # never block startup on a best-effort backfill
+        logger.warning("Mod registry backfill failed: %s", exc)
     if not await asyncio.to_thread(docker_service.ping):
         logger.warning(
             "Docker daemon not reachable — downloads and server instances are "
@@ -99,6 +107,7 @@ app.include_router(auth.router)
 app.include_router(serverfiles_api.router)
 app.include_router(workshop_api.router)
 app.include_router(templates_api.router)
+app.include_router(mods_api.router)
 app.include_router(instances_api.router)
 app.include_router(system_api.router)
 
