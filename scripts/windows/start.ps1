@@ -121,18 +121,20 @@ Write-Step 'Starting the manager'
 if ($LASTEXITCODE -ne 0) { Pause-OnExit 'docker compose up failed - see the output above.' }
 
 # --- 4. Wait for the API, then open the GUI ---------------------------------
-$ready = $false
-for ($i = 0; $i -lt 30; $i++) {
-    try {
-        if ((Invoke-WebRequest -Uri "$url/api/health" -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200) {
-            $ready = $true
-            break
-        }
-    } catch {
-        Start-Sleep -Seconds 1
-    }
+# Probe 127.0.0.1 with the proxy bypassed (Wait-ManagerHealth), not
+# Invoke-WebRequest against 'localhost': the old check went through the system
+# proxy and hit IPv6 ::1 first, so it stalled for ~90 s and then wrongly reported
+# the manager "down" even though a browser could reach it (#135). The GUI URL
+# shown to the user stays as localhost.
+Write-Step 'Waiting for the manager to answer'
+$started = Get-Date
+$ready = Wait-ManagerHealth -Url "http://127.0.0.1:$webPort/api/health" -TimeoutSeconds 60
+Write-Host ''
+if ($ready) {
+    Write-Ok "Manager is up at $url (after $([int]((Get-Date) - $started).TotalSeconds) s)"
+} else {
+    Write-Warn2 "Manager did not answer on $url yet - give it a moment, then refresh the page."
 }
-if ($ready) { Write-Ok "Manager is up at $url" } else { Write-Warn2 "Manager did not answer on $url yet - give it a moment." }
 
 if (-not $NoBrowser) { Start-Process $url }
 
