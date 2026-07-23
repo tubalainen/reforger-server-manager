@@ -78,6 +78,12 @@ Docker image: `ghcr.io/tubalainen/reforger-server-manager:latest`
       knows flow back into the wizard's fields; **any key it doesn't know — including
       scenario-specific `gameProperties` — is kept and re-applied on every future save**.
       Validation blocks broken JSON and out-of-range values, but never blocks a custom key
+- [x] **Mods Overview** — one persistent list of every mod ever baked into a template, shown
+      as a tree with its live-resolved dependencies. Each mod is highlighted where it's baked
+      &amp; downloaded to a server (with version); a mod stays on the list even after its
+      template is gone. Tick mods at any level and **add them to a template in one click**;
+      pin mods as **persist** so a prune never removes them, and **Clear &amp; rescan** to
+      drop the ones no template uses any more
 - [x] **Per-template change log** — every template keeps a searchable, tamper-proof history
       of what changed and when: mods added/removed and version locks, scenario changes, and
       each setting edit (old → new), timestamped in your server's timezone. Read-only — it

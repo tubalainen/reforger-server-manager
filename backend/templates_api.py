@@ -14,6 +14,7 @@ from services import (
     config_validator,
     edit_locks,
     instance_service,
+    mod_registry,
     template_service,
 )
 from services.template_service import TemplateSpec
@@ -188,6 +189,8 @@ async def create_template(spec: TemplateSpec, _user: str = Depends(auth.require_
         session.add(t)
         session.flush()  # assign the id before the log references it
         change_log.record_creation(session, t)  # start the change log (#112)
+        # Every mod this template bakes in joins the Mods Overview registry (#131).
+        mod_registry.register_mods(session, [m.model_dump() for m in spec.mods])
         session.commit()
         session.refresh(t)
         return _out(t)
@@ -284,6 +287,8 @@ async def update_template(
         t.updated_at = datetime.now(UTC)
         # Log what this edit changed; writes nothing when nothing changed (#112).
         change_log.record_update(session, t.id, before, change_log.snapshot(t), t.updated_at)
+        # Keep the Mods Overview registry current with this template's mods (#131).
+        mod_registry.register_mods(session, [m.model_dump() for m in spec.mods])
         session.add(t)
         session.commit()
         session.refresh(t)

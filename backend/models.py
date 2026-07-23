@@ -40,6 +40,31 @@ class Template(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=_utcnow)
 
 
+class ModRegistryEntry(SQLModel, table=True):
+    """One mod in the persistent "Mods Overview" registry (#131).
+
+    The registry is the union of every mod that has ever been baked into a
+    server template: a mod is upserted here whenever a template that lists it is
+    created or saved, and it stays even after that template (or the mod's use in
+    it) is gone — the "once added, always on the overview" rule. A rescan clears
+    the entries no template still references; a `persist` entry is exempt and can
+    never be pruned or deleted until the user clears the flag.
+
+    This table holds only what the overview must remember on its own: the mod id,
+    a best-known display name, the persist flag, and when it was first/last seen.
+    Which templates and instances currently carry a mod (and at what version) is
+    derived live from the templates on every read, never stored here.
+    """
+
+    id: int | None = Field(default=None, primary_key=True)
+    mod_id: str = Field(index=True, unique=True)  # 16-hex Workshop id, upper-cased
+    name: str = ""
+    # User-pinned: excluded from clear/rescan pruning and refused by delete (#131).
+    persist: bool = False
+    first_added_at: datetime = Field(default_factory=_utcnow)
+    last_seen_at: datetime = Field(default_factory=_utcnow)
+
+
 class Instance(SQLModel, table=True):
     """A concrete server: a template bound to a branch, ports and a container."""
 
