@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { allModIds, buildForest } from '../modtree'
+import { allModIds, buildForest, subtreeIds } from '../modtree'
 
 const mods = [
   {
@@ -92,5 +92,25 @@ describe('allModIds', () => {
     const tree = { edges: { AAAA: ['BBBB', 'CCCC'] }, names: {} }
     const forest = buildForest(mods, tree)
     expect(allModIds(forest).sort()).toEqual(['AAAA', 'BBBB', 'CCCC'])
+  })
+})
+
+describe('subtreeIds', () => {
+  it('returns a node id plus all descendant ids, deduplicated', () => {
+    const tree = { edges: { AAAA: ['CCCC', 'DDDD'], CCCC: ['DDDD'] }, names: {} }
+    const [alpha] = buildForest(mods, tree)
+    // AAAA -> {CCCC -> DDDD, DDDD}: DDDD appears twice but is deduped.
+    expect(subtreeIds(alpha).sort()).toEqual(['AAAA', 'CCCC', 'DDDD'])
+  })
+
+  it('returns just the node id for a leaf', () => {
+    const [, bravo] = buildForest(mods, { edges: {}, names: {} })
+    expect(subtreeIds(bravo)).toEqual(['BBBB'])
+  })
+
+  it('terminates on a cyclic subtree', () => {
+    const tree = { edges: { AAAA: ['BBBB'], BBBB: ['AAAA'] }, names: {} }
+    const [alpha] = buildForest(mods, tree)
+    expect(subtreeIds(alpha).sort()).toEqual(['AAAA', 'BBBB'])
   })
 })

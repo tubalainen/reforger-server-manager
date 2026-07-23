@@ -6,7 +6,7 @@
 // the list current.
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../api'
-import { allModIds, buildForest } from '../modtree'
+import { allModIds, buildForest, subtreeIds } from '../modtree'
 import ModTreeNode from '../components/ModTreeNode.vue'
 
 const mods = ref([])
@@ -57,10 +57,16 @@ async function load() {
   }
 }
 
-function toggle(id) {
+// Ticking a node cascades to its whole dependency subtree: selecting a top-level
+// mod selects everything beneath it, and clearing it clears the subtree too (#131).
+function toggle(node) {
+  const ids = subtreeIds(node)
+  const turningOn = !selected.value.has(node.modId)
   const next = new Set(selected.value)
-  if (next.has(id)) next.delete(id)
-  else next.add(id)
+  for (const id of ids) {
+    if (turningOn) next.add(id)
+    else next.delete(id)
+  }
   selected.value = next
 }
 
