@@ -59,8 +59,8 @@ const tags = computed(() => {
         type="checkbox"
         class="form-check-input mt-0 flex-shrink-0"
         :checked="selected.has(node.modId)"
-        :title="`Select ${node.name}`"
-        @change="emit('toggle', node.modId)"
+        :title="node.children.length ? `Select ${node.name} and its dependencies` : `Select ${node.name}`"
+        @change="emit('toggle', node)"
       />
 
       <span class="fw-semibold text-truncate" style="max-width: 22rem">{{ node.name }}</span>

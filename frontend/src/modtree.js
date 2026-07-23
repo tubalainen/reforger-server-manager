@@ -53,11 +53,18 @@ export function buildForest(mods, tree) {
 
 // Every modId in a forest, deduplicated — the ids a "select all" would tick.
 export function allModIds(forest) {
+  return subtreeIds({ modId: null, children: forest || [] }).filter((id) => id !== null)
+}
+
+// A node's own id plus every id beneath it, deduplicated — so ticking a parent
+// can cascade the selection to its whole dependency subtree (#131). Cycles are
+// already broken by buildForest, so the walk terminates.
+export function subtreeIds(node) {
   const ids = new Set()
   const walk = (n) => {
     ids.add(n.modId)
-    n.children.forEach(walk)
+    ;(n.children || []).forEach(walk)
   }
-  ;(forest || []).forEach(walk)
+  walk(node)
   return [...ids]
 }
