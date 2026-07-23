@@ -68,3 +68,24 @@ export function subtreeIds(node) {
   walk(node)
   return [...ids]
 }
+
+// Build the path key for a node: the '>'-joined chain of modIds from its root.
+// Deps are deduped per parent, so sibling modIds don't collide; the same mod
+// under two different parents gets two distinct paths. This is the key the tree
+// uses to remember which nodes are expanded (#131).
+export function nodePath(parentPath, modId) {
+  return parentPath ? `${parentPath}>${modId}` : modId
+}
+
+// Every expandable node's path (i.e. nodes that have children) — what
+// "Expand all" opens. Uses the same path scheme as nodePath.
+export function expandablePaths(forest) {
+  const paths = new Set()
+  const walk = (node, path) => {
+    if (!node.children || !node.children.length) return
+    paths.add(path)
+    for (const child of node.children) walk(child, nodePath(path, child.modId))
+  }
+  ;(forest || []).forEach((n) => walk(n, n.modId))
+  return paths
+}

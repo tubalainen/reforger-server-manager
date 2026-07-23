@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { allModIds, buildForest, subtreeIds } from '../modtree'
+import { allModIds, buildForest, expandablePaths, nodePath, subtreeIds } from '../modtree'
 
 const mods = [
   {
@@ -112,5 +112,34 @@ describe('subtreeIds', () => {
     const tree = { edges: { AAAA: ['BBBB'], BBBB: ['AAAA'] }, names: {} }
     const [alpha] = buildForest(mods, tree)
     expect(subtreeIds(alpha).sort()).toEqual(['AAAA', 'BBBB'])
+  })
+})
+
+describe('nodePath', () => {
+  it('joins the modId chain with ">", rooted at the top', () => {
+    expect(nodePath('', 'AAAA')).toBe('AAAA')
+    expect(nodePath('AAAA', 'BBBB')).toBe('AAAA>BBBB')
+    expect(nodePath('AAAA>BBBB', 'CCCC')).toBe('AAAA>BBBB>CCCC')
+  })
+})
+
+describe('expandablePaths', () => {
+  it('returns the path of every node that has children (what "expand all" opens)', () => {
+    const tree = { edges: { AAAA: ['CCCC'], CCCC: ['DDDD'] }, names: {} }
+    const forest = buildForest(mods, tree)
+    // AAAA has a child (CCCC), CCCC has a child (DDDD); BBBB is a flat leaf.
+    expect([...expandablePaths(forest)].sort()).toEqual(['AAAA', 'AAAA>CCCC'])
+  })
+
+  it('is empty when nothing has children', () => {
+    const forest = buildForest(mods, { edges: {}, names: {} })
+    expect(expandablePaths(forest).size).toBe(0)
+  })
+
+  it('does not recurse forever on a cycle', () => {
+    const tree = { edges: { AAAA: ['BBBB'], BBBB: ['AAAA'] }, names: {} }
+    const forest = buildForest(mods, tree)
+    // Whatever it returns, it must terminate and stay within the built subtree.
+    expect([...expandablePaths(forest)]).toContain('AAAA')
   })
 })
