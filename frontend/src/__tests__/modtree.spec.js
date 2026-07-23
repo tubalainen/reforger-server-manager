@@ -7,6 +7,7 @@ const mods = [
     mod_id: 'AAAA', name: 'Alpha', persist: true, orphaned: false,
     templates: [{ id: 1, name: 'T1' }],
     instances: [{ id: 9, name: 'srv', template: 'T1', version: '1.0' }],
+    provides_scenarios: true,
   },
   { mod_id: 'BBBB', name: 'Bravo', persist: false, orphaned: true, templates: [], instances: [] },
 ]
@@ -46,6 +47,29 @@ describe('buildForest', () => {
     expect(alpha.instances[0].version).toBe('1.0')
     const bravo = buildForest(mods, {})[1]
     expect(bravo.orphaned).toBe(true)
+  })
+
+  it('attaches the Workshop type (kind) and tags from the tree', () => {
+    const tree = {
+      edges: { AAAA: ['CCCC'] },
+      names: { CCCC: 'Core' },
+      types: {
+        AAAA: { kind: 'addon', tags: ['Vehicles', 'Weapons'] },
+        CCCC: { kind: 'scenario', tags: [] },
+      },
+    }
+    const [alpha] = buildForest(mods, tree)
+    expect(alpha.kind).toBe('addon')
+    expect(alpha.tags).toEqual(['Vehicles', 'Weapons'])
+    expect(alpha.provides_scenarios).toBe(true) // from the registry entry
+    // Type rides along even for a dependency-only node.
+    expect(alpha.children[0].kind).toBe('scenario')
+  })
+
+  it('defaults kind/tags when the tree has no type info (offline)', () => {
+    const [alpha] = buildForest(mods, { edges: {}, names: {} })
+    expect(alpha.kind).toBe(null)
+    expect(alpha.tags).toEqual([])
   })
 
   it('guards against dependency cycles', () => {

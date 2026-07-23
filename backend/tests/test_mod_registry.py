@@ -59,14 +59,17 @@ def test_resolve_tree_merges_roots_and_reports_missing(monkeypatch):
     graph = {
         "AAAAAAAAAAAAAAAA": {
             "mods": [
-                {"modId": "AAAAAAAAAAAAAAAA", "name": "A", "dependencies": ["CCCCCCCCCCCCCCCC"]},
-                {"modId": "CCCCCCCCCCCCCCCC", "name": "Core", "dependencies": []},
+                {"modId": "AAAAAAAAAAAAAAAA", "name": "A", "kind": "scenario",
+                 "tags": ["Conflict"], "dependencies": ["CCCCCCCCCCCCCCCC"]},
+                {"modId": "CCCCCCCCCCCCCCCC", "name": "Core", "kind": "addon",
+                 "tags": [], "dependencies": []},
             ],
             "missing": [],
         },
         "BBBBBBBBBBBBBBBB": {
             "mods": [
-                {"modId": "BBBBBBBBBBBBBBBB", "name": "B", "dependencies": ["CCCCCCCCCCCCCCCC"]},
+                {"modId": "BBBBBBBBBBBBBBBB", "name": "B", "kind": "terrain",
+                 "tags": [], "dependencies": ["CCCCCCCCCCCCCCCC"]},
             ],
             "missing": ["DDDDDDDDDDDDDDDD"],
         },
@@ -76,5 +79,8 @@ def test_resolve_tree_merges_roots_and_reports_missing(monkeypatch):
     assert tree["edges"]["AAAAAAAAAAAAAAAA"] == ["CCCCCCCCCCCCCCCC"]
     assert tree["edges"]["BBBBBBBBBBBBBBBB"] == ["CCCCCCCCCCCCCCCC"]
     assert tree["names"]["CCCCCCCCCCCCCCCC"] == "Core"
+    # Workshop type/tags ride along per mod (#131).
+    assert tree["types"]["AAAAAAAAAAAAAAAA"] == {"kind": "scenario", "tags": ["Conflict"]}
+    assert tree["types"]["BBBBBBBBBBBBBBBB"]["kind"] == "terrain"
     assert tree["missing"] == ["DDDDDDDDDDDDDDDD"]
     assert tree["resolved"] is True

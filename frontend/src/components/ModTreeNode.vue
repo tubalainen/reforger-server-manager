@@ -1,9 +1,9 @@
 <script setup>
 // One row in the Mods Overview tree (issue #131), rendered recursively.
 // Emits bubble up to the ModsOverview view, which owns the API calls.
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
-defineProps({
+const props = defineProps({
   node: { type: Object, required: true },
   selected: { type: Object, required: true }, // reactive Set of ticked modIds
   busyPersist: { type: Object, required: true }, // Set of modIds mid-request
@@ -12,6 +12,32 @@ defineProps({
 const emit = defineEmits(['toggle', 'persist', 'remove'])
 
 const open = ref(true)
+
+// The Workshop's own classification, shown as a coloured pill so scenarios read
+// differently from ordinary mods at a glance (#131). Null when unknown (Workshop
+// offline / not resolved) — the pill is simply omitted.
+const KIND = {
+  scenario: { label: 'Scenario', cls: 'text-bg-info' },
+  terrain: { label: 'Terrain', cls: 'text-bg-primary' },
+  addon: { label: 'Mod', cls: 'text-bg-secondary' },
+}
+const typeBadge = computed(() => KIND[props.node.kind] || null)
+
+// Category tags (Vehicles, Weapons, …), deduped and capped so the row stays
+// readable; the kind's own tag is dropped since the pill already says it.
+const tags = computed(() => {
+  const drop = new Set(['scenario', 'scenarios', 'terrain', 'terrains', 'addon', 'addons'])
+  const seen = new Set()
+  const out = []
+  for (const t of props.node.tags || []) {
+    const key = String(t).toLowerCase()
+    if (drop.has(key) || seen.has(key)) continue
+    seen.add(key)
+    out.push(t)
+    if (out.length >= 6) break
+  }
+  return out
+})
 </script>
 
 <template>
@@ -38,6 +64,25 @@ const open = ref(true)
       />
 
       <span class="fw-semibold text-truncate" style="max-width: 22rem">{{ node.name }}</span>
+
+      <!-- Type (scenario / terrain / mod) from the Workshop, plus a hint when a
+           plain mod also publishes its own scenario(s) (#131) -->
+      <span
+        v-if="typeBadge"
+        class="badge rounded-pill"
+        :class="typeBadge.cls"
+        :title="`Workshop type: ${typeBadge.label}`"
+      >{{ typeBadge.label }}</span>
+      <span
+        v-if="node.provides_scenarios && node.kind !== 'scenario'"
+        class="badge rounded-pill bg-info-subtle text-info-emphasis border border-info-subtle"
+        title="This mod publishes its own scenario(s)"
+      >+ scenario</span>
+      <span
+        v-for="tag in tags"
+        :key="tag"
+        class="badge rounded-pill bg-body-secondary text-secondary border fw-normal"
+      >{{ tag }}</span>
 
       <span
         v-if="!node.registered"

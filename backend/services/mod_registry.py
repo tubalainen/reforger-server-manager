@@ -136,6 +136,10 @@ def overview(session: Session) -> list[dict]:
     mod_templates: dict[str, list[dict]] = {}
     tmpl_mod_version: dict[tuple[int, str], str | None] = {}
     tmpl_by_id: dict[int, Template] = {}
+    # modId -> does any template's entry mark it as publishing its own scenario(s)?
+    # A DB-only hint (#131) so the overview can flag scenario-carrying mods even
+    # when the Workshop (and thus the live type badge) is unreachable.
+    mod_provides: dict[str, bool] = {}
     for t in templates:
         tmpl_by_id[t.id] = t
         for m in _enriched_mods(t):
@@ -144,6 +148,8 @@ def overview(session: Session) -> list[dict]:
                 continue
             mod_templates.setdefault(mid, []).append({"id": t.id, "name": t.name})
             tmpl_mod_version[(t.id, mid)] = m.get("version")
+            if m.get("provides_scenarios"):
+                mod_provides[mid] = True
 
     # modId -> [{id, name, template, version}] via each instance's template
     mod_instances: dict[str, list[dict]] = {}
@@ -177,6 +183,7 @@ def overview(session: Session) -> list[dict]:
             "templates": used_by,
             "instances": mod_instances.get(r.mod_id, []),
             "orphaned": not used_by,  # in no template any more, kept by the rule
+            "provides_scenarios": mod_provides.get(r.mod_id, False),
         })
     # Name-sort is case-insensitive; SQL's ORDER BY name isn't, so redo it here.
     out.sort(key=lambda m: (m["name"] or m["mod_id"]).lower())
@@ -265,12 +272,15 @@ def resolve_tree(mod_ids: list[str]) -> dict:
     Relies on WorkshopService's in-memory asset cache so shared dependencies
     across roots aren't refetched.
 
-    Returns {edges: {modId: [depId]}, names: {modId: name}, missing: [modId],
-    resolved: bool} covering the requested mods and every dependency discovered
-    beneath them.
+    Returns {edges: {modId: [depId]}, names: {modId: name}, types: {modId:
+    {kind, tags}}, missing: [modId], resolved: bool} covering the requested mods
+    and every dependency discovered beneath them. `kind` is the Workshop
+    classification (scenario|terrain|addon) and `tags` its category labels, so
+    the overview can show what each mod actually is (#131).
     """
     edges: dict[str, list[str]] = {}
     names: dict[str, str] = {}
+    types: dict[str, dict] = {}
     missing: set[str] = set()
     resolved_any = False
 
@@ -294,12 +304,15 @@ def resolve_tree(mod_ids: list[str]) -> dict:
             # Prefer the first non-empty edge set we learn for a mod.
             if emid not in edges or (deps and not edges[emid]):
                 edges[emid] = deps
+            if emid not in types and (m.get("kind") or m.get("tags")):
+                types[emid] = {"kind": m.get("kind"), "tags": m.get("tags") or []}
         for miss in res.get("missing") or []:
             missing.add(miss)
 
     return {
         "edges": edges,
         "names": names,
+        "types": types,
         "missing": sorted(missing),
         "resolved": resolved_any,
     }

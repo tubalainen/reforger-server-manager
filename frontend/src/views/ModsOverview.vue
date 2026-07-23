@@ -10,7 +10,7 @@ import { allModIds, buildForest } from '../modtree'
 import ModTreeNode from '../components/ModTreeNode.vue'
 
 const mods = ref([])
-const tree = ref({ edges: {}, names: {}, missing: [], resolved: true })
+const tree = ref({ edges: {}, names: {}, types: {}, missing: [], resolved: true })
 const templates = ref([])
 const loading = ref(true)
 const treeLoading = ref(false)
@@ -164,9 +164,11 @@ onMounted(load)
 
     <p class="text-secondary small">
       Every mod ever baked into a server template, kept here even after the template is
-      gone. Tick mods at any level and add them to a template in one click. Green badges
-      show where a mod is baked &amp; downloaded to a server, with its version. Pin a mod
-      as <strong>persist</strong> so a rescan or delete never removes it.
+      gone. Each entry is tagged with its Workshop type — <strong>Scenario</strong>,
+      <strong>Terrain</strong> or <strong>Mod</strong> — and its category tags. Tick mods
+      at any level and add them to a template in one click. Green badges show where a mod
+      is baked &amp; downloaded to a server, with its version. Pin a mod as
+      <strong>persist</strong> so a rescan or delete never removes it.
     </p>
 
     <div v-if="error" class="alert alert-warning py-2">{{ error }}</div>

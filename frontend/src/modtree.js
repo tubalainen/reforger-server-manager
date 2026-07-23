@@ -10,17 +10,23 @@
 // nodes (flagged `registered: false`), named from the resolver when possible.
 
 // Build the forest from the registry list and the resolved dependency edges.
-//   mods: [{ mod_id, name, persist, orphaned, templates, instances }]
-//   tree: { edges: { modId: [depId] }, names: { modId: name } }  (may be empty)
+//   mods: [{ mod_id, name, persist, orphaned, templates, instances,
+//            provides_scenarios }]
+//   tree: { edges: { modId: [depId] }, names: { modId: name },
+//           types: { modId: { kind, tags } } }  (may be empty / offline)
+// Each node carries a `kind` (scenario|terrain|addon, from the Workshop) and
+// `tags` (its category labels) so the UI can show what a mod actually is (#131).
 export function buildForest(mods, tree) {
   const edges = (tree && tree.edges) || {}
   const names = (tree && tree.names) || {}
+  const types = (tree && tree.types) || {}
   const registry = new Map((mods || []).map((m) => [m.mod_id, m]))
 
   // `ancestors` guards against dependency cycles: a mod is never expanded
   // underneath itself, so a bad edge can't spin the builder forever.
   function node(id, ancestors) {
     const reg = registry.get(id)
+    const type = types[id] || {}
     const children = []
     if (!ancestors.has(id)) {
       const next = new Set(ancestors)
@@ -35,6 +41,9 @@ export function buildForest(mods, tree) {
       orphaned: reg ? !!reg.orphaned : false,
       templates: (reg && reg.templates) || [],
       instances: (reg && reg.instances) || [],
+      kind: type.kind || null,
+      tags: Array.isArray(type.tags) ? type.tags : [],
+      provides_scenarios: reg ? !!reg.provides_scenarios : false,
       children,
     }
   }
