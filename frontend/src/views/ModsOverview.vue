@@ -6,7 +6,7 @@
 // the list current.
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../api'
-import { allModIds, buildForest, subtreeIds } from '../modtree'
+import { allModIds, buildForest, expandablePaths, subtreeIds } from '../modtree'
 import ModTreeNode from '../components/ModTreeNode.vue'
 
 const mods = ref([])
@@ -23,8 +23,16 @@ const addTarget = ref('')
 const adding = ref(false)
 const rescanning = ref(false)
 
+// Which tree nodes are expanded, by path key. Collapsed by default — the tree
+// opens only where the user clicks (#131). Persists across tree reloads because
+// the keys are modId-based.
+const expanded = ref(new Set())
+
 const forest = computed(() => buildForest(mods.value, tree.value))
 const selectedCount = computed(() => selected.value.size)
+// Are there any dependencies to expand at all? (Hides the expand/collapse
+// controls when every mod is a flat leaf.)
+const anyExpandable = computed(() => expandablePaths(forest.value).size > 0)
 
 async function loadMods() {
   mods.value = (await api('/api/mods')).mods
@@ -37,7 +45,7 @@ async function loadTree() {
   try {
     tree.value = await api('/api/mods/tree')
   } catch {
-    tree.value = { edges: {}, names: {}, missing: [], resolved: false }
+    tree.value = { edges: {}, names: {}, types: {}, missing: [], resolved: false }
   } finally {
     treeLoading.value = false
   }
@@ -68,6 +76,20 @@ function toggle(node) {
     else next.delete(id)
   }
   selected.value = next
+}
+
+// --- Expand / collapse the tree ---
+function toggleExpand(path) {
+  const next = new Set(expanded.value)
+  if (next.has(path)) next.delete(path)
+  else next.add(path)
+  expanded.value = next
+}
+function expandAll() {
+  expanded.value = expandablePaths(forest.value)
+}
+function collapseAll() {
+  expanded.value = new Set()
 }
 
 function selectAll() {
@@ -193,8 +215,21 @@ onMounted(load)
     </div>
 
     <template v-else>
-      <!-- Action bar: select + add ticked mods to a template -->
+      <!-- Action bar: expand/collapse + select + add ticked mods to a template -->
       <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+        <template v-if="anyExpandable">
+          <button
+            class="btn btn-sm btn-outline-secondary"
+            :disabled="treeLoading"
+            @click="expandAll"
+          >Expand all</button>
+          <button
+            class="btn btn-sm btn-outline-secondary"
+            :disabled="treeLoading"
+            @click="collapseAll"
+          >Collapse all</button>
+          <span class="vr d-none d-sm-block"></span>
+        </template>
         <button class="btn btn-sm btn-outline-secondary" @click="selectAll">Select all</button>
         <button
           class="btn btn-sm btn-outline-secondary"
@@ -216,7 +251,16 @@ onMounted(load)
         </div>
       </div>
 
-      <div v-if="treeLoading" class="small text-secondary mb-2">Resolving dependencies…</div>
+      <!-- Resolving the dependency tree hits the Workshop per mod and can take a
+           while, so make the wait visible rather than leaving the list looking
+           flat and finished (#131). -->
+      <div
+        v-if="treeLoading"
+        class="d-flex align-items-center gap-2 text-secondary mb-2"
+      >
+        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+        <span>Building the dependency tree from the Workshop — this can take a moment…</span>
+      </div>
       <div v-else-if="!tree.resolved" class="small text-secondary mb-2">
         Workshop unreachable — showing mods without their dependency tree.
       </div>
@@ -229,9 +273,12 @@ onMounted(load)
             :node="node"
             :selected="selected"
             :busy-persist="busyPersist"
+            :expanded="expanded"
+            :path="node.modId"
             @toggle="toggle"
             @persist="setPersist"
             @remove="remove"
+            @toggle-expand="toggleExpand"
           />
         </div>
       </div>

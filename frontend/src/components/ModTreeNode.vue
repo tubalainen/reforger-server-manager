@@ -1,17 +1,21 @@
 <script setup>
 // One row in the Mods Overview tree (issue #131), rendered recursively.
 // Emits bubble up to the ModsOverview view, which owns the API calls.
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
+import { nodePath } from '../modtree'
 
 const props = defineProps({
   node: { type: Object, required: true },
   selected: { type: Object, required: true }, // reactive Set of ticked modIds
   busyPersist: { type: Object, required: true }, // Set of modIds mid-request
+  expanded: { type: Object, required: true }, // reactive Set of open node paths
+  path: { type: String, required: true }, // this node's path key (see modtree)
   depth: { type: Number, default: 0 },
 })
-const emit = defineEmits(['toggle', 'persist', 'remove'])
+const emit = defineEmits(['toggle', 'persist', 'remove', 'toggle-expand'])
 
-const open = ref(true)
+// Collapsed by default: the tree opens only where the user expands it (#131).
+const open = computed(() => props.expanded.has(props.path))
 
 // The Workshop's own classification, shown as a coloured pill so scenarios read
 // differently from ordinary mods at a glance (#131). Null when unknown (Workshop
@@ -51,7 +55,7 @@ const tags = computed(() => {
         class="btn btn-sm p-0 border-0 text-secondary"
         style="width: 1.1rem"
         :title="open ? 'Collapse' : 'Expand'"
-        @click="open = !open"
+        @click="emit('toggle-expand', path)"
       >{{ open ? '▾' : '▸' }}</button>
       <span v-else style="width: 1.1rem"></span>
 
@@ -133,10 +137,13 @@ const tags = computed(() => {
         :node="child"
         :selected="selected"
         :busy-persist="busyPersist"
+        :expanded="expanded"
+        :path="nodePath(path, child.modId)"
         :depth="depth + 1"
         @toggle="emit('toggle', $event)"
         @persist="(id, val) => emit('persist', id, val)"
         @remove="(id, name) => emit('remove', id, name)"
+        @toggle-expand="emit('toggle-expand', $event)"
       />
     </template>
   </div>
