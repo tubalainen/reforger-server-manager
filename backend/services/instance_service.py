@@ -700,7 +700,14 @@ def stop_instance(instance_id: int) -> None:
             logger.warning("Stop of instance %s failed: %s", instance_id, exc)
 
 
-def delete_instance(instance_id: int) -> None:
+def delete_instance(instance_id: int, purge_data: bool = False) -> None:
+    """Remove an instance's container and DB row.
+
+    Deleting an instance normally leaves its on-disk data (baked mods, saves, logs,
+    configs) behind — the folder is orphaned, and once the DB row is gone there is
+    no in-app way to reach it again. Pass ``purge_data=True`` to also wipe that
+    directory, so the delete leaves nothing behind (#131 follow-up).
+    """
     container = docker_service.find_instance_container(instance_id)
     if container:
         forget_run(container.id)  # don't leak the "this run was online" memo (#88)
@@ -708,6 +715,9 @@ def delete_instance(instance_id: int) -> None:
             container.remove(force=True)
         except DockerException as exc:
             logger.warning("Removing container for instance %s failed: %s", instance_id, exc)
+    if purge_data:
+        # After the container: nothing then holds the bind-mounted files open.
+        _purge_instance_dir(instance_id)
     forget_cpu_sample(instance_id)
     forget_seen_running(instance_id)
     with Session(get_engine()) as session:
@@ -715,7 +725,36 @@ def delete_instance(instance_id: int) -> None:
         if inst:
             session.delete(inst)
             session.commit()
-    logger.info("Deleted instance %s", instance_id)
+    logger.info(
+        "Deleted instance %s%s", instance_id, " and wiped its stored data" if purge_data else ""
+    )
+
+
+def _purge_instance_dir(instance_id: int) -> None:
+    """Delete an instance's whole on-disk directory (mods, saves, logs, configs).
+
+    Runs in a sibling container for the same reason clear_instance_data does: the
+    server writes those files as root, so the manager process may not be able to
+    remove them itself. A no-op when the instance has nothing on disk yet.
+    """
+    instances_root = Path(config.settings.data_dir) / "instances"
+    if not (instances_root / str(instance_id)).exists():
+        return
+    host_root = docker_service.host_path_for(str(instances_root))
+    # instance_id is an int straight from the DB — it never reaches the shell as
+    # free text, so there is nothing here for a caller to inject.
+    script = f"rm -rf '/idata/{instance_id}'"
+    try:
+        docker_service.get_client().containers.run(
+            config.settings.steamcmd_image,
+            entrypoint="/bin/sh",
+            command=["-c", script],
+            remove=True,
+            volumes={host_root: {"bind": "/idata", "mode": "rw"}},
+            labels={docker_service.LABEL_MANAGED: "true"},
+        )
+    except DockerException as exc:
+        raise InstanceError(f"Could not remove instance data: {exc}") from exc
 
 
 # --------------------------------------------------------------------------- #

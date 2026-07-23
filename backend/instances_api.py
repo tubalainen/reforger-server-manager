@@ -191,8 +191,17 @@ async def restart_schedule(
 
 
 @router.delete("/{instance_id}", status_code=204)
-async def delete(instance_id: int, _user: str = Depends(auth.require_session)):
-    await asyncio.to_thread(instance_service.delete_instance, instance_id)
+async def delete(
+    instance_id: int,
+    purge_data: bool = False,
+    _user: str = Depends(auth.require_session),
+):
+    try:
+        await asyncio.to_thread(
+            instance_service.delete_instance, instance_id, purge_data
+        )
+    except InstanceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/{instance_id}/data")
