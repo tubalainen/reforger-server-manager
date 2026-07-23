@@ -353,8 +353,8 @@ opens `http://localhost:7780`. Options if you prefer to drive it by hand:
 
 ```powershell
 cd $env:USERPROFILE\ReforgerServerManager
-.\start.ps1            # pull the newest manager image (unless locked), then start
-.\start.ps1 -NoUpdate  # start the version already on disk, no pull (e.g. offline)
+.\start.ps1            # refresh the scripts + pull the newest manager image, then start
+.\start.ps1 -NoUpdate  # start what's on disk, no script refresh and no pull (e.g. offline)
 .\stop.ps1             # stop the manager (running Arma servers stay up)
 .\stop.ps1 -All        # also stop every Arma server instance
 ```
@@ -365,9 +365,11 @@ the server files) and create an instance.
 ### Updating (and locking a version)
 
 **The manager updates itself on start.** Every time you launch it (the Desktop shortcut,
-or `start.ps1`), it pulls the newest manager image first, so you are always on the latest
-release. Your data, settings and running Arma servers are untouched. To start without
-pulling — offline, or just faster — use `.\start.ps1 -NoUpdate`.
+or `start.ps1`), it first refreshes these Windows helper scripts from GitHub — so a fix to
+the scripts themselves reaches you automatically — and then pulls the newest manager image,
+so you are always on the latest release. Your data, settings and running Arma servers are
+untouched. To start without either — offline, or just faster — use `.\start.ps1 -NoUpdate`
+(or `-NoSelfUpdate` to skip only the script refresh).
 
 **To lock the manager to one version,** set `MANAGER_VERSION` in
 `$env:USERPROFILE\ReforgerServerManager\.env` to a release tag, then restart it:
@@ -384,9 +386,12 @@ Release tags are listed on the
 version pinned, start still confirms that exact image is present but never moves you
 forward until you change the value back.
 
-**To update the scripts and compose file themselves** (not just the image) — for instance
-when a release changes how the stack is wired — re-run the installer. It refreshes the
-files in place and **keeps your existing `.env`**:
+The helper scripts refresh themselves on every start, but the **compose file** and
+`.env.example` do not. To update those (for instance when a release changes how the stack
+is wired), re-run the installer — it refreshes every file in place and **keeps your existing
+`.env`**. (If you're upgrading from a version whose `start.ps1` predates the self-update, run
+the installer once to get the self-updating script; after that the scripts keep themselves
+current.)
 
 ```powershell
 $installer = "$env:TEMP\reforger-install.ps1"

@@ -6,12 +6,16 @@
 .DESCRIPTION
     Safe to run at any time: if everything is already running it just opens the GUI.
 
-    By default it pulls the manager image before starting, so a double-click of the
-    Desktop shortcut keeps you on the newest release. The tag it pulls comes from
-    MANAGER_VERSION in .env ('latest' by default); pin it to a release such as
-    v0.31.0 to LOCK the version, and this pull will then just confirm that one is
-    present instead of moving you forward. Pass -NoUpdate to skip the pull entirely
-    (e.g. offline, or to start as fast as possible).
+    By default it first refreshes these helper scripts from GitHub (so a fix to the
+    scripts themselves reaches you on the next launch, not just when you re-run the
+    installer), then pulls the manager image, so a double-click of the Desktop
+    shortcut keeps both current. If a script update changes this file, it relaunches
+    the new copy so the fix takes effect on the same click. The manager tag it pulls
+    comes from MANAGER_VERSION in .env ('latest' by default); pin it to a release
+    such as v0.31.0 to LOCK the version, and this pull will then just confirm that
+    one is present instead of moving you forward. Pass -NoUpdate to skip both the
+    script refresh and the image pull (e.g. offline, or to start as fast as
+    possible), or -NoSelfUpdate to skip only the script refresh.
 #>
 [CmdletBinding()]
 param(
@@ -23,6 +27,13 @@ param(
 
     # Do not open the browser at the end.
     [switch] $NoBrowser,
+
+    # Skip the self-update of the local scripts (also implied by -NoUpdate).
+    # Set automatically on the relaunch after an update, to prevent a loop.
+    [switch] $NoSelfUpdate,
+
+    # Which ref to pull the updated scripts from (see Update-ManagerScripts).
+    [string] $ScriptsRef = 'main',
 
     # Seconds to wait for the Docker engine to come up.
     [int] $DockerTimeout = 300
@@ -61,6 +72,30 @@ Write-Host '  Reforger Server Manager' -ForegroundColor White
 
 if (-not (Test-Path $Compose)) {
     Pause-OnExit "docker-compose.windows.yaml is missing from $here - re-run the installer."
+}
+
+# --- 0. Self-update the local scripts ---------------------------------------
+# The Desktop shortcut runs THIS file from the install folder, so a fix pushed to
+# the scripts (e.g. the #135 health-check fix) never reached anyone who didn't
+# re-run the installer. Refresh them from GitHub first; if start.ps1 itself
+# changed, relaunch the new copy so the fix applies on this very click. Skipped
+# for -NoUpdate (offline/fast start) and on the post-update relaunch (-NoSelfUpdate).
+if (-not $NoUpdate -and -not $NoSelfUpdate) {
+    Write-Step 'Checking for script updates'
+    $changed = Update-ManagerScripts -InstallDir $here -Ref $ScriptsRef
+    if ($null -eq $changed) {
+        Write-Info 'Could not check for updates (offline?) - using the scripts already on disk.'
+    } elseif ($changed.Count -gt 0) {
+        Write-Ok ("Updated: {0}" -f ($changed -join ', '))
+        if ($changed -contains 'common.ps1') { . (Join-Path $here 'common.ps1') }
+        if ($changed -contains 'start.ps1') {
+            Write-Info 'Relaunching with the updated start script...'
+            & (Join-Path $here 'start.ps1') @PSBoundParameters -NoSelfUpdate
+            exit $LASTEXITCODE
+        }
+    } else {
+        Write-Info 'Scripts are up to date.'
+    }
 }
 
 $docker = Get-DockerCli -Quiet
