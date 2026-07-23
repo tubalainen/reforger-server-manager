@@ -125,3 +125,55 @@ function Wait-DockerEngine {
     Write-Info  'sign-in screen if it is showing one), then run this again.'
     return $false
 }
+
+function Test-ManagerHealth {
+    <#
+    Return $true when the manager's HTTP API answers 200 at $Url.
+
+    Deliberately NOT Invoke-WebRequest. On Windows that call is routed through the
+    system WinINET proxy (including WPAD auto-detect), which usually does NOT
+    bypass localhost - so a manager a browser reaches fine gets reported as "not
+    answering", after a long per-request stall while the proxy is probed (#135).
+    A raw HttpWebRequest with Proxy = $null connects straight to the loopback
+    address. Call it against 127.0.0.1, not 'localhost': Windows resolves
+    'localhost' to IPv6 ::1 first, where Docker Desktop's published port may not
+    be listening, giving the same false "down" result.
+    #>
+    param(
+        [Parameter(Mandatory)][string] $Url,
+        [int] $TimeoutMs = 2000
+    )
+    $resp = $null
+    try {
+        $req = [System.Net.HttpWebRequest]::Create($Url)
+        $req.Proxy = $null          # direct connection - never via a system proxy
+        $req.Method = 'GET'
+        $req.Timeout = $TimeoutMs
+        $resp = $req.GetResponse()
+        return ([int]$resp.StatusCode -eq 200)
+    } catch {
+        return $false
+    } finally {
+        if ($resp) { $resp.Close() }
+    }
+}
+
+function Wait-ManagerHealth {
+    <#
+    Poll the manager until it answers or the budget runs out, printing a progress
+    dot per attempt so a slow first boot doesn't look like a hang. Returns $true
+    once it answers. Uses a wall-clock deadline so a stalled attempt can't push
+    the total far past the budget.
+    #>
+    param(
+        [Parameter(Mandatory)][string] $Url,
+        [int] $TimeoutSeconds = 60
+    )
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if (Test-ManagerHealth -Url $Url) { return $true }
+        Write-Host '.' -NoNewline
+        Start-Sleep -Seconds 2
+    }
+    return $false
+}
