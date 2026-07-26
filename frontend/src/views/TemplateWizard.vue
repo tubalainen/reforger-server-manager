@@ -103,7 +103,10 @@ const spec = reactive({
   // re-applies over every render (#29). Set by the JSON editor's Apply.
   extras: {},
   launch: {
-    max_fps: null,
+    // New templates cap the server at 60 FPS by default (#143). Clear the field
+    // to run uncapped. Existing templates keep whatever they saved: the loader
+    // merges the stored launch over these defaults, so an explicit value wins.
+    max_fps: 60,
     network_dynamic_simulation: null,
     spatial_map_resolution: null,
     staggering_budget: null,
