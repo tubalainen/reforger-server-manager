@@ -195,7 +195,13 @@ if (Test-Path $envPath) {
     $secret = New-RandomString -Length 64 -Charset '0123456789abcdef'
 
     $content = Get-Content (Join-Path $InstallDir '.env.example') -Raw
-    $content = $content -replace '(?m)^ADMIN_PASSWORD=.*$', ("ADMIN_PASSWORD=" + $plain)
+    # Write '$' as '$$' so Docker Compose restores it to a single '$' rather than
+    # reading it as a variable reference and dropping it — that would corrupt the
+    # password and lock the user out of the GUI (#140). [regex]::Replace with a
+    # script block emits the value literally, so PowerShell's own '$' backreference
+    # syntax in a replacement string can't mangle it either.
+    $envPass = $plain -replace '\$', '$$$$'
+    $content = [regex]::Replace($content, '(?m)^ADMIN_PASSWORD=.*$', { "ADMIN_PASSWORD=$envPass" })
     $content = $content -replace '(?m)^SESSION_SECRET=.*$', ("SESSION_SECRET=" + $secret)
     $content = $content -replace '(?m)^WEB_PORT=.*$',       ("WEB_PORT=" + $WebPort)
     Set-Content -Path $envPath -Value $content -Encoding ASCII
