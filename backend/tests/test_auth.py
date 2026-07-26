@@ -29,6 +29,17 @@ def test_tampered_cookie_rejected(client):
     assert client.get("/api/auth/me").status_code == 401
 
 
+def test_login_reports_missing_credentials_with_dollar_hint(client, monkeypatch):
+    import config
+
+    # A '$' in .env that Docker Compose swallowed leaves the value empty; login
+    # must say so clearly and point at the '$$' escaping fix (#140).
+    monkeypatch.setattr(config.settings, "admin_username", "")
+    r = client.post("/api/auth/login", json={"username": "whoever", "password": "whatever"})
+    assert r.status_code == 503
+    assert "$$" in r.json()["detail"]
+
+
 def test_login_throttled_after_repeated_failures(client):
     for _ in range(10):
         r = client.post("/api/auth/login", json={"username": "x", "password": "y"})

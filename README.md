@@ -182,6 +182,8 @@ curl -fsSLO https://raw.githubusercontent.com/tubalainen/reforger-server-manager
 curl -fsSL  https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/.env.example -o .env
 
 # edit .env: at minimum set ADMIN_PASSWORD and SESSION_SECRET
+# (if a username or password contains a '$', write it twice: '$$' — Docker
+#  Compose reads a single '$' as a variable and drops it)
 nano .env
 
 # pull the published image and start
@@ -224,6 +226,7 @@ mkdir reforger-server-manager && cd reforger-server-manager
 curl -fsSLO https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/docker-compose.yaml
 curl -fsSL  https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/.env.example -o .env
 # edit .env: set ADMIN_PASSWORD and SESSION_SECRET
+# (a '$' in a username/password must be doubled to '$$' — Compose eats a single '$')
 docker compose pull
 docker compose up -d
 ```

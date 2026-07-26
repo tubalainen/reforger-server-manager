@@ -93,7 +93,15 @@ async def login(body: LoginRequest, request: Request, response: Response):
     _throttle(request)
     cfg = config.settings
     if not cfg.admin_username or not cfg.admin_password:
-        raise HTTPException(status_code=503, detail="ADMIN_USERNAME/ADMIN_PASSWORD not configured")
+        # Usually a '$' in .env that Docker Compose swallowed (a single '$' is a
+        # variable reference; write it '$$'), which leaves the value empty (#140).
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "ADMIN_USERNAME/ADMIN_PASSWORD not configured. If your value contains "
+                "a '$', write it twice ('$$') in .env — Docker Compose eats a single '$'."
+            ),
+        )
     user_ok = hmac.compare_digest(body.username.encode(), cfg.admin_username.encode())
     pass_ok = hmac.compare_digest(body.password.encode(), cfg.admin_password.encode())
     if not (user_ok and pass_ok):

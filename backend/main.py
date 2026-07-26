@@ -41,8 +41,18 @@ async def lifespan(_app: FastAPI):
             "controls Docker) is unauthenticated; only run this behind a reverse "
             "proxy that enforces authentication."
         )
-    elif not config.settings.admin_password or config.settings.admin_password == "change-me-now":
-        logger.warning("ADMIN_PASSWORD is unset or still the example value — change it in .env")
+    elif not config.settings.admin_username or not config.settings.admin_password:
+        # An empty value here is almost always a stray '$' in .env: Docker Compose
+        # reads a single '$' as a variable reference and drops it, so a value that
+        # begins with one (ADMIN_USERNAME=$name) arrives empty. Login then returns
+        # 503 "not configured" and the GUI looks broken — see issue #140.
+        logger.warning(
+            "ADMIN_USERNAME or ADMIN_PASSWORD is empty — login cannot work. If your "
+            "value contains a '$', write it twice ('$$') in .env: Docker Compose eats "
+            "a single '$'. See the note next to ADMIN_PASSWORD in .env.example."
+        )
+    elif config.settings.admin_password == "change-me-now":
+        logger.warning("ADMIN_PASSWORD is still the example value — change it in .env")
     models.init_db()
     # Seed the Mods Overview registry from existing templates so mods that were
     # baked in before the registry existed still show up (#131). Idempotent.
