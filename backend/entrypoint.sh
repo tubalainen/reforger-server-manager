@@ -6,9 +6,14 @@ set -e
 if [ "$(id -u)" = "0" ]; then
     # ./data is auto-created root-owned by the docker bind mount on first
     # run; hand it to the app user so SQLite can create its database.
+    # -R (recursive) is required, not just the top directory: an older image
+    # ran as root and left the database and per-instance config folders
+    # root-owned, so after upgrading to the unprivileged runtime the app user
+    # hit "readonly database" and "Permission denied .../configs/server.json"
+    # on every write (#140). Re-assert ownership of the whole tree each start.
     # A Windows-hosted bind (drvfs/9p) rejects chown but is already
     # world-writable, so a failure here is not fatal.
-    chown app:app /data 2>/dev/null || \
+    chown -R app:app /data 2>/dev/null || \
         echo "NOTE: could not chown /data (expected on a Windows bind mount)" >&2
 
     # Grant the app user access to the docker socket, whatever GID the
