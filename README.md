@@ -327,6 +327,47 @@ one-time steps before creating a server instance:
 
 Then head to **Instances** and create your first server from a template.
 
+### Updating (Linux)
+
+> **Check the [release notes](https://github.com/tubalainen/reforger-server-manager/releases)
+> first.** Most updates are a straight pull, but a release that changes defaults or wiring
+> says so under **Breaking changes**, along with anything you need to do by hand.
+
+Installed with the [one-line installer](#one-line-install-linux)? Just run `rsm update`.
+
+Installed by hand? **Refresh the compose file first, then pull.** A release can change how
+the stack is wired — add a service, change a network — and none of that reaches you from an
+image pull alone, because the compose file lives in your folder, not in the image:
+
+```bash
+cd /path/to/your/install
+
+# 1. refresh the compose file (use docker-compose.vps.yaml if that's what you run)
+curl -fsSLO https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/docker-compose.yaml
+
+# 2. pull the new image and apply
+docker compose pull
+docker compose up -d --remove-orphans
+```
+
+Your `.env` is never touched — it is your configuration. New settings all have safe
+defaults, so an existing `.env` keeps working; diff it against the current
+[`.env.example`](https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/.env.example)
+if you want to see what a release added.
+
+> `--remove-orphans` is optional but tidy: it clears containers a previous version of the
+> compose file defined and this one no longer does. **It cannot touch your game servers** —
+> those are sibling containers the manager creates through the Docker API, so they carry no
+> Compose project labels and are invisible to it.
+
+> Your servers do restart during the upgrade: replacing the manager container stops every
+> running instance, and the ones with **auto-start** enabled come back automatically once it
+> is up again. Pick a quiet moment if players are on.
+
+To lock a version rather than follow `latest`, set `MANAGER_VERSION=v0.44.0` in `.env` and
+run the same two steps. The Arma **server runtime image** and the **server files** update
+separately, from the Downloads panel — see [First run](#first-run).
+
 ### Editing `config.json` by hand
 
 The template wizard covers the settings most servers need, but it can't model every key:
@@ -535,6 +576,10 @@ Then do the [First run](#first-run) steps in the GUI (pull the runtime image, do
 the server files) and create an instance.
 
 ### Updating (and locking a version)
+
+> **Check the [release notes](https://github.com/tubalainen/reforger-server-manager/releases)
+> first.** A release that changes defaults or how the stack is wired says so under
+> **Breaking changes** — including when re-running the installer is required, not optional.
 
 **The manager updates itself on start.** Every time you launch it (the Desktop shortcut,
 or `start.ps1`), it first refreshes these Windows helper scripts from GitHub — so a fix to
