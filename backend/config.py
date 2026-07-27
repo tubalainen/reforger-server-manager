@@ -1,7 +1,8 @@
 """All runtime configuration, read from environment (.env via docker compose)."""
+import ipaddress
 import os
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 APP_NAME = "Reforger Server Manager"
 APP_VERSION = "0.43.8"
@@ -33,6 +34,26 @@ def _env_bool(name: str, default: bool) -> bool:
     if raw is None or raw.strip() == "":
         return default
     return raw.strip().lower() not in ("0", "false", "no", "off")
+
+
+def _parse_networks(raw: str | None) -> tuple[tuple, tuple[str, ...]]:
+    """Parse 'IP,CIDR,...' into (networks, malformed entries).
+
+    A bare address is accepted as a single-host network. Malformed entries are
+    returned rather than raised so startup can warn about them by name instead
+    of silently trusting a shorter list than the operator intended.
+    """
+    networks = []
+    invalid = []
+    for part in (raw or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(part, strict=False))
+        except ValueError:
+            invalid.append(part)
+    return tuple(networks), tuple(invalid)
 
 
 def _port_range(raw: str | None, fallback: tuple[int, int]) -> tuple[int, int]:
@@ -73,6 +94,11 @@ class Settings:
     a2s_port_range: tuple[int, int]
     rcon_port_range: tuple[int, int]
     session_secret_generated: bool = False
+    # Reverse proxies whose X-Forwarded-For may be believed when identifying the
+    # client for login throttling (security review R4). Empty = trust nothing and
+    # always use the direct peer, which is the safe default for a direct bind.
+    trusted_proxies: tuple = ()
+    trusted_proxies_invalid: tuple[str, ...] = field(default=())
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -80,7 +106,10 @@ class Settings:
         generated = not secret
         if generated:
             secret = secrets.token_hex(32)
+        trusted, trusted_bad = _parse_networks(os.environ.get("TRUSTED_PROXIES"))
         return cls(
+            trusted_proxies=trusted,
+            trusted_proxies_invalid=trusted_bad,
             admin_username=os.environ.get("ADMIN_USERNAME", "").strip(),
             admin_password=os.environ.get("ADMIN_PASSWORD", "").strip(),
             # Built-in login on by default; disable ONLY behind a reverse proxy
@@ -172,6 +201,13 @@ def startup_security_issues(s: Settings) -> tuple[list[str], list[str]]:
                 "especially before exposing the GUI beyond localhost."
             )
 
+    if s.trusted_proxies_invalid:
+        # Named explicitly: a typo'd entry silently shrinks the trust list, and
+        # the symptom (throttling keyed on the proxy again) is hard to spot.
+        warnings.append(
+            "TRUSTED_PROXIES has unparseable entries, ignored: "
+            + ", ".join(repr(e) for e in s.trusted_proxies_invalid)
+        )
     if s.session_secret_generated:
         warnings.append(
             "SESSION_SECRET not set — generated a random one; all sessions reset on "

@@ -62,6 +62,12 @@ services:
       # for the localhost quick start, and letting that leak in here would
       # silently disarm the gate on the one deployment that most needs it.
       WEB_BIND: "0.0.0.0"
+      # Believe Caddy's X-Forwarded-For, so login throttling applies per real
+      # client instead of collapsing into one shared bucket keyed on Caddy (which
+      # would let a single attacker lock every operator out). Scoped to the
+      # proxy network's subnet — which is pinned below precisely so this can name
+      # it — and to nothing else.
+      TRUSTED_PROXIES: ${PROXY_SUBNET:-172.31.242.0/24}
     depends_on:
       - docker-socket-proxy
     # NOTE: deliberately no 'ports:'. The GUI is reachable only via Caddy.
@@ -109,6 +115,13 @@ services:
 networks:
   proxy:
     name: reforger-proxy
+    # Pinned so TRUSTED_PROXIES above can name it: Docker would otherwise assign
+    # this subnet dynamically and the manager could not know which source
+    # addresses are really Caddy. Override PROXY_SUBNET in .env if it collides
+    # with something already on the host ('docker compose up' will say so).
+    ipam:
+      config:
+        - subnet: ${PROXY_SUBNET:-172.31.242.0/24}
   docker-api:
     name: reforger-docker-api
     internal: true

@@ -49,7 +49,7 @@ keeping that root shell off the open internet and making it expensive to reach.
 | **R1** | Docker socket mount = host-root-equivalent, reachable through the web GUI — **partially mitigated 2026-07-27 (socket proxy)** | **CRITICAL** |
 | **R2** | `AUTH_ENABLED=false` fully removes authentication from a root-equivalent GUI — **mitigated 2026-07-27 (exposed start now gated)** | **CRITICAL** |
 | **R3** | No TLS by default + weak, single, shared credential (default `admin` / `change-me-now`) — **partially mitigated 2026-07-27 (weak-cred start gated, cookie auto-secure)** | **HIGH** |
-| **R4** | Brute-force throttle is bypassable and breaks behind a reverse proxy (no `X-Forwarded-For`) | **HIGH** |
+| **R4** | Brute-force throttle is bypassable and breaks behind a reverse proxy (no `X-Forwarded-For`) — **mitigated 2026-07-27** | **HIGH** |
 | **R5** | Secrets stored and served in plaintext (admin/RCON/server passwords in DB, `.env`, downloadable `config.json`) | **HIGH** |
 | **R6** | Unauthenticated API surface disclosure: `/docs`, `/redoc`, `/openapi.json`, `/api/version` | **MEDIUM** |
 | **R7** | No CSRF tokens and no security headers (CSP / X-Frame-Options / HSTS / nosniff) | **MEDIUM** |
@@ -225,6 +225,29 @@ failure modes:
 exponential backoff and a longer lockout after N failures; persist counters (or use a shared
 store) so restarts don't reset them; separate the "per-IP" and "global" limits so throttling
 never denies service to everyone.
+
+> **Update — 2026-07-27 (mitigated).** `auth.client_ip()` now resolves the real client:
+> `X-Forwarded-For` is believed **only** when the direct peer is in the new `TRUSTED_PROXIES`
+> allow-list (IPs and/or CIDRs), and the header is walked **right-to-left** to the first entry
+> that is not itself a trusted proxy — so a client-supplied prefix is structurally ignored and
+> can neither forge a fresh identity nor frame someone else's address. Default is **empty
+> (trust nothing)**, which is correct for a direct bind; `docker-compose.vps.yaml` sets it to
+> its bundled Caddy's network, whose subnet is pinned via `PROXY_SUBNET` precisely so it can be
+> named.
+>
+> The throttle is now strictly **per client, with no global cap** — a global limit *is* the
+> denial of service it was supposed to prevent. Breaching the window escalates a per-client
+> lockout (60s → 5m → 15m → 1h), strikes survive inactivity for an hour so escalation cannot be
+> reset by waiting out the window, a locked record is never evicted, tracked clients are capped,
+> and a **successful login clears the state** so a mistyping operator is not penalised. Failed
+> logins and lockouts are now logged — previously there was no record a login had ever failed.
+> Verified by test that an attacker exhausting the limit behind a shared proxy no longer locks
+> other operators out (`tests/test_auth.py`).
+>
+> **Deliberately not done:** counters are still in-memory, so a manager restart clears them.
+> Persisting them would put a DB write on every failed login for modest gain — an attacker
+> cannot trigger a restart remotely, and the process restarts rarely. Revisit if the threat
+> model changes.
 
 ---
 
@@ -417,8 +440,9 @@ configuration/documentation changes; the rest are code.
    `/api/version` to non-sensitive fields.
 
 **Do next — authentication & session hardening**
-4. **R4 (code):** Trusted-proxy `X-Forwarded-For` handling, per-IP + global split, exponential
-   backoff/lockout, persistent counters.
+4. **R4 (code):** ✅ **Done 2026-07-27** — trusted-proxy `X-Forwarded-For` resolution
+   (`TRUSTED_PROXIES`), per-client escalating lockout, no global cap, success resets state,
+   failed logins logged. Persistent counters deliberately skipped (see the R4 update note).
 5. **R7 (code):** Security-headers middleware (CSP, frame-ancestors DENY, nosniff, HSTS,
    referrer-policy) + Origin/CSRF checks on all mutating endpoints and WS handshakes (also
    closes **R12**).

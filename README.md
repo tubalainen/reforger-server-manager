@@ -398,6 +398,9 @@ docker compose -f docker-compose.vps.yaml logs -f caddy
   servers can reach.
 - **Live logs work.** Caddy proxies WebSockets natively, so the streaming server log
   and download progress bars work with no extra configuration.
+- **Login throttling knows who is who.** `TRUSTED_PROXIES` is preset to Caddy's network, so
+  failed logins are rate-limited per real client rather than lumped together — one attacker
+  cannot lock you out of your own server.
 
 ### No domain yet? (IP-only fallback)
 
