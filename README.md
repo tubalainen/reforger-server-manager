@@ -7,8 +7,8 @@ own Docker container — from a single `docker-compose.yaml`.
 
 Runs on **Linux** (any VPS or home box) and on **Windows 10/11** via Docker Desktop,
 where a PowerShell installer sets everything up and puts a start shortcut on your
-Desktop. See [Getting started](#getting-started) or
-[Running on Windows](#running-on-windows-11--10).
+Desktop. See [Getting started](#installation) or
+[Running on Windows](#3-windows-10-and-11).
 
 Inspired by (and a spiritual successor to) [Longbow / ArmaReforgerServerTool](https://github.com/soda3x/ArmaReforgerServerTool)
 by soda3x — reimagined as a Dockerized web application.
@@ -141,140 +141,40 @@ default). The manager:
 Stable and experimental servers can run side by side. Live server logs stream to
 the instance detail page.
 
-## Getting started
+## Installation
 
-**On Windows?** Skip this section entirely — go to
-[Running on Windows](#running-on-windows-11--10), where an installer does all of it for you.
+Three ways to run it. Pick the one that matches where it will live — each section is
+self-contained and includes how to update it later.
 
-On Linux, two paths, depending on how comfortable you are with Docker.
-
-### New to Docker & Linux? (step-by-step)
-
-**1 — Install Docker** on your Linux server with the official one-line convenience
-script:
-
-```bash
-curl -fsSL https://get.docker.com | sudo sh
-```
-
-Then let your user run Docker without `sudo`, and make sure the service starts on
-boot:
-
-```bash
-sudo usermod -aG docker "$USER"      # log out and back in for this to take effect
-sudo systemctl enable --now docker
-```
-
-Verify it works (after logging back in):
-
-```bash
-docker run --rm hello-world
-```
-
-**2 — Run this application.** You don't need the source code — just a folder with
-the `docker-compose.yaml` and a `.env` file. Create a folder and download both:
-
-```bash
-mkdir reforger-server-manager && cd reforger-server-manager
-
-# grab the compose file and an example .env into this folder
-curl -fsSLO https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/docker-compose.yaml
-curl -fsSL  https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/.env.example -o .env
-
-# edit .env: at minimum set ADMIN_PASSWORD and SESSION_SECRET
-# (if a username or password contains a '$', write it twice: '$$' — Docker
-#  Compose reads a single '$' as a variable and drops it)
-nano .env
-
-# pull the published image and start
-docker compose pull
-docker compose up -d
-```
-
-On the server itself, open `http://localhost:7780` and sign in with the credentials
-from `.env`. (By default the GUI binds to `127.0.0.1` — see the security note under
-[Quick start](#quick-start) before exposing it.)
-
-**3 — Open the ports (NAT / port forwarding):**
-
-For players on the internet to reach your server, you must open/forward ports
-through your router (NAT) **and** any firewall on the Linux host, pointing them at
-the Linux server's LAN IP:
-
-- **Game port(s):** UDP `2001–2020` (default `GAME_PORT_RANGE`)
-- **A2S query port(s):** UDP `17777–17796` (default `A2S_PORT_RANGE`)
-- one game + A2S port pair per running server instance
-
-On the Linux host itself, if you run `ufw` (the one-line installer does this for you):
-
-```bash
-sudo ufw allow 2001:2020/udp     # game ports     (GAME_PORT_RANGE)
-sudo ufw allow 17777:17796/udp   # server browser (A2S_PORT_RANGE)
-```
-
-Note `ufw` writes ranges with a colon (`2001:2020`), not the dash used in `.env`.
-
-Also set `PUBLIC_ADDRESS` in `.env` to your server's public IP so it advertises
-correctly to the Arma backend. Keep the RCON ports (`19999–20018`) and the web GUI
-(`7780`) **private** — do not forward them to the internet; reach the GUI through a
-TLS reverse proxy or an SSH tunnel instead.
-
-### Already comfortable with Docker? (quick version)
-
-You only need Docker with the Compose plugin. Head to [Quick start](#quick-start)
-below, fill in `.env`, `docker compose up -d`, and forward the UDP game/A2S ports
-listed above. Put a TLS reverse proxy in front of the GUI for VPS use.
-
-## Which setup do I want?
-
-| Where you'll run it | Use this | You'll reach the GUI at |
+| | Best for | You'll open |
 |---|---|---|
-| A Linux box at home | [One-line install — local](#one-line-install-linux) | `http://localhost:7780` |
-| A cloud VPS, on the internet | [One-line install — VPS](#one-line-install-linux) | `https://your-domain` |
-| Windows 10/11 | [PowerShell installer](#running-on-windows-11--10) | `http://localhost:7780` |
-| Anywhere, set up by hand | [Quick start](#quick-start) | up to you |
+| **[1. Linux at home](#1-linux-at-home-or-on-a-lan)** | A machine on your own network | `http://localhost:7780` |
+| **[2. Linux on a VPS](#2-linux-on-a-public-vps-https)** | A rented server, reachable anywhere | `https://your-domain` |
+| **[3. Windows](#3-windows-10-and-11)** | Docker Desktop on your PC | `http://localhost:7780` |
 
-Whichever you pick, players reach your game servers over **UDP** ports that you open
-separately from the GUI — each guide covers that where it applies.
+Players always connect over **UDP game ports**, opened separately from the web GUI —
+each section says which.
 
-## One-line install (Linux)
-
-Two installers, one for each Linux scenario. Both check for Docker (offering to
-install it), generate a strong GUI password and session secret, set up the firewall
-after confirming with you, install an `rsm` management command, and start the stack.
-
-**Local box — home server or LAN:**
+### 1. Linux at home or on a LAN
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/scripts/linux/install-local.sh | sudo sh
 ```
 
-**Public cloud VPS — adds automatic HTTPS:**
+That is the whole install. It checks for Docker (offering to install it), generates a
+strong GUI password, offers to open the firewall, and starts everything. **It prints
+your password at the end — save it.** Then open `http://localhost:7780`.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/scripts/linux/install-vps.sh | sudo sh
-```
+**Let players in:** forward UDP `2001-2020` and `17777-17796` on your **router** to this
+machine, and give it a fixed LAN IP. Never forward the GUI port (`7780`) or the RCON
+ports. Set `PUBLIC_ADDRESS` in `.env` to your public IP so servers advertise correctly.
 
-> **Prefer to read before running as root?** Sensible — do this instead:
-> ```bash
-> curl -fsSLO https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/scripts/linux/install-vps.sh
-> less install-vps.sh && sudo sh install-vps.sh
-> ```
+**Updating:** `rsm update` — check the
+[release notes](https://github.com/tubalainen/reforger-server-manager/releases) first;
+anything needing a manual step is listed there under **Breaking changes**.
 
-Afterwards, manage everything with the `rsm` command:
-
-```
-rsm start | stop | restart | status | logs | update | config | uninstall
-```
-
-The installers are safe to re-run: an existing `.env` is never overwritten, and the
-firewall step always allows your **current SSH port first** so a remote session cannot
-be cut off. On Windows, use the [PowerShell installer](#running-on-windows-11--10) instead.
-
-For what each scenario sets up — and to do it by hand — see
-[Quick start](#quick-start) (local) and [Running on a VPS](#running-on-a-vps-public-server-automatic-https).
-
-## Quick start
+<details>
+<summary><b>Prefer to set it up by hand?</b></summary>
 
 You only need the `docker-compose.yaml` and a `.env` — not the source. Create a
 folder, drop both in, edit `.env`, then pull and start:
@@ -326,195 +226,52 @@ both pass through by default.
 > warnings there. When a TLS reverse proxy fronts the GUI (forwarding
 > `X-Forwarded-Proto: https`), the session cookie is automatically marked `Secure`.
 
-### First run
-
-Under **Server Instances → Server files** (at the bottom of the Instances page), do both
-one-time steps before creating a server instance:
-
-1. **Pull the server runtime image** — the Docker image each instance runs from
-   (`REFORGER_SERVER_IMAGE`). `docker compose up` only pulls the manager itself, so the
-   runtime image must be fetched once here.
-2. **Download the server files** for the branch you want (Stable / Experimental) — the
-   ~10 GB of game data mounted into every instance of that branch.
-
-Then head to **Instances** and create your first server from a template.
-
-### Updating (Linux)
-
-> **Check the [release notes](https://github.com/tubalainen/reforger-server-manager/releases)
-> first.** Most updates are a straight pull, but a release that changes defaults or wiring
-> says so under **Breaking changes**, along with anything you need to do by hand.
-
-Installed with the [one-line installer](#one-line-install-linux)? Just run `rsm update`.
-
-Installed by hand? **Refresh the compose file first, then pull.** A release can change how
-the stack is wired — add a service, change a network — and none of that reaches you from an
-image pull alone, because the compose file lives in your folder, not in the image:
+**Updating a by-hand install** — refresh the compose file *before* pulling, or you keep
+the old wiring:
 
 ```bash
 cd /path/to/your/install
-
-# 1. refresh the compose file (use docker-compose.vps.yaml if that's what you run)
 curl -fsSLO https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/docker-compose.yaml
-
-# 2. pull the new image and apply
 docker compose pull
 docker compose up -d --remove-orphans
 ```
 
-Your `.env` is never touched — it is your configuration. New settings all have safe
-defaults, so an existing `.env` keeps working; diff it against the current
-[`.env.example`](https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/.env.example)
-if you want to see what a release added.
+Your `.env` is never touched. Upgrading restarts running servers; those with
+**auto-start** come back on their own.
 
-> `--remove-orphans` is optional but tidy: it clears containers a previous version of the
-> compose file defined and this one no longer does. **It cannot touch your game servers** —
-> those are sibling containers the manager creates through the Docker API, so they carry no
-> Compose project labels and are invisible to it.
+</details>
 
-> Your servers do restart during the upgrade: replacing the manager container stops every
-> running instance, and the ones with **auto-start** enabled come back automatically once it
-> is up again. Pick a quiet moment if players are on.
+### 2. Linux on a public VPS (HTTPS)
 
-To lock a version rather than follow `latest`, set `MANAGER_VERSION=v0.44.0` in `.env` and
-run the same two steps. The Arma **server runtime image** and the **server files** update
-separately, from the Downloads panel — see [First run](#first-run).
+**First:** point a domain at the server — an **A record** for e.g.
+`reforger.example.com` → your VPS IP. Do this before installing, so the certificate
+request succeeds first time.
 
-### Editing `config.json` by hand
+```bash
+curl -fsSL https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/scripts/linux/install-vps.sh | sudo sh
+```
 
-The template wizard covers the settings most servers need, but it can't model every key:
-`gameProperties` is **scenario-specific**, and mod authors and Bohemia both add keys of
-their own. So the `config.json` panel on the right of the wizard has an **Edit JSON**
-button that turns it into a full editor — syntax highlighting, line numbers, indent
-guides, and errors marked as you type.
+It asks for your domain, then puts **Caddy** in front with an automatic Let's Encrypt
+certificate. The manager publishes no port of its own — it is reachable only through
+Caddy — and the Docker API sits behind a least-privilege proxy. It prints your GUI
+password at the end. Then open `https://your-domain`.
 
-When you hit **Apply**, your edit is split in two:
+**Two firewalls to open, not one:**
 
-- **Keys the wizard models** are read back into its fields. Change `maxPlayers` in the
-  JSON and the Settings step's player limit moves with it.
-- **Everything else is kept as a custom key** and re-applied over the config every time
-  the template is rendered — so it survives later edits in the wizard, and lands in the
-  `config.json` your servers actually run. The panel badges how many a template carries.
-
-Validation is deliberately asymmetric:
-
-| | Behaviour |
+| Where | What to allow |
 |---|---|
-| Broken JSON | **Blocked** — marked inline, Apply disabled |
-| Missing `game.scenarioId` | **Blocked** — the server would have no mission to load |
-| A modelled key out of range (e.g. `maxPlayers: 9999`) | **Blocked** — the server would reject it |
-| A key the GUI doesn't recognise | **Allowed**, listed as "kept as-is" |
+| On the server (`ufw`) | The installer offers to do it, always allowing your current SSH port first |
+| In your **VPS provider's panel** | TCP `80`, `443` and UDP `2001-2020`, `17777-17796` |
 
-That last row is the point: an unfamiliar key is usually you configuring your scenario,
-not a typo — so it's flagged for visibility and never rejected.
+> Hetzner, AWS, Oracle, Google Cloud and DigitalOcean filter traffic *before* it reaches
+> the machine, and several block almost everything by default. If your server never
+> becomes reachable, this second firewall is nearly always why.
 
-> **Ports are the one exception.** `bindPort`, `publicPort`, `a2s.port` and `rcon.port`
-> are assigned per instance from the manager's port ranges, so each server gets its own —
-> a value you type for them here is kept in the template but overwritten when an instance
-> runs. Set ports on the instance, not in the template's JSON.
+**Updating:** `rsm update` (check the
+[release notes](https://github.com/tubalainen/reforger-server-manager/releases) first).
 
-## Running on a VPS (public server, automatic HTTPS)
-
-The quick start above binds the GUI to `127.0.0.1`, which is right for a box you sit
-in front of. On a rented VPS you want the opposite: reach the GUI from anywhere, over
-HTTPS, without ever putting it on the open internet unprotected.
-
-`docker-compose.vps.yaml` does that. **Caddy** terminates TLS and is the only thing
-published; the manager gets **no port of its own** and is reachable only through Caddy
-on an internal Docker network. Certificates are issued and renewed automatically — there
-is no proxy config file to write and no admin panel to secure.
-
-**You need:** a VPS (any 2 GB+ Linux box) and a **domain name** pointed at it. (No domain?
-See the [IP-only fallback](#no-domain-yet-ip-only-fallback) below — but read the warning.)
-
-**1 — Point your domain at the VPS.** Create a DNS **A record** for e.g.
-`reforger.example.com` → your VPS's public IP. Do this *first*: the certificate is
-requested on the very first start, and it can only succeed once the record resolves.
-
-**2 — Install Docker** (skip if your VPS image ships it):
-
-```bash
-curl -fsSL https://get.docker.com | sudo sh
-```
-
-**3 — Fetch the files and configure:**
-
-```bash
-mkdir -p ~/reforger && cd ~/reforger
-curl -fsSLO https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/docker-compose.vps.yaml
-curl -fsSL  https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/.env.example -o .env
-nano .env
-```
-
-In `.env` set these three, then save:
-
-| Setting | What to put |
-|---|---|
-| `SITE_ADDRESS` | your domain, e.g. `reforger.example.com` |
-| `ADMIN_PASSWORD` | a long, unique password — **these are effectively host-root credentials** |
-| `SESSION_SECRET` | output of `openssl rand -hex 32` |
-
-> The manager **refuses to start** on this file while `ADMIN_PASSWORD` is still
-> `change-me-now` or empty. That is deliberate: the GUI is internet-facing here, and it
-> controls Docker. A `$` in the password must be written twice (`$$`) — Compose eats a
-> single one.
-
-**4 — Open the firewall.** Caddy needs 80/443; players need the UDP game ranges. The
-GUI itself needs *no* port of its own:
-
-```bash
-sudo ufw allow OpenSSH
-sudo ufw allow 80,443/tcp        # Caddy (HTTPS + certificate renewal)
-sudo ufw allow 2001:2020/udp     # game ports    (GAME_PORT_RANGE)
-sudo ufw allow 17777:17796/udp   # server browser (A2S_PORT_RANGE)
-sudo ufw enable
-```
-
-> **Do not run `ufw enable` without the SSH rule above** — you will lock yourself out
-> of the VPS. If your SSH runs on a non-standard port, allow that port instead of
-> `OpenSSH`. (The one-line installer detects your live SSH port and always allows it
-> first, which is why it is the safer route.)
-
-> **Your VPS provider has a second firewall.** Hetzner Cloud Firewall, AWS security
-> groups, Oracle Cloud, Google Cloud and DigitalOcean all filter traffic *before* it
-> reaches the machine — and several block almost everything by default, so the `ufw`
-> rules above are **not enough on their own**. In your provider's control panel, allow
-> inbound **TCP 80, 443** and **UDP 2001–2020, 17777–17796**. If the GUI or your game
-> server never becomes reachable despite everything looking right on the host, this is
-> almost always the reason.
-
-**5 — Start it:**
-
-```bash
-docker compose -f docker-compose.vps.yaml up -d
-```
-
-Give it 10–30 seconds to obtain the certificate, then open
-**`https://reforger.example.com`** and log in. That's it — continue with
-[First run](#first-run) to download the server files.
-
-Watch the certificate being issued (or diagnose a DNS problem) with:
-
-```bash
-docker compose -f docker-compose.vps.yaml logs -f caddy
-```
-
-### What this setup does for you
-
-- **The GUI is never directly exposed.** The manager publishes no port; only Caddy is
-  on the internet. There is no `:7780` to find and no admin panel to leave on defaults.
-- **Real HTTPS, automatically.** Including renewal. The session cookie is marked
-  `Secure` automatically, because Caddy forwards `X-Forwarded-Proto: https`.
-- **The Docker API is fenced off.** The manager talks to the daemon through a
-  least-privilege socket proxy on an `internal` network that neither Caddy nor the game
-  servers can reach.
-- **Live logs work.** Caddy proxies WebSockets natively, so the streaming server log
-  and download progress bars work with no extra configuration.
-- **Login throttling knows who is who.** `TRUSTED_PROXIES` is preset to Caddy's network, so
-  failed logins are rate-limited per real client rather than lumped together — one attacker
-  cannot lock you out of your own server.
-
-### No domain yet? (IP-only fallback)
+<details>
+<summary><b>No domain yet? (testing only)</b></summary>
 
 Set `SITE_ADDRESS=:80` and reach the GUI at `http://<your-vps-ip>`.
 
@@ -523,13 +280,13 @@ Set `SITE_ADDRESS=:80` and reach the GUI at `http://<your-vps-ip>`.
 > the path. Use it to confirm the stack runs, then get a domain before real use. A
 > domain costs a few euros a year and is the only way this is genuinely safe.
 
-## Running on Windows 11 / 10
+</details>
+
+### 3. Windows 10 and 11
 
 Windows is supported through **Docker Desktop with its WSL2 backend** — the same
 manager image, the same Arma server containers, running inside the lightweight Linux
 VM that Docker Desktop manages for you. You never have to touch WSL yourself.
-
-### Install
 
 Open **PowerShell** (a normal window — it asks for admin only when it needs to), then
 copy-paste these three lines. They download the installer, then run it:
@@ -587,7 +344,7 @@ cd $env:USERPROFILE\ReforgerServerManager
 Then do the [First run](#first-run) steps in the GUI (pull the runtime image, download
 the server files) and create an instance.
 
-### Updating (and locking a version)
+#### Updating (and locking a version)
 
 > **Check the [release notes](https://github.com/tubalainen/reforger-server-manager/releases)
 > first.** A release that changes defaults or how the stack is wired says so under
@@ -632,7 +389,7 @@ The Arma **server runtime image** and the **server files** are updated separatel
 GUI, on the [First run](#first-run) / Downloads screens — pull the runtime image and
 re-download the branch when you want those refreshed.
 
-### Uninstalling (or starting over after a failed install)
+#### Uninstalling (or starting over after a failed install)
 
 ```powershell
 cd $env:USERPROFILE\ReforgerServerManager
@@ -661,7 +418,7 @@ to drop the Docker images as well.
 **Docker Desktop and WSL2 are never touched** — other things on your machine may be
 using them. Remove them from *Add or remove programs* if you want them gone.
 
-### Where the files live
+#### Where the files live
 
 The Windows compose file keeps state in **Docker named volumes**
 (`reforger-data`, `reforger-serverfiles-stable`, `reforger-serverfiles-experimental`),
@@ -670,7 +427,7 @@ during startup: on the VM's native ext4 disk that is fast and permission-clean, 
 on an Explorer folder it would be slow (9p) and prone to ownership errors. Browse or
 back them up from **Docker Desktop → Volumes**.
 
-### Letting players in
+#### Letting players in
 
 Two hops have to be open — Windows and your router. Both use the same UDP ranges, and
 the GUI prints the exact command for you under **Instances → Ports & firewall**.
@@ -690,7 +447,7 @@ the GUI prints the exact command for you under **Instances → Ports & firewall*
 
 Never forward the RCON ports (`19999-20018`) or the web GUI port (`7780`).
 
-### Keeping it running
+#### Keeping it running
 
 - Server containers already carry a restart policy, so they come back with Docker.
 - In **Docker Desktop → Settings → General**, tick **Start Docker Desktop when you sign
@@ -700,12 +457,58 @@ Never forward the RCON ports (`19999-20018`) or the web GUI port (`7780`).
   sign-in (`netplwiz`, untick "Users must enter a user name and password") or expect to
   log in manually before the servers come back.
 
-### Do not run Docker CE inside WSL
+#### Do not run Docker CE inside WSL
 
 Installing Docker Engine *inside* a WSL distro instead of using Docker Desktop looks
 tempting, but its NAT only forwards TCP: the published **UDP** game/A2S ports never
 reach the Windows host, and `netsh portproxy` cannot help (it is TCP-only). Players
 would never see or join your server. Use Docker Desktop.
+
+## First run
+
+Under **Server Instances → Server files** (at the bottom of the Instances page), do both
+one-time steps before creating a server instance:
+
+1. **Pull the server runtime image** — the Docker image each instance runs from
+   (`REFORGER_SERVER_IMAGE`). `docker compose up` only pulls the manager itself, so the
+   runtime image must be fetched once here.
+2. **Download the server files** for the branch you want (Stable / Experimental) — the
+   ~10 GB of game data mounted into every instance of that branch.
+
+Then head to **Instances** and create your first server from a template.
+
+## Editing `config.json` by hand
+
+The template wizard covers the settings most servers need, but it can't model every key:
+`gameProperties` is **scenario-specific**, and mod authors and Bohemia both add keys of
+their own. So the `config.json` panel on the right of the wizard has an **Edit JSON**
+button that turns it into a full editor — syntax highlighting, line numbers, indent
+guides, and errors marked as you type.
+
+When you hit **Apply**, your edit is split in two:
+
+- **Keys the wizard models** are read back into its fields. Change `maxPlayers` in the
+  JSON and the Settings step's player limit moves with it.
+- **Everything else is kept as a custom key** and re-applied over the config every time
+  the template is rendered — so it survives later edits in the wizard, and lands in the
+  `config.json` your servers actually run. The panel badges how many a template carries.
+
+Validation is deliberately asymmetric:
+
+| | Behaviour |
+|---|---|
+| Broken JSON | **Blocked** — marked inline, Apply disabled |
+| Missing `game.scenarioId` | **Blocked** — the server would have no mission to load |
+| A modelled key out of range (e.g. `maxPlayers: 9999`) | **Blocked** — the server would reject it |
+| A key the GUI doesn't recognise | **Allowed**, listed as "kept as-is" |
+
+That last row is the point: an unfamiliar key is usually you configuring your scenario,
+not a typo — so it's flagged for visibility and never rejected.
+
+> **Ports are the one exception.** `bindPort`, `publicPort`, `a2s.port` and `rcon.port`
+> are assigned per instance from the manager's port ranges, so each server gets its own —
+> a value you type for them here is kept in the template but overwritten when an instance
+> runs. Set ports on the instance, not in the template's JSON.
 
 ## Development
 
