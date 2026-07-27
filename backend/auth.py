@@ -9,6 +9,7 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
@@ -202,21 +203,55 @@ def session_username(token: str | None) -> str | None:
         return None
 
 
+def is_https(request) -> bool:
+    """True when the browser's connection is HTTPS.
+
+    The app always speaks plain HTTP inside its container, so a terminating TLS
+    reverse proxy is recognised by its ``X-Forwarded-Proto``. Believing that
+    header can only affect the caller's own request (a Secure cookie, an HSTS
+    header) and never another user's, so it needs no trusted-proxy list.
+    """
+    forwarded = request.headers.get("x-forwarded-proto", "")
+    if forwarded.split(",")[0].strip().lower() == "https":
+        return True
+    return getattr(getattr(request, "url", None), "scheme", "") == "https"
+
+
 def _cookie_should_be_secure(request: Request) -> bool:
     """Whether to mark the session cookie ``Secure`` for this response.
 
-    Explicit ``SESSION_COOKIE_SECURE=true`` always wins. Otherwise honour a
-    terminating TLS reverse proxy's ``X-Forwarded-Proto`` (the app itself always
-    speaks plain HTTP inside its container), so a proper HTTPS deployment gets a
-    Secure cookie without extra configuration (security review R3). Trusting this
-    header can only downgrade an attacker's own session — never another user's —
-    so it needs no trusted-proxy list here.
+    Explicit ``SESSION_COOKIE_SECURE=true`` always wins; otherwise it follows the
+    actual connection, so a TLS deployment is protected without extra config and
+    the plain-HTTP localhost default still works (security review R3).
     """
-    if config.settings.session_cookie_secure:
+    return config.settings.session_cookie_secure or is_https(request)
+
+
+def origin_allowed(origin: str, host: str) -> bool:
+    """Is this browser Origin acceptable for a state-changing request?
+
+    Same-origin is the normal case: the Origin's host:port must equal the Host
+    the request was addressed to. Behind a reverse proxy both are the public
+    name (proxies forward Host), so this needs no configuration. ALLOWED_ORIGINS
+    covers the exception — a proxy that rewrites Host.
+    """
+    origin = (origin or "").strip().rstrip("/")
+    if not origin:
+        return True  # no Origin: a non-browser client (curl, scripts) — not CSRF
+    if origin in config.settings.allowed_origins:
         return True
-    forwarded = request.headers.get("x-forwarded-proto", "")
-    proto = forwarded.split(",")[0].strip().lower()
-    return proto == "https" or request.url.scheme == "https"
+    try:
+        netloc = urlsplit(origin).netloc
+    except ValueError:
+        return False
+    return bool(netloc) and netloc == (host or "").strip()
+
+
+def request_origin_ok(request) -> bool:
+    """Origin check for an HTTP request or a WebSocket handshake."""
+    return origin_allowed(
+        request.headers.get("origin", ""), request.headers.get("host", "")
+    )
 
 
 def require_session(request: Request) -> str:

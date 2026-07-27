@@ -246,6 +246,9 @@ async def download_logfile(
 
 @router.websocket("/{instance_id}/logs")
 async def logs(websocket: WebSocket, instance_id: int):
+    if not auth.request_origin_ok(websocket):
+        await websocket.close(code=4403)  # cross-site WebSocket hijacking (R12)
+        return
     if not auth.session_username(websocket.cookies.get(auth.COOKIE_NAME)):
         await websocket.close(code=4401)
         return

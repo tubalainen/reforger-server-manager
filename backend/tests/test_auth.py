@@ -53,16 +53,26 @@ def test_login_throttled_after_repeated_failures(client):
     assert r.status_code == 429
 
 
-def test_health_is_public(client):
+def test_health_is_public_and_minimal(client):
+    # Liveness only: it used to leak APP_VERSION to unauthenticated callers (R6).
     r = client.get("/api/health")
     assert r.status_code == 200
-    body = r.json()
-    assert body["status"] == "ok"
-    assert body["version"]
+    assert r.json() == {"status": "ok"}
 
 
 def test_version_reports_auth_enabled(client):
     assert client.get("/api/version").json()["auth_enabled"] is True
+
+
+def test_version_hides_build_details_until_logged_in(client):
+    # The SPA needs auth_enabled before login; the precise build is what an
+    # attacker would match against known CVEs, so it needs a session (R6).
+    anon = client.get("/api/version").json()
+    assert "version" not in anon and "repo_url" not in anon
+
+    client.post("/api/auth/login", json={"username": "testadmin", "password": "testpass-123"})
+    known = client.get("/api/version").json()
+    assert known["version"] and known["repo_url"]
 
 
 def test_auth_disabled_bypasses_login(client, monkeypatch):
@@ -260,3 +270,90 @@ def test_locked_out_record_is_never_evicted(monkeypatch):
 
     auth._evict_stale_attempts(time.monotonic())
     assert "198.51.100.7" in auth._attempts
+
+
+# --------------------------------------------------------------------------- #
+# API surface + response hardening (security review R6, R7, R12)
+# --------------------------------------------------------------------------- #
+
+def test_interactive_docs_are_disabled(client):
+    # /docs, /redoc and /openapi.json enumerate the whole Docker-controlling API
+    # and are served before any auth dependency runs (R6).
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        assert client.get(path).status_code == 404, path
+
+
+def test_security_headers_present_on_api_and_spa(client):
+    r = client.get("/api/health")
+    h = r.headers
+    assert "default-src 'self'" in h["content-security-policy"]
+    assert "frame-ancestors 'none'" in h["content-security-policy"]
+    assert h["x-content-type-options"] == "nosniff"
+    assert h["x-frame-options"] == "DENY"
+    assert h["referrer-policy"] == "no-referrer"
+
+
+def test_csp_never_allows_inline_script(client):
+    csp = client.get("/api/health").headers["content-security-policy"]
+    script = [d for d in csp.split(";") if d.strip().startswith("script-src")][0]
+    assert "unsafe-inline" not in script and "unsafe-eval" not in script
+
+
+def test_hsts_only_over_https(client):
+    assert "strict-transport-security" not in client.get("/api/health").headers
+    r = client.get("/api/health", headers={"X-Forwarded-Proto": "https"})
+    assert "max-age=" in r.headers["strict-transport-security"]
+
+
+def test_cross_origin_state_change_is_blocked(logged_in):
+    # The session is a cookie, so a write a browser says came from another site
+    # must be refused even with a valid session (R7).
+    r = logged_in.post(
+        "/api/templates/locks/clear", headers={"Origin": "https://evil.example"}
+    )
+    assert r.status_code == 403
+    assert "Cross-origin" in r.json()["detail"]
+
+
+def test_same_origin_state_change_is_allowed(logged_in):
+    r = logged_in.post(
+        "/api/templates/locks/clear",
+        headers={"Origin": "http://testserver", "Host": "testserver"},
+    )
+    assert r.status_code == 200
+
+
+def test_state_change_without_origin_still_works(logged_in):
+    # curl / scripts send no Origin; only browsers do, and only they are at risk.
+    assert logged_in.post("/api/templates/locks/clear").status_code == 200
+
+
+def test_safe_methods_are_not_origin_checked(logged_in):
+    r = logged_in.get("/api/instances", headers={"Origin": "https://evil.example"})
+    assert r.status_code == 200
+
+
+def test_origin_allowed_matches_host_and_allowlist(monkeypatch):
+    import auth
+    import config
+
+    assert auth.origin_allowed("http://testserver", "testserver")
+    assert auth.origin_allowed("https://rsm.example.com", "rsm.example.com")
+    assert not auth.origin_allowed("https://evil.example", "rsm.example.com")
+    assert auth.origin_allowed("", "rsm.example.com")  # no Origin => not a browser
+    monkeypatch.setattr(config.settings, "allowed_origins", ("https://proxy.example",))
+    assert auth.origin_allowed("https://proxy.example", "somethingelse")
+
+
+def test_websocket_rejects_foreign_origin(logged_in):
+    # Cross-Site WebSocket Hijacking (R12): the handshake carries the cookie, so
+    # Origin must be checked before the socket is accepted.
+    import pytest as _pytest
+    from starlette.websockets import WebSocketDisconnect
+
+    with _pytest.raises(WebSocketDisconnect) as exc:
+        with logged_in.websocket_connect(
+            "/api/instances/1/logs", headers={"Origin": "https://evil.example"}
+        ):
+            pass
+    assert exc.value.code == 4403

@@ -74,8 +74,10 @@ def test_remove_serverfiles_blocked_when_running(logged_in, monkeypatch):
     assert "srv-a" in r.json()["detail"]
 
 
-def test_version_endpoint(client):
-    r = client.get("/api/version")
+def test_version_endpoint(logged_in):
+    # Build details require a session now; anonymous callers get only the name
+    # and auth_enabled the login page needs (security review R6).
+    r = logged_in.get("/api/version")
     assert r.status_code == 200
     body = r.json()
     assert body["version"] and body["repo_url"].startswith("https://github.com/")

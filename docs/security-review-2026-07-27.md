@@ -51,13 +51,13 @@ keeping that root shell off the open internet and making it expensive to reach.
 | **R3** | No TLS by default + weak, single, shared credential (default `admin` / `change-me-now`) — **partially mitigated 2026-07-27 (weak-cred start gated, cookie auto-secure)** | **HIGH** |
 | **R4** | Brute-force throttle is bypassable and breaks behind a reverse proxy (no `X-Forwarded-For`) — **mitigated 2026-07-27** | **HIGH** |
 | **R5** | Secrets stored and served in plaintext (admin/RCON/server passwords in DB, `.env`, downloadable `config.json`) | **HIGH** |
-| **R6** | Unauthenticated API surface disclosure: `/docs`, `/redoc`, `/openapi.json`, `/api/version` | **MEDIUM** |
-| **R7** | No CSRF tokens and no security headers (CSP / X-Frame-Options / HSTS / nosniff) | **MEDIUM** |
+| **R6** | Unauthenticated API surface disclosure: `/docs`, `/redoc`, `/openapi.json`, `/api/version` — **mitigated 2026-07-27** | **MEDIUM** |
+| **R7** | No CSRF tokens and no security headers (CSP / X-Frame-Options / HSTS / nosniff) — **mitigated 2026-07-27** | **MEDIUM** |
 | **R8** | Spawned game-server containers run as **root** with writable host bind mounts | **MEDIUM** |
 | **R9** | `:latest` image pins for the server and steamcmd images (supply-chain / reproducibility) | **MEDIUM** |
 | **R10** | Free-form launch `extra_args` injected into the server container environment | **MEDIUM** |
 | **R11** | Unauthenticated / unbounded resource abuse (Workshop dependency BFS, no object caps) | **LOW** |
-| **R12** | WebSocket handshakes accept any Origin (Cross-Site WebSocket Hijacking, mitigated by SameSite) | **LOW** |
+| **R12** | WebSocket handshakes accept any Origin (Cross-Site WebSocket Hijacking) — **mitigated 2026-07-27** | **LOW** |
 | **R13** | Session-secret auto-generation and long-lived (7-day) sessions with no revocation | **LOW** |
 | **R14** | Verbose error messages and internal logging of paths/IDs | **LOW** |
 
@@ -286,6 +286,17 @@ whether login is even on.
 `require_session`); drop `auth_enabled` and the precise version from the unauthenticated
 `/api/version` (keep `/api/health` minimal).
 
+> **Update — 2026-07-27 (mitigated).** `/docs`, `/redoc` and `/openapi.json` are now disabled
+> (404) unless `API_DOCS=true` is set deliberately for development. `/api/health` returns
+> liveness only — it no longer reports `APP_VERSION`. `/api/version` returns the precise
+> version and repo link **only to an authenticated session**.
+>
+> **One deviation from the recommendation, on purpose:** `auth_enabled` stays public. The SPA
+> reads it before anyone can log in, to decide whether to render the login UI at all, so
+> removing it would break the GUI — and it discloses nothing an attacker could not learn by
+> calling any protected endpoint once. The fingerprinting risk was the build number, and that
+> is now behind auth.
+
 ---
 
 ### R7 — No CSRF tokens and no security headers  ·  MEDIUM
@@ -302,6 +313,29 @@ whether login is even on.
 **Recommendation:** add a middleware that sets a strict CSP, `X-Frame-Options: DENY`,
 `nosniff`, `Referrer-Policy: no-referrer`, and HSTS (when on HTTPS); add an Origin check (or a
 double-submit CSRF token) on all mutating endpoints and WebSocket handshakes.
+
+> **Update — 2026-07-27 (mitigated).** A single middleware now does both halves.
+>
+> **CSRF:** every state-changing request (anything not GET/HEAD/OPTIONS) is rejected with 403
+> when the browser's `Origin` does not match the `Host` it was addressed to. A request with no
+> `Origin` is left alone — that is a non-browser client (curl, scripts), and browsers always
+> send `Origin` on the cross-origin writes this defends against. `ALLOWED_ORIGINS` covers a
+> proxy that rewrites `Host`. This is Origin-checking rather than a double-submit token: with a
+> single shared account and no third-party embedding, it gives the same protection for far less
+> moving machinery.
+>
+> **Headers:** `Content-Security-Policy` (overridable via `CONTENT_SECURITY_POLICY`),
+> `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`,
+> and HSTS **only** when the connection is actually HTTPS — sending it on the plain-HTTP
+> localhost default would pin a browser to a scheme that host does not serve. The CSP allows no
+> third-party sources and **no inline script at all**; `'unsafe-inline'` is granted for styles
+> only, because Vue writes inline `style` attributes for `:style` bindings. Verified against the
+> production build: it emits no inline `<script>` and references no external host.
+>
+> **Residual:** `connect-src 'self'` covers same-origin WebSockets per CSP Level 3, which
+> current browsers implement — but this was verified by build inspection, not in a live browser.
+> If a deployment ever sees the live-log socket blocked, `CONTENT_SECURITY_POLICY` is the escape
+> hatch.
 
 ---
 
@@ -376,6 +410,11 @@ open hole — but it should not rely solely on SameSite.
 
 **Recommendation:** validate `Origin` against an allow-list on every WS handshake.
 
+> **Update — 2026-07-27 (mitigated).** All three WebSocket handlers (instance logs, image pull,
+> server-file download) now validate `Origin` **before** accepting the socket, closing with code
+> 4403 on a mismatch. The check runs ahead of the session check, so a foreign origin is refused
+> even with a valid cookie.
+
 ---
 
 ### R13 — Session-secret auto-gen and long, non-revocable sessions  ·  LOW
@@ -436,16 +475,17 @@ configuration/documentation changes; the rest are code.
    least-privilege **docker-socket-proxy** instead of the raw socket. **Follow-up still open:**
    run the daemon **rootless** or with **userns-remap** to also neutralise the residual
    container-create-with-host-bind escalation the proxy cannot filter (see the R1 update note).
-3. **R6 (code):** Disable `/docs`, `/redoc`, `/openapi.json` in production and trim
-   `/api/version` to non-sensitive fields.
+3. **R6 (code):** ✅ **Done 2026-07-27** — docs/OpenAPI off unless `API_DOCS=true`, `/api/health`
+   reduced to liveness, build details behind a session (`auth_enabled` kept public by necessity —
+   see the R6 update note).
 
 **Do next — authentication & session hardening**
 4. **R4 (code):** ✅ **Done 2026-07-27** — trusted-proxy `X-Forwarded-For` resolution
    (`TRUSTED_PROXIES`), per-client escalating lockout, no global cap, success resets state,
    failed logins logged. Persistent counters deliberately skipped (see the R4 update note).
-5. **R7 (code):** Security-headers middleware (CSP, frame-ancestors DENY, nosniff, HSTS,
-   referrer-policy) + Origin/CSRF checks on all mutating endpoints and WS handshakes (also
-   closes **R12**).
+5. **R7 (code):** ✅ **Done 2026-07-27** — security-headers middleware (CSP, frame-ancestors
+   DENY, nosniff, HSTS-when-HTTPS, referrer-policy) plus Origin/CSRF enforcement on every
+   mutating endpoint and all three WS handshakes. Also closes **R12**.
 6. **R13 (code/docs):** Require `SESSION_SECRET`, shorten TTL, document rotation as revocation.
 
 **Then — container & supply-chain hardening**

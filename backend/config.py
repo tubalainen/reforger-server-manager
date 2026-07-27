@@ -5,7 +5,7 @@ import secrets
 from dataclasses import dataclass, field
 
 APP_NAME = "Reforger Server Manager"
-APP_VERSION = "0.43.8"
+APP_VERSION = "0.44.0"
 
 # The password shipped in .env.example. Refusing to start with it (when exposed)
 # is what stops a "just ran docker compose up" box from facing the internet on
@@ -99,6 +99,15 @@ class Settings:
     # always use the direct peer, which is the safe default for a direct bind.
     trusted_proxies: tuple = ()
     trusted_proxies_invalid: tuple[str, ...] = field(default=())
+    # Interactive API docs (/docs, /redoc, /openapi.json). Off by default: they
+    # enumerate every endpoint of a Docker-controlling API to anyone who asks
+    # (security review R6).
+    api_docs: bool = False
+    # Extra browser origins accepted on state-changing requests, for a proxy that
+    # rewrites Host. Same-origin always works without listing anything (R7).
+    allowed_origins: tuple[str, ...] = field(default=())
+    # Override the Content-Security-Policy if a deployment needs a looser one.
+    content_security_policy: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -107,9 +116,17 @@ class Settings:
         if generated:
             secret = secrets.token_hex(32)
         trusted, trusted_bad = _parse_networks(os.environ.get("TRUSTED_PROXIES"))
+        origins = tuple(
+            o.strip().rstrip("/")
+            for o in os.environ.get("ALLOWED_ORIGINS", "").split(",")
+            if o.strip()
+        )
         return cls(
             trusted_proxies=trusted,
             trusted_proxies_invalid=trusted_bad,
+            api_docs=_env_bool("API_DOCS", False),
+            allowed_origins=origins,
+            content_security_policy=os.environ.get("CONTENT_SECURITY_POLICY", "").strip(),
             admin_username=os.environ.get("ADMIN_USERNAME", "").strip(),
             admin_password=os.environ.get("ADMIN_PASSWORD", "").strip(),
             # Built-in login on by default; disable ONLY behind a reverse proxy
