@@ -246,9 +246,14 @@ works over plain HTTP polling, so no extra nginx/Cloudflare-tunnel configuration
 needed — only the live server-log and download-progress views use WebSockets, which
 both pass through by default.
 
-> **Security note:** the manager mounts `/var/run/docker.sock`, which is root-equivalent
-> on the host — that is what lets it create server containers. Treat the web GUI
-> credentials accordingly and firewall the port.
+> **Security note:** managing containers means talking to the host Docker daemon, which is
+> root-equivalent on the host. The manager does **not** mount `/var/run/docker.sock`
+> directly; a bundled least-privilege **docker-socket-proxy** holds the socket and forwards
+> only the API calls the manager needs (containers, images, networks, info), denying the
+> rest (exec, build, volume create, swarm, secrets, …). This shrinks the attack surface but
+> does not remove the daemon's inherent power to create containers — so still treat the web
+> GUI credentials as host credentials and never expose the port directly (firewall it, and
+> put a TLS reverse proxy in front for remote use).
 >
 > The built-in login can be turned off with `AUTH_ENABLED=false` so a reverse proxy
 > (NGINX, Caddy, Authelia, …) can enforce authentication instead. Only do this when

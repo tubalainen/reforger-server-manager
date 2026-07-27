@@ -16,17 +16,27 @@ if [ "$(id -u)" = "0" ]; then
     chown -R app:app /data 2>/dev/null || \
         echo "NOTE: could not chown /data (expected on a Windows bind mount)" >&2
 
-    # Grant the app user access to the docker socket, whatever GID the
-    # host uses for it.
-    if [ -S /var/run/docker.sock ]; then
-        DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
-        if ! getent group "$DOCKER_GID" > /dev/null 2>&1; then
-            groupadd -g "$DOCKER_GID" dockersock
-        fi
-        usermod -aG "$DOCKER_GID" app
-    else
-        echo "WARNING: /var/run/docker.sock not mounted - server instances cannot be managed" >&2
-    fi
+    # How the app reaches the daemon:
+    #   * DOCKER_HOST=tcp://… — through the bundled docker-socket-proxy (the
+    #     default compose setup). No local socket, so no group to join.
+    #   * otherwise — a directly mounted /var/run/docker.sock (legacy / custom
+    #     setups). Grant the app user access to it, whatever GID the host uses.
+    case "$DOCKER_HOST" in
+        tcp://*|http://*|https://*)
+            echo "Using Docker daemon at $DOCKER_HOST (via socket proxy)" >&2
+            ;;
+        *)
+            if [ -S /var/run/docker.sock ]; then
+                DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
+                if ! getent group "$DOCKER_GID" > /dev/null 2>&1; then
+                    groupadd -g "$DOCKER_GID" dockersock
+                fi
+                usermod -aG "$DOCKER_GID" app
+            else
+                echo "WARNING: no DOCKER_HOST set and /var/run/docker.sock not mounted - server instances cannot be managed" >&2
+            fi
+            ;;
+    esac
 
     exec gosu app "$@"
 fi

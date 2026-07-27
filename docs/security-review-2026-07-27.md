@@ -46,7 +46,7 @@ keeping that root shell off the open internet and making it expensive to reach.
 
 | # | Finding | Severity |
 |---|---------|----------|
-| **R1** | Docker socket mount = host-root-equivalent, reachable through the web GUI | **CRITICAL** |
+| **R1** | Docker socket mount = host-root-equivalent, reachable through the web GUI — **partially mitigated 2026-07-27 (socket proxy)** | **CRITICAL** |
 | **R2** | `AUTH_ENABLED=false` fully removes authentication from a root-equivalent GUI | **CRITICAL** |
 | **R3** | No TLS by default + weak, single, shared credential (default `admin` / `change-me-now`) | **HIGH** |
 | **R4** | Brute-force throttle is bypassable and breaks behind a reverse proxy (no `X-Forwarded-For`) | **HIGH** |
@@ -119,6 +119,27 @@ This is *inherent* to what the tool does, so it cannot be removed — but it can
 - Never expose the GUI port directly; see R3.
 
 **Risk:** total host compromise. **This is the finding everything else feeds into.**
+
+> **Update — 2026-07-27 (partially mitigated).** The manager no longer mounts
+> `/var/run/docker.sock` directly. A bundled **`docker-socket-proxy`** service now holds the
+> socket and the manager reaches the daemon over the internal network via
+> `DOCKER_HOST=tcp://docker-socket-proxy:2375`. Only the API sections the manager uses are
+> forwarded — `CONTAINERS`, `IMAGES`, `NETWORKS`, `INFO` (+ `POST` for write verbs); the
+> `exec`, `build`, `commit`, `volumes`, `swarm`, `secrets`, `configs`, `plugins` and `system`
+> endpoints are denied. The proxy is not published (internal `reforger-net` only) and mounts
+> the socket read-only. Changed in `docker-compose.yaml`, `docker-compose.windows.yaml`,
+> `backend/entrypoint.sh` (handles `DOCKER_HOST`), `.env.example` (`DOCKER_PROXY_IMAGE`) and
+> the README security note. No application code changed — `docker.from_env()` already honours
+> `DOCKER_HOST`.
+>
+> **Residual risk (why "partial"):** the proxy filters by API path/method, not by request
+> body, so it cannot block a `containers.create` that bind-mounts a host path or sets
+> `--privileged` — capabilities the manager legitimately needs. An attacker who reaches the
+> API can therefore still create a container that mounts the host filesystem. To fully close
+> that escalation, run the daemon **rootless** or with **user-namespace remapping** at the
+> host level (ops change, tracked separately), and keep following R2/R3 (auth + TLS + no
+> direct exposure). Net effect: meaningfully reduced blast radius; the GUI must still be
+> treated as host-root and kept off the open internet.
 
 ---
 
@@ -357,9 +378,10 @@ configuration/documentation changes; the rest are code.
 1. **R3/R2 (docs/ops + code):** Make secure-by-default explicit — refuse to start bound to a
    non-loopback address over plain HTTP without an explicit acknowledgement; refuse the example
    password; auto-enable `secure` cookie under `X-Forwarded-Proto: https`.
-2. **R1 (docs/ops):** Ship and document a **docker-socket-proxy** (or rootless Docker) as the
-   recommended way to expose the daemon, denying host-path binds outside an allow-list and
-   `--privileged`.
+2. **R1 (docs/ops):** ✅ **Done 2026-07-27** — the manager now goes through a bundled
+   least-privilege **docker-socket-proxy** instead of the raw socket. **Follow-up still open:**
+   run the daemon **rootless** or with **userns-remap** to also neutralise the residual
+   container-create-with-host-bind escalation the proxy cannot filter (see the R1 update note).
 3. **R6 (code):** Disable `/docs`, `/redoc`, `/openapi.json` in production and trim
    `/api/version` to non-sensitive fields.
 
