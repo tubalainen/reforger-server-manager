@@ -205,6 +205,15 @@ the Linux server's LAN IP:
 - **A2S query port(s):** UDP `17777–17796` (default `A2S_PORT_RANGE`)
 - one game + A2S port pair per running server instance
 
+On the Linux host itself, if you run `ufw` (the one-line installer does this for you):
+
+```bash
+sudo ufw allow 2001:2020/udp     # game ports     (GAME_PORT_RANGE)
+sudo ufw allow 17777:17796/udp   # server browser (A2S_PORT_RANGE)
+```
+
+Note `ufw` writes ranges with a colon (`2001:2020`), not the dash used in `.env`.
+
 Also set `PUBLIC_ADDRESS` in `.env` to your server's public IP so it advertises
 correctly to the Arma backend. Keep the RCON ports (`19999–20018`) and the web GUI
 (`7780`) **private** — do not forward them to the internet; reach the GUI through a
@@ -215,6 +224,43 @@ TLS reverse proxy or an SSH tunnel instead.
 You only need Docker with the Compose plugin. Head to [Quick start](#quick-start)
 below, fill in `.env`, `docker compose up -d`, and forward the UDP game/A2S ports
 listed above. Put a TLS reverse proxy in front of the GUI for VPS use.
+
+## One-line install (Linux)
+
+Two installers, one for each Linux scenario. Both check for Docker (offering to
+install it), generate a strong GUI password and session secret, set up the firewall
+after confirming with you, install an `rsm` management command, and start the stack.
+
+**Local box — home server or LAN:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/scripts/linux/install-local.sh | sudo sh
+```
+
+**Public cloud VPS — adds automatic HTTPS:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/scripts/linux/install-vps.sh | sudo sh
+```
+
+> **Prefer to read before running as root?** Sensible — do this instead:
+> ```bash
+> curl -fsSLO https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/scripts/linux/install-vps.sh
+> less install-vps.sh && sudo sh install-vps.sh
+> ```
+
+Afterwards, manage everything with the `rsm` command:
+
+```
+rsm start | stop | restart | status | logs | update | config | uninstall
+```
+
+The installers are safe to re-run: an existing `.env` is never overwritten, and the
+firewall step always allows your **current SSH port first** so a remote session cannot
+be cut off. On Windows, use the [PowerShell installer](#running-on-windows-11--10) instead.
+
+For what each scenario sets up — and to do it by hand — see
+[Quick start](#quick-start) (local) and [Running on a VPS](#running-on-a-vps-public-server-automatic-https).
 
 ## Quick start
 
@@ -370,6 +416,19 @@ sudo ufw allow 2001:2020/udp     # game ports    (GAME_PORT_RANGE)
 sudo ufw allow 17777:17796/udp   # server browser (A2S_PORT_RANGE)
 sudo ufw enable
 ```
+
+> **Do not run `ufw enable` without the SSH rule above** — you will lock yourself out
+> of the VPS. If your SSH runs on a non-standard port, allow that port instead of
+> `OpenSSH`. (The one-line installer detects your live SSH port and always allows it
+> first, which is why it is the safer route.)
+
+> **Your VPS provider has a second firewall.** Hetzner Cloud Firewall, AWS security
+> groups, Oracle Cloud, Google Cloud and DigitalOcean all filter traffic *before* it
+> reaches the machine — and several block almost everything by default, so the `ufw`
+> rules above are **not enough on their own**. In your provider's control panel, allow
+> inbound **TCP 80, 443** and **UDP 2001–2020, 17777–17796**. If the GUI or your game
+> server never becomes reachable despite everything looking right on the host, this is
+> almost always the reason.
 
 **5 — Start it:**
 
