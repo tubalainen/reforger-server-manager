@@ -329,6 +329,10 @@ Then head to **Instances** and create your first server from a template.
 
 ### Updating (Linux)
 
+> **Check the [release notes](https://github.com/tubalainen/reforger-server-manager/releases)
+> first.** Most updates are a straight pull, but a release that changes defaults or wiring
+> says so under **Breaking changes**, along with anything you need to do by hand.
+
 Installed with the [one-line installer](#one-line-install-linux)? Just run `rsm update`.
 
 Installed by hand? **Refresh the compose file first, then pull.** A release can change how
@@ -572,6 +576,10 @@ Then do the [First run](#first-run) steps in the GUI (pull the runtime image, do
 the server files) and create an instance.
 
 ### Updating (and locking a version)
+
+> **Check the [release notes](https://github.com/tubalainen/reforger-server-manager/releases)
+> first.** A release that changes defaults or how the stack is wired says so under
+> **Breaking changes** — including when re-running the installer is required, not optional.
 
 **The manager updates itself on start.** Every time you launch it (the Desktop shortcut,
 or `start.ps1`), it first refreshes these Windows helper scripts from GitHub — so a fix to
