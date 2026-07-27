@@ -256,9 +256,17 @@ both pass through by default.
 > put a TLS reverse proxy in front for remote use).
 >
 > The built-in login can be turned off with `AUTH_ENABLED=false` so a reverse proxy
-> (NGINX, Caddy, Authelia, …) can enforce authentication instead. Only do this when
-> such a proxy is actually in front of the app — with it off and no proxy, the GUI
-> (and thus Docker) is completely open.
+> (NGINX, Caddy, Authelia, …) can enforce authentication instead. To do this on an
+> exposed deployment you must also set `AUTH_DELEGATED_ACK=true` — your explicit
+> confirmation that a proxy in front authenticates every request. Without it, an
+> exposed (`WEB_BIND` other than `127.0.0.1`) login-disabled start is **refused**.
+>
+> As a safety net, when the GUI is bound to a non-loopback address the app also
+> **refuses to start** while `ADMIN_PASSWORD` is still the example value (or empty),
+> so an exposed box can never come up on `admin` / `change-me-now`. A localhost-only
+> bind (the default) keeps a quick local trial frictionless — these are only
+> warnings there. When a TLS reverse proxy fronts the GUI (forwarding
+> `X-Forwarded-Proto: https`), the session cookie is automatically marked `Secure`.
 
 ### First run
 

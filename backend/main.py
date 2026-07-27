@@ -31,28 +31,21 @@ async def lifespan(_app: FastAPI):
     logger.info("=" * 60)
     logger.info("%s v%s", config.APP_NAME, config.APP_VERSION)
     logger.info("=" * 60)
-    if config.settings.session_secret_generated:
-        logger.warning(
-            "SESSION_SECRET not set — generated a random one; all sessions reset on restart"
+    # Fail closed on an insecure, network-exposed configuration (security review
+    # R2/R3). Fatal issues only fire when WEB_BIND publishes the GUI beyond
+    # localhost, so a local run stays frictionless; an exposed one must either
+    # have a real login or an explicit AUTH_DELEGATED_ACK that a proxy owns auth.
+    fatal, warnings = config.startup_security_issues(config.settings)
+    for message in warnings:
+        logger.warning(message)
+    if fatal:
+        for message in fatal:
+            logger.error("SECURITY: %s", message)
+        raise RuntimeError(
+            "Refusing to start: insecure configuration for a network-exposed, "
+            "Docker-controlling GUI (see the SECURITY errors above). Fix the "
+            "configuration, or bind the GUI to 127.0.0.1."
         )
-    if not config.settings.auth_enabled:
-        logger.warning(
-            "AUTH_ENABLED=false — the built-in login is DISABLED. The GUI (which "
-            "controls Docker) is unauthenticated; only run this behind a reverse "
-            "proxy that enforces authentication."
-        )
-    elif not config.settings.admin_username or not config.settings.admin_password:
-        # An empty value here is almost always a stray '$' in .env: Docker Compose
-        # reads a single '$' as a variable reference and drops it, so a value that
-        # begins with one (ADMIN_USERNAME=$name) arrives empty. Login then returns
-        # 503 "not configured" and the GUI looks broken — see issue #140.
-        logger.warning(
-            "ADMIN_USERNAME or ADMIN_PASSWORD is empty — login cannot work. If your "
-            "value contains a '$', write it twice ('$$') in .env: Docker Compose eats "
-            "a single '$'. See the note next to ADMIN_PASSWORD in .env.example."
-        )
-    elif config.settings.admin_password == "change-me-now":
-        logger.warning("ADMIN_PASSWORD is still the example value — change it in .env")
     models.init_db()
     # Seed the Mods Overview registry from existing templates so mods that were
     # baked in before the registry existed still show up (#131). Idempotent.

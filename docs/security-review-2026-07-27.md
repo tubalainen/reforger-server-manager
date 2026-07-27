@@ -47,8 +47,8 @@ keeping that root shell off the open internet and making it expensive to reach.
 | # | Finding | Severity |
 |---|---------|----------|
 | **R1** | Docker socket mount = host-root-equivalent, reachable through the web GUI — **partially mitigated 2026-07-27 (socket proxy)** | **CRITICAL** |
-| **R2** | `AUTH_ENABLED=false` fully removes authentication from a root-equivalent GUI | **CRITICAL** |
-| **R3** | No TLS by default + weak, single, shared credential (default `admin` / `change-me-now`) | **HIGH** |
+| **R2** | `AUTH_ENABLED=false` fully removes authentication from a root-equivalent GUI — **mitigated 2026-07-27 (exposed start now gated)** | **CRITICAL** |
+| **R3** | No TLS by default + weak, single, shared credential (default `admin` / `change-me-now`) — **partially mitigated 2026-07-27 (weak-cred start gated, cookie auto-secure)** | **HIGH** |
 | **R4** | Brute-force throttle is bypassable and breaks behind a reverse proxy (no `X-Forwarded-For`) | **HIGH** |
 | **R5** | Secrets stored and served in plaintext (admin/RCON/server passwords in DB, `.env`, downloadable `config.json`) | **HIGH** |
 | **R6** | Unauthenticated API surface disclosure: `/docs`, `/redoc`, `/openapi.json`, `/api/version` | **MEDIUM** |
@@ -157,6 +157,14 @@ unauthenticated root-on-host control panel to the internet.
 set; log an error and (optionally) require a trusted-proxy allow-list. Prefer keeping built-in
 auth on and layering the proxy auth on top.
 
+> **Update — 2026-07-27 (mitigated).** The proxy-owns-auth mode is **kept** (operators can still
+> run `AUTH_ENABLED=false` behind nginx/Caddy/Authelia), but it is now **gated on exposure**. A
+> startup check (`config.startup_security_issues`, enforced in `main.py`'s lifespan) **refuses to
+> start** when the GUI looks network-exposed (a non-loopback `WEB_BIND`) and `AUTH_ENABLED=false`
+> unless the operator sets **`AUTH_DELEGATED_ACK=true`** — their explicit acknowledgement that a
+> proxy in front authenticates every request. A loopback bind stays frictionless (warning only).
+> Documented in `.env.example`. Covered by tests in `tests/test_config.py`.
+
 ---
 
 ### R3 — No TLS by default + weak single shared credential  ·  HIGH
@@ -175,6 +183,20 @@ auth on and layering the proxy auth on top.
 non-loopback bind; set `SESSION_COOKIE_SECURE=true` automatically when a request arrives over
 HTTPS / `X-Forwarded-Proto: https`; refuse to start with the example password; document and
 encourage a strong generated password. Consider optional TOTP MFA given the blast radius.
+
+> **Update — 2026-07-27 (partially mitigated).** Two of the code-side items are done:
+> - **Refuse the weak/example credential when exposed.** The same startup gate (see R2) now
+>   **aborts startup** on a non-loopback `WEB_BIND` when `ADMIN_PASSWORD` is the example value or
+>   empty; on loopback it stays a warning, plus a new warning for passwords < 12 chars.
+> - **Auto-secure cookie under TLS.** `auth.py` now marks the session cookie `Secure` whenever the
+>   request is HTTPS or carries `X-Forwarded-Proto: https` (a terminating proxy), in addition to the
+>   explicit `SESSION_COOKIE_SECURE=true`. This never sets `Secure` on the plain-HTTP localhost
+>   default (which would break login). Covered by tests in `tests/test_auth.py`.
+>
+> **Still open (ops / larger scope):** enforcing that a TLS reverse proxy is actually present for a
+> non-loopback bind cannot be proven from inside the app (it only sees `WEB_BIND` and request
+> headers) — this stays documentation + the exposure gate above. Single shared account and optional
+> MFA are unchanged; treat those as a follow-up if per-user auth is wanted.
 
 ---
 
@@ -375,9 +397,11 @@ Ordered for maximum risk reduction per unit of effort. Items marked **(docs/ops)
 configuration/documentation changes; the rest are code.
 
 **Do first — gate internet exposure of the root-equivalent GUI**
-1. **R3/R2 (docs/ops + code):** Make secure-by-default explicit — refuse to start bound to a
-   non-loopback address over plain HTTP without an explicit acknowledgement; refuse the example
-   password; auto-enable `secure` cookie under `X-Forwarded-Proto: https`.
+1. **R3/R2 (docs/ops + code):** ✅ **Done 2026-07-27** — a startup gate refuses to start an
+   exposed GUI with the example/empty password or with `AUTH_ENABLED=false` unless
+   `AUTH_DELEGATED_ACK=true`; the session cookie auto-enables `Secure` under
+   `X-Forwarded-Proto: https`. **Follow-up:** the proxy-owns-auth opt-out is preserved by design;
+   actually *requiring* a TLS proxy for a non-loopback bind remains documentation-only.
 2. **R1 (docs/ops):** ✅ **Done 2026-07-27** — the manager now goes through a bundled
    least-privilege **docker-socket-proxy** instead of the raw socket. **Follow-up still open:**
    run the daemon **rootless** or with **userns-remap** to also neutralise the residual

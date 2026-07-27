@@ -102,3 +102,25 @@ def test_session_cookie_is_secure_when_configured(client, monkeypatch):
     )
     assert r.status_code == 200
     assert "secure" in r.headers["set-cookie"].lower()
+
+
+def test_session_cookie_secure_auto_enabled_behind_tls_proxy(client):
+    # A terminating TLS proxy forwards X-Forwarded-Proto: https; the cookie must
+    # then be Secure even with SESSION_COOKIE_SECURE unset (security review R3).
+    r = client.post(
+        "/api/auth/login",
+        json={"username": "testadmin", "password": "testpass-123"},
+        headers={"X-Forwarded-Proto": "https"},
+    )
+    assert r.status_code == 200
+    assert "secure" in r.headers["set-cookie"].lower()
+
+
+def test_session_cookie_not_secure_on_plain_http(client):
+    # The plain-HTTP localhost default must NOT set Secure, or the cookie would
+    # never be sent back and login would appear broken.
+    r = client.post(
+        "/api/auth/login", json={"username": "testadmin", "password": "testpass-123"}
+    )
+    assert r.status_code == 200
+    assert "secure" not in r.headers["set-cookie"].lower()

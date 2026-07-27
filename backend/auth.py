@@ -80,6 +80,23 @@ def session_username(token: str | None) -> str | None:
         return None
 
 
+def _cookie_should_be_secure(request: Request) -> bool:
+    """Whether to mark the session cookie ``Secure`` for this response.
+
+    Explicit ``SESSION_COOKIE_SECURE=true`` always wins. Otherwise honour a
+    terminating TLS reverse proxy's ``X-Forwarded-Proto`` (the app itself always
+    speaks plain HTTP inside its container), so a proper HTTPS deployment gets a
+    Secure cookie without extra configuration (security review R3). Trusting this
+    header can only downgrade an attacker's own session — never another user's —
+    so it needs no trusted-proxy list here.
+    """
+    if config.settings.session_cookie_secure:
+        return True
+    forwarded = request.headers.get("x-forwarded-proto", "")
+    proto = forwarded.split(",")[0].strip().lower()
+    return proto == "https" or request.url.scheme == "https"
+
+
 def require_session(request: Request) -> str:
     """FastAPI dependency: returns the logged-in username or raises 401."""
     username = session_username(request.cookies.get(COOKIE_NAME))
@@ -112,12 +129,12 @@ async def login(body: LoginRequest, request: Request, response: Response):
         max_age=cfg.session_ttl_hours * 3600,
         httponly=True,
         samesite="lax",
-        # Off by default because the out-of-the-box deployment is plain HTTP on
-        # 127.0.0.1, where a secure cookie would simply never be sent. Set
-        # SESSION_COOKIE_SECURE=true when a TLS reverse proxy fronts the GUI — as
-        # the README recommends for remote use — so the session cannot travel in
-        # the clear on a downgrade (#88).
-        secure=cfg.session_cookie_secure,
+        # Secure when TLS is actually in use: SESSION_COOKIE_SECURE=true forces
+        # it, and a request arriving over HTTPS (directly, or via a proxy's
+        # X-Forwarded-Proto) auto-enables it so a TLS deployment never leaks the
+        # session on a downgrade — without breaking the plain-HTTP localhost
+        # default, where a Secure cookie would simply never be sent (#88, R3).
+        secure=_cookie_should_be_secure(request),
     )
     return {"username": cfg.admin_username}
 
