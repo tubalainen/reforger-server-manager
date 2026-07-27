@@ -58,6 +58,9 @@ async def pull_server_image(_user: str = Depends(auth.require_session)):
 
 @router.websocket("/image/ws")
 async def image_events(websocket: WebSocket):
+    if not auth.request_origin_ok(websocket):
+        await websocket.close(code=4403)  # cross-site WebSocket hijacking (R12)
+        return
     if not auth.session_username(websocket.cookies.get(auth.COOKIE_NAME)):
         await websocket.close(code=4401)
         return
@@ -110,6 +113,9 @@ async def start_download(branch: str, _user: str = Depends(auth.require_session)
 
 @router.websocket("/{branch}/ws")
 async def download_events(websocket: WebSocket, branch: str):
+    if not auth.request_origin_ok(websocket):
+        await websocket.close(code=4403)  # cross-site WebSocket hijacking (R12)
+        return
     if not auth.session_username(websocket.cookies.get(auth.COOKIE_NAME)):
         await websocket.close(code=4401)
         return

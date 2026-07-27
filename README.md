@@ -205,6 +205,15 @@ the Linux server's LAN IP:
 - **A2S query port(s):** UDP `17777–17796` (default `A2S_PORT_RANGE`)
 - one game + A2S port pair per running server instance
 
+On the Linux host itself, if you run `ufw` (the one-line installer does this for you):
+
+```bash
+sudo ufw allow 2001:2020/udp     # game ports     (GAME_PORT_RANGE)
+sudo ufw allow 17777:17796/udp   # server browser (A2S_PORT_RANGE)
+```
+
+Note `ufw` writes ranges with a colon (`2001:2020`), not the dash used in `.env`.
+
 Also set `PUBLIC_ADDRESS` in `.env` to your server's public IP so it advertises
 correctly to the Arma backend. Keep the RCON ports (`19999–20018`) and the web GUI
 (`7780`) **private** — do not forward them to the internet; reach the GUI through a
@@ -215,6 +224,43 @@ TLS reverse proxy or an SSH tunnel instead.
 You only need Docker with the Compose plugin. Head to [Quick start](#quick-start)
 below, fill in `.env`, `docker compose up -d`, and forward the UDP game/A2S ports
 listed above. Put a TLS reverse proxy in front of the GUI for VPS use.
+
+## One-line install (Linux)
+
+Two installers, one for each Linux scenario. Both check for Docker (offering to
+install it), generate a strong GUI password and session secret, set up the firewall
+after confirming with you, install an `rsm` management command, and start the stack.
+
+**Local box — home server or LAN:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/scripts/linux/install-local.sh | sudo sh
+```
+
+**Public cloud VPS — adds automatic HTTPS:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/scripts/linux/install-vps.sh | sudo sh
+```
+
+> **Prefer to read before running as root?** Sensible — do this instead:
+> ```bash
+> curl -fsSLO https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/scripts/linux/install-vps.sh
+> less install-vps.sh && sudo sh install-vps.sh
+> ```
+
+Afterwards, manage everything with the `rsm` command:
+
+```
+rsm start | stop | restart | status | logs | update | config | uninstall
+```
+
+The installers are safe to re-run: an existing `.env` is never overwritten, and the
+firewall step always allows your **current SSH port first** so a remote session cannot
+be cut off. On Windows, use the [PowerShell installer](#running-on-windows-11--10) instead.
+
+For what each scenario sets up — and to do it by hand — see
+[Quick start](#quick-start) (local) and [Running on a VPS](#running-on-a-vps-public-server-automatic-https).
 
 ## Quick start
 
@@ -246,14 +292,27 @@ works over plain HTTP polling, so no extra nginx/Cloudflare-tunnel configuration
 needed — only the live server-log and download-progress views use WebSockets, which
 both pass through by default.
 
-> **Security note:** the manager mounts `/var/run/docker.sock`, which is root-equivalent
-> on the host — that is what lets it create server containers. Treat the web GUI
-> credentials accordingly and firewall the port.
+> **Security note:** managing containers means talking to the host Docker daemon, which is
+> root-equivalent on the host. The manager does **not** mount `/var/run/docker.sock`
+> directly; a bundled least-privilege **docker-socket-proxy** holds the socket and forwards
+> only the API calls the manager needs (containers, images, networks, info), denying the
+> rest (exec, build, volume create, swarm, secrets, …). This shrinks the attack surface but
+> does not remove the daemon's inherent power to create containers — so still treat the web
+> GUI credentials as host credentials and never expose the port directly (firewall it, and
+> put a TLS reverse proxy in front for remote use).
 >
 > The built-in login can be turned off with `AUTH_ENABLED=false` so a reverse proxy
-> (NGINX, Caddy, Authelia, …) can enforce authentication instead. Only do this when
-> such a proxy is actually in front of the app — with it off and no proxy, the GUI
-> (and thus Docker) is completely open.
+> (NGINX, Caddy, Authelia, …) can enforce authentication instead. To do this on an
+> exposed deployment you must also set `AUTH_DELEGATED_ACK=true` — your explicit
+> confirmation that a proxy in front authenticates every request. Without it, an
+> exposed (`WEB_BIND` other than `127.0.0.1`) login-disabled start is **refused**.
+>
+> As a safety net, when the GUI is bound to a non-loopback address the app also
+> **refuses to start** while `ADMIN_PASSWORD` is still the example value (or empty),
+> so an exposed box can never come up on `admin` / `change-me-now`. A localhost-only
+> bind (the default) keeps a quick local trial frictionless — these are only
+> warnings there. When a TLS reverse proxy fronts the GUI (forwarding
+> `X-Forwarded-Proto: https`), the session cookie is automatically marked `Secure`.
 
 ### First run
 
@@ -300,6 +359,116 @@ not a typo — so it's flagged for visibility and never rejected.
 > are assigned per instance from the manager's port ranges, so each server gets its own —
 > a value you type for them here is kept in the template but overwritten when an instance
 > runs. Set ports on the instance, not in the template's JSON.
+
+## Running on a VPS (public server, automatic HTTPS)
+
+The quick start above binds the GUI to `127.0.0.1`, which is right for a box you sit
+in front of. On a rented VPS you want the opposite: reach the GUI from anywhere, over
+HTTPS, without ever putting it on the open internet unprotected.
+
+`docker-compose.vps.yaml` does that. **Caddy** terminates TLS and is the only thing
+published; the manager gets **no port of its own** and is reachable only through Caddy
+on an internal Docker network. Certificates are issued and renewed automatically — there
+is no proxy config file to write and no admin panel to secure.
+
+**You need:** a VPS (any 2 GB+ Linux box) and a **domain name** pointed at it. (No domain?
+See the [IP-only fallback](#no-domain-yet-ip-only-fallback) below — but read the warning.)
+
+**1 — Point your domain at the VPS.** Create a DNS **A record** for e.g.
+`reforger.example.com` → your VPS's public IP. Do this *first*: the certificate is
+requested on the very first start, and it can only succeed once the record resolves.
+
+**2 — Install Docker** (skip if your VPS image ships it):
+
+```bash
+curl -fsSL https://get.docker.com | sudo sh
+```
+
+**3 — Fetch the files and configure:**
+
+```bash
+mkdir -p ~/reforger && cd ~/reforger
+curl -fsSLO https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/docker-compose.vps.yaml
+curl -fsSL  https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/.env.example -o .env
+nano .env
+```
+
+In `.env` set these three, then save:
+
+| Setting | What to put |
+|---|---|
+| `SITE_ADDRESS` | your domain, e.g. `reforger.example.com` |
+| `ADMIN_PASSWORD` | a long, unique password — **these are effectively host-root credentials** |
+| `SESSION_SECRET` | output of `openssl rand -hex 32` |
+
+> The manager **refuses to start** on this file while `ADMIN_PASSWORD` is still
+> `change-me-now` or empty. That is deliberate: the GUI is internet-facing here, and it
+> controls Docker. A `$` in the password must be written twice (`$$`) — Compose eats a
+> single one.
+
+**4 — Open the firewall.** Caddy needs 80/443; players need the UDP game ranges. The
+GUI itself needs *no* port of its own:
+
+```bash
+sudo ufw allow OpenSSH
+sudo ufw allow 80,443/tcp        # Caddy (HTTPS + certificate renewal)
+sudo ufw allow 2001:2020/udp     # game ports    (GAME_PORT_RANGE)
+sudo ufw allow 17777:17796/udp   # server browser (A2S_PORT_RANGE)
+sudo ufw enable
+```
+
+> **Do not run `ufw enable` without the SSH rule above** — you will lock yourself out
+> of the VPS. If your SSH runs on a non-standard port, allow that port instead of
+> `OpenSSH`. (The one-line installer detects your live SSH port and always allows it
+> first, which is why it is the safer route.)
+
+> **Your VPS provider has a second firewall.** Hetzner Cloud Firewall, AWS security
+> groups, Oracle Cloud, Google Cloud and DigitalOcean all filter traffic *before* it
+> reaches the machine — and several block almost everything by default, so the `ufw`
+> rules above are **not enough on their own**. In your provider's control panel, allow
+> inbound **TCP 80, 443** and **UDP 2001–2020, 17777–17796**. If the GUI or your game
+> server never becomes reachable despite everything looking right on the host, this is
+> almost always the reason.
+
+**5 — Start it:**
+
+```bash
+docker compose -f docker-compose.vps.yaml up -d
+```
+
+Give it 10–30 seconds to obtain the certificate, then open
+**`https://reforger.example.com`** and log in. That's it — continue with
+[First run](#first-run) to download the server files.
+
+Watch the certificate being issued (or diagnose a DNS problem) with:
+
+```bash
+docker compose -f docker-compose.vps.yaml logs -f caddy
+```
+
+### What this setup does for you
+
+- **The GUI is never directly exposed.** The manager publishes no port; only Caddy is
+  on the internet. There is no `:7780` to find and no admin panel to leave on defaults.
+- **Real HTTPS, automatically.** Including renewal. The session cookie is marked
+  `Secure` automatically, because Caddy forwards `X-Forwarded-Proto: https`.
+- **The Docker API is fenced off.** The manager talks to the daemon through a
+  least-privilege socket proxy on an `internal` network that neither Caddy nor the game
+  servers can reach.
+- **Live logs work.** Caddy proxies WebSockets natively, so the streaming server log
+  and download progress bars work with no extra configuration.
+- **Login throttling knows who is who.** `TRUSTED_PROXIES` is preset to Caddy's network, so
+  failed logins are rate-limited per real client rather than lumped together — one attacker
+  cannot lock you out of your own server.
+
+### No domain yet? (IP-only fallback)
+
+Set `SITE_ADDRESS=:80` and reach the GUI at `http://<your-vps-ip>`.
+
+> **Testing only.** There is no certificate and therefore **no encryption**: your
+> password and session cookie cross the internet in clear text, readable by anyone on
+> the path. Use it to confirm the stack runs, then get a domain before real use. A
+> domain costs a few euros a year and is the only way this is genuinely safe.
 
 ## Running on Windows 11 / 10
 

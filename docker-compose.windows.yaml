@@ -23,6 +23,13 @@ services:
     # while — give the manager time before compose SIGKILLs it (default 10s).
     stop_grace_period: 2m
     env_file: .env
+    environment:
+      # Reach the host Docker daemon through the least-privilege proxy below
+      # instead of mounting the root-equivalent socket into this container.
+      # docker.from_env() honours DOCKER_HOST, so no application code changes.
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
+    depends_on:
+      - docker-socket-proxy
     ports:
       # The web GUI. Server instances do NOT need port entries here: the
       # manager creates each Arma server as a *sibling* container on the host
@@ -37,21 +44,52 @@ services:
     volumes:
       # Manager state: SQLite DB, per-instance configs and profiles.
       - reforger-data:/data
-      # Root-equivalent on the host — required to spawn server containers.
-      # Keep the GUI behind auth + firewall (never port-forward it).
-      - /var/run/docker.sock:/var/run/docker.sock
+      # NOTE: the raw Docker socket is deliberately NOT mounted here. The
+      # manager reaches the daemon through the docker-socket-proxy service
+      # below (DOCKER_HOST above), which exposes only the API sections it needs.
       # Downloaded server files, one volume per branch: written by the steamcmd
       # download jobs, mounted read-only here and into each server instance.
       - reforger-serverfiles-stable:/serverfiles/stable:ro
       - reforger-serverfiles-experimental:/serverfiles/experimental:ro
     networks:
       - reforger-net
+      # Private link to the socket proxy; game containers are NOT on this one.
+      - docker-api
+
+  # Least-privilege gateway to the host Docker daemon (Docker Desktop / WSL2).
+  # The manager reaches the daemon through this proxy instead of mounting the
+  # root-equivalent socket itself; only the API sections it needs are forwarded,
+  # everything else (exec, build, volume create, swarm, secrets, …) is denied.
+  # Never published — reachable only by the manager over the internal network.
+  # See docs/security-review-2026-07-27.md (R1): this shrinks the socket's
+  # attack surface but the GUI must still stay off the open internet.
+  docker-socket-proxy:
+    image: ${DOCKER_PROXY_IMAGE:-tecnativa/docker-socket-proxy:v0.4.1}
+    container_name: reforger-docker-proxy
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1   # create/list/inspect/start/stop/remove + logs + stats
+      IMAGES: 1       # pull the server image, check it is present
+      NETWORKS: 1     # inspect reforger-net for the attach self-heal (#113)
+      INFO: 1         # docker info: Docker Desktop detection / firewall hint
+      POST: 1         # allow write verbs (create/start/stop/remove/pull)
+      # Everything not listed stays denied (image default 0).
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      # ONLY the private docker-api network — never shared with the game
+      # servers, which run untrusted Workshop mods as root.
+      - docker-api
 
 # Explicit names so the manager can attach sibling server containers and so the
 # volumes survive a rename of the folder this file sits in.
 networks:
   reforger-net:
     name: reforger-net
+  # Manager <-> socket proxy only; 'internal' keeps it off any external route.
+  docker-api:
+    name: reforger-docker-api
+    internal: true
 
 volumes:
   reforger-data:

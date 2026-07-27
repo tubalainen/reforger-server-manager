@@ -1,0 +1,135 @@
+# Reforger Server Manager — VPS deployment (public server, automatic HTTPS)
+#
+# Hardened variant of docker-compose.yaml for a machine that is ON the internet.
+# Differences from the plain file:
+#
+#   * Caddy terminates TLS and is the ONLY thing published on the web. It gets a
+#     real Let's Encrypt certificate automatically on first start.
+#   * The manager publishes NO port at all. It is reachable only through Caddy
+#     over an internal Docker network — there is no way to hit the GUI directly.
+#   * Three isolated networks instead of one, so neither Caddy nor the game
+#     servers can reach the Docker API (see the network notes at the bottom).
+#
+# Start it with:
+#   docker compose -f docker-compose.vps.yaml up -d
+#
+# See the "Running on a VPS" section of README.md for the full walkthrough.
+services:
+  # --- TLS reverse proxy ------------------------------------------------------
+  # One-liner reverse-proxy mode: no Caddyfile to download, and HTTPS (including
+  # certificate issuance and renewal) is fully automatic when SITE_ADDRESS is a
+  # domain name. WebSocket upgrades — the live server log and the download
+  # progress bars — are proxied natively with no extra configuration.
+  caddy:
+    image: ${CADDY_IMAGE:-caddy:2-alpine}
+    container_name: reforger-caddy
+    restart: unless-stopped
+    command: caddy reverse-proxy --from ${SITE_ADDRESS:?set SITE_ADDRESS in .env (a domain name, or ":80" for plain-HTTP IP-only testing)} --to manager:8080
+    ports:
+      # 80 is required even on an HTTPS-only site: Let's Encrypt validates over
+      # it, and Caddy redirects http->https from it.
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Certificates live here. Keep this volume — losing it means re-issuing on
+      # every restart, which will eventually hit Let's Encrypt's rate limits.
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - proxy
+    depends_on:
+      - manager
+
+  # --- The manager ------------------------------------------------------------
+  manager:
+    image: ghcr.io/tubalainen/reforger-server-manager:${MANAGER_VERSION:-latest}
+    container_name: reforger-manager
+    restart: unless-stopped
+    # The manager stops every running game server on the way down; give it time
+    # before compose SIGKILLs it (default is 10s).
+    stop_grace_period: 2m
+    env_file: .env
+    environment:
+      # Reach the daemon through the least-privilege proxy, never the raw socket.
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
+      # Arms the startup security gate. The GUI has no published port here, so
+      # the app cannot otherwise tell it is internet-facing — but it IS, via
+      # Caddy. This makes it refuse to start on the example/empty password, the
+      # same protection a directly-exposed deployment gets. It does NOT publish
+      # a port (there is no 'ports:' below); it is only a truthfulness signal.
+      #
+      # Hardcoded on purpose: NOT ${WEB_BIND:-...}. .env ships WEB_BIND=127.0.0.1
+      # for the localhost quick start, and letting that leak in here would
+      # silently disarm the gate on the one deployment that most needs it.
+      WEB_BIND: "0.0.0.0"
+      # Believe Caddy's X-Forwarded-For, so login throttling applies per real
+      # client instead of collapsing into one shared bucket keyed on Caddy (which
+      # would let a single attacker lock every operator out). Scoped to the
+      # proxy network's subnet — which is pinned below precisely so this can name
+      # it — and to nothing else.
+      TRUSTED_PROXIES: ${PROXY_SUBNET:-172.31.242.0/24}
+    depends_on:
+      - docker-socket-proxy
+    # NOTE: deliberately no 'ports:'. The GUI is reachable only via Caddy.
+    volumes:
+      - ./data:/data
+      - ./serverfiles/stable:/serverfiles/stable:ro
+      - ./serverfiles/experimental:/serverfiles/experimental:ro
+    networks:
+      - proxy          # inbound from Caddy
+      - docker-api     # outbound to the socket proxy
+      - reforger-net   # shared with the game server containers
+
+  # --- Least-privilege gateway to the host Docker daemon ----------------------
+  # Holds the socket so the manager never has to. Only the API sections the
+  # manager actually uses are forwarded; exec, build, volume create, swarm,
+  # secrets, configs, plugins and system are denied.
+  docker-socket-proxy:
+    image: ${DOCKER_PROXY_IMAGE:-tecnativa/docker-socket-proxy:v0.4.1}
+    container_name: reforger-docker-proxy
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1   # create/list/inspect/start/stop/remove + logs + stats
+      IMAGES: 1       # pull the server image, check it is present
+      NETWORKS: 1     # inspect reforger-net for the attach self-heal (#113)
+      INFO: 1         # docker info
+      POST: 1         # allow write verbs (create/start/stop/remove/pull)
+      # Everything not listed stays denied (image default 0).
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - docker-api
+
+# Three networks, so that every component can reach exactly what it needs and
+# nothing else:
+#
+#   proxy        Caddy <-> manager. Caddy is internet-facing, so it is kept off
+#                both other networks: a Caddy compromise reaches the GUI (which
+#                still has its own login) and nothing else.
+#   docker-api   manager <-> socket proxy, and nobody else. 'internal' means it
+#                has no route off the host. The game servers run untrusted
+#                Workshop mods as root, so a Docker API they could reach over
+#                the network would be a container escape.
+#   reforger-net manager <-> the game server containers (the network the manager
+#                attaches each spawned server to).
+networks:
+  proxy:
+    name: reforger-proxy
+    # Pinned so TRUSTED_PROXIES above can name it: Docker would otherwise assign
+    # this subnet dynamically and the manager could not know which source
+    # addresses are really Caddy. Override PROXY_SUBNET in .env if it collides
+    # with something already on the host ('docker compose up' will say so).
+    ipam:
+      config:
+        - subnet: ${PROXY_SUBNET:-172.31.242.0/24}
+  docker-api:
+    name: reforger-docker-api
+    internal: true
+  reforger-net:
+    name: reforger-net
+
+volumes:
+  caddy-data:
+    name: reforger-caddy-data
+  caddy-config:
+    name: reforger-caddy-config

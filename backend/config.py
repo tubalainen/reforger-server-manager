@@ -1,10 +1,22 @@
 """All runtime configuration, read from environment (.env via docker compose)."""
+import ipaddress
 import os
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 APP_NAME = "Reforger Server Manager"
-APP_VERSION = "0.43.8"
+APP_VERSION = "0.44.0"
+
+# The password shipped in .env.example. Refusing to start with it (when exposed)
+# is what stops a "just ran docker compose up" box from facing the internet on
+# admin/change-me-now (security review R3).
+EXAMPLE_PASSWORD = "change-me-now"
+
+# WEB_BIND values that keep the GUI on the local host only. The app itself always
+# binds 0.0.0.0 *inside* its container; WEB_BIND is the host interface compose
+# publishes the port on, and .env is loaded into the container, so it is the best
+# in-process signal of whether the operator meant to expose the GUI.
+_LOOPBACK_BINDS = {"", "127.0.0.1", "localhost", "::1", "[::1]"}
 
 # Steam app IDs for the Arma Reforger Dedicated Server
 STEAM_APPID_STABLE = "1874900"
@@ -24,6 +36,26 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() not in ("0", "false", "no", "off")
 
 
+def _parse_networks(raw: str | None) -> tuple[tuple, tuple[str, ...]]:
+    """Parse 'IP,CIDR,...' into (networks, malformed entries).
+
+    A bare address is accepted as a single-host network. Malformed entries are
+    returned rather than raised so startup can warn about them by name instead
+    of silently trusting a shorter list than the operator intended.
+    """
+    networks = []
+    invalid = []
+    for part in (raw or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(part, strict=False))
+        except ValueError:
+            invalid.append(part)
+    return tuple(networks), tuple(invalid)
+
+
 def _port_range(raw: str | None, fallback: tuple[int, int]) -> tuple[int, int]:
     """Parse 'LO-HI' into a tuple; fall back on any malformed input."""
     try:
@@ -41,6 +73,11 @@ class Settings:
     admin_username: str
     admin_password: str
     auth_enabled: bool
+    web_bind: str
+    # Operator's explicit "yes, a reverse proxy in front enforces auth" for an
+    # exposed, login-disabled run (security review R2). Nothing else lets the
+    # app start in that configuration.
+    auth_delegated_ack: bool
     session_secret: str
     session_ttl_hours: int
     session_cookie_secure: bool
@@ -57,6 +94,20 @@ class Settings:
     a2s_port_range: tuple[int, int]
     rcon_port_range: tuple[int, int]
     session_secret_generated: bool = False
+    # Reverse proxies whose X-Forwarded-For may be believed when identifying the
+    # client for login throttling (security review R4). Empty = trust nothing and
+    # always use the direct peer, which is the safe default for a direct bind.
+    trusted_proxies: tuple = ()
+    trusted_proxies_invalid: tuple[str, ...] = field(default=())
+    # Interactive API docs (/docs, /redoc, /openapi.json). Off by default: they
+    # enumerate every endpoint of a Docker-controlling API to anyone who asks
+    # (security review R6).
+    api_docs: bool = False
+    # Extra browser origins accepted on state-changing requests, for a proxy that
+    # rewrites Host. Same-origin always works without listing anything (R7).
+    allowed_origins: tuple[str, ...] = field(default=())
+    # Override the Content-Security-Policy if a deployment needs a looser one.
+    content_security_policy: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -64,12 +115,26 @@ class Settings:
         generated = not secret
         if generated:
             secret = secrets.token_hex(32)
+        trusted, trusted_bad = _parse_networks(os.environ.get("TRUSTED_PROXIES"))
+        origins = tuple(
+            o.strip().rstrip("/")
+            for o in os.environ.get("ALLOWED_ORIGINS", "").split(",")
+            if o.strip()
+        )
         return cls(
+            trusted_proxies=trusted,
+            trusted_proxies_invalid=trusted_bad,
+            api_docs=_env_bool("API_DOCS", False),
+            allowed_origins=origins,
+            content_security_policy=os.environ.get("CONTENT_SECURITY_POLICY", "").strip(),
             admin_username=os.environ.get("ADMIN_USERNAME", "").strip(),
             admin_password=os.environ.get("ADMIN_PASSWORD", "").strip(),
             # Built-in login on by default; disable ONLY behind a reverse proxy
-            # that enforces auth (issue #37).
+            # that enforces auth (issue #37) — and, when exposed, only with
+            # AUTH_DELEGATED_ACK=true (security review R2).
             auth_enabled=_env_bool("AUTH_ENABLED", True),
+            web_bind=os.environ.get("WEB_BIND", "").strip(),
+            auth_delegated_ack=_env_bool("AUTH_DELEGATED_ACK", False),
             session_secret=secret,
             session_secret_generated=generated,
             session_ttl_hours=int(os.environ.get("SESSION_TTL_HOURS", "168")),
@@ -91,6 +156,81 @@ class Settings:
             a2s_port_range=_port_range(os.environ.get("A2S_PORT_RANGE"), (17777, 17796)),
             rcon_port_range=_port_range(os.environ.get("RCON_PORT_RANGE"), (19999, 20018)),
         )
+
+
+def web_exposed(s: Settings) -> bool:
+    """True when WEB_BIND publishes the GUI beyond the local host.
+
+    Unset/empty means compose's 127.0.0.1 default, i.e. not exposed. Any other
+    address (0.0.0.0, a LAN or public IP) counts as exposed.
+    """
+    return s.web_bind.strip().lower() not in _LOOPBACK_BINDS
+
+
+def startup_security_issues(s: Settings) -> tuple[list[str], list[str]]:
+    """Return (fatal, warnings) for the current configuration.
+
+    Fatal issues abort startup; they are only raised when the GUI looks
+    network-exposed (a non-loopback WEB_BIND), so a localhost-only run stays
+    frictionless while an exposed one must be deliberately safe. This is the
+    single source of truth for both the startup gate and its tests.
+    """
+    fatal: list[str] = []
+    warnings: list[str] = []
+    exposed = web_exposed(s)
+
+    if not s.auth_enabled:
+        # The built-in login is off; a reverse proxy is meant to enforce auth.
+        if exposed and not s.auth_delegated_ack:
+            fatal.append(
+                f"AUTH_ENABLED=false exposes the Docker-controlling GUI on "
+                f"WEB_BIND={s.web_bind!r} with NO built-in login. Put a reverse "
+                f"proxy that authenticates every request in front of it and set "
+                f"AUTH_DELEGATED_ACK=true to confirm — or set AUTH_ENABLED=true, "
+                f"or bind the GUI to 127.0.0.1."
+            )
+        else:
+            warnings.append(
+                "AUTH_ENABLED=false — the built-in login is DISABLED. A reverse "
+                "proxy in front MUST enforce authentication; the GUI controls Docker."
+            )
+    else:
+        if not s.admin_username or not s.admin_password:
+            # Usually a '$' in .env that Compose swallowed, leaving it empty (#140).
+            msg = (
+                "ADMIN_USERNAME or ADMIN_PASSWORD is empty — login cannot work. If "
+                "the value contains a '$', write it twice ('$$') in .env: Docker "
+                "Compose eats a single '$'."
+            )
+            (fatal if exposed else warnings).append(msg)
+        elif s.admin_password == EXAMPLE_PASSWORD:
+            base = "ADMIN_PASSWORD is still the example value — change it in .env."
+            if exposed:
+                fatal.append(
+                    base + f" Refusing to start with it while the GUI is exposed "
+                    f"(WEB_BIND={s.web_bind!r})."
+                )
+            else:
+                warnings.append(base)
+        elif len(s.admin_password) < 12:
+            warnings.append(
+                "ADMIN_PASSWORD is short (<12 chars) — use a strong password, "
+                "especially before exposing the GUI beyond localhost."
+            )
+
+    if s.trusted_proxies_invalid:
+        # Named explicitly: a typo'd entry silently shrinks the trust list, and
+        # the symptom (throttling keyed on the proxy again) is hard to spot.
+        warnings.append(
+            "TRUSTED_PROXIES has unparseable entries, ignored: "
+            + ", ".join(repr(e) for e in s.trusted_proxies_invalid)
+        )
+    if s.session_secret_generated:
+        warnings.append(
+            "SESSION_SECRET not set — generated a random one; all sessions reset on "
+            "restart. Set SESSION_SECRET in .env for stable sessions."
+        )
+    return fatal, warnings
 
 
 settings = Settings.from_env()

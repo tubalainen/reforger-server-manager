@@ -15,6 +15,16 @@ services:
     # while — give the manager time before compose SIGKILLs it (default 10s).
     stop_grace_period: 2m
     env_file: .env
+    environment:
+      # Reach the host Docker daemon through the least-privilege proxy below
+      # instead of mounting the root-equivalent socket into this container.
+      # docker.from_env() honours DOCKER_HOST, so no application code changes.
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
+    # Start the proxy first; on shutdown compose stops this service before the
+    # proxy (reverse dependency order), so the graceful stop of the game servers
+    # still has daemon access. The app tolerates a not-yet-ready daemon anyway.
+    depends_on:
+      - docker-socket-proxy
     ports:
       # The web GUI. Server instances do NOT need port entries here: the
       # manager creates each Arma server as a *sibling* container on the host
@@ -29,9 +39,9 @@ services:
       # Manager state: SQLite DB, per-instance configs and profiles.
       # Ownership is fixed automatically by the container entrypoint.
       - ./data:/data
-      # Root-equivalent on the host — required to spawn server containers.
-      # Keep the GUI behind auth + firewall/reverse proxy.
-      - /var/run/docker.sock:/var/run/docker.sock
+      # NOTE: the raw Docker socket is deliberately NOT mounted here. The
+      # manager reaches the daemon through the docker-socket-proxy service
+      # below (DOCKER_HOST above), which exposes only the API sections it needs.
       # Downloaded server files, one folder per branch: written by the
       # steamcmd download jobs, mounted into each server instance.
       # Kept as plain local folders so they are easy to inspect and back up.
@@ -39,9 +49,52 @@ services:
       - ./serverfiles/experimental:/serverfiles/experimental:ro
     networks:
       - reforger-net
+      # Private link to the socket proxy; game containers are NOT on this one.
+      - docker-api
+
+  # Least-privilege gateway to the host Docker daemon. Mounting
+  # /var/run/docker.sock straight into the manager gives that container (and
+  # thus anyone who reaches the GUI) root-equivalent control of the host. This
+  # proxy holds the socket instead and only forwards the API sections the
+  # manager actually uses; everything else — exec, build, volume create, swarm,
+  # secrets, configs, plugins, system — is denied. It is never published, so it
+  # is reachable only by the manager over the internal reforger-net.
+  #
+  # NOTE: this shrinks the socket's attack surface but does not remove the
+  # daemon's inherent power to create containers with host bind mounts, so the
+  # GUI must still be kept off the open internet (strong auth + a TLS reverse
+  # proxy). See docs/security-review-2026-07-27.md (R1).
+  docker-socket-proxy:
+    image: ${DOCKER_PROXY_IMAGE:-tecnativa/docker-socket-proxy:v0.4.1}
+    container_name: reforger-docker-proxy
+    restart: unless-stopped
+    environment:
+      # Enabled — exactly what the manager calls:
+      CONTAINERS: 1   # create/list/inspect/start/stop/remove + logs + stats
+      IMAGES: 1       # pull the server image, check it is present
+      NETWORKS: 1     # inspect reforger-net for the attach self-heal (#113)
+      INFO: 1         # docker info: Docker Desktop detection / firewall hint
+      POST: 1         # allow write verbs (create/start/stop/remove/pull)
+      # Everything not listed stays at the image default of 0 (denied):
+      # EXEC, BUILD, COMMIT, VOLUMES, SWARM, SECRETS, CONFIGS, PLUGINS,
+      # SYSTEM, AUTH, NODES, SERVICES, TASKS, SESSION, DISTRIBUTION.
+    volumes:
+      # Only this container touches the real socket (read-only bind).
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      # ONLY the private docker-api network. It must not share a network with
+      # the game servers: those run untrusted Workshop mods as root, and a
+      # network-reachable Docker API would hand them a container escape.
+      - docker-api
 
 # Explicit name so the manager can attach sibling server containers
 # without depending on the compose project name.
 networks:
   reforger-net:
     name: reforger-net
+  # Manager <-> socket proxy only. 'internal' means no route off the host, so
+  # the Docker API endpoint is unreachable from anywhere else, including the
+  # game server containers that attach to reforger-net.
+  docker-api:
+    name: reforger-docker-api
+    internal: true

@@ -108,7 +108,7 @@ onUnmounted(() => clearInterval(summaryPoll))
         </router-link>
       </div>
       <a
-        v-if="version"
+        v-if="version && version.version"
         :href="version.repo_url"
         target="_blank"
         rel="noopener"

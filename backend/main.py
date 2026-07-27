@@ -7,8 +7,8 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 import auth
@@ -31,28 +31,21 @@ async def lifespan(_app: FastAPI):
     logger.info("=" * 60)
     logger.info("%s v%s", config.APP_NAME, config.APP_VERSION)
     logger.info("=" * 60)
-    if config.settings.session_secret_generated:
-        logger.warning(
-            "SESSION_SECRET not set — generated a random one; all sessions reset on restart"
+    # Fail closed on an insecure, network-exposed configuration (security review
+    # R2/R3). Fatal issues only fire when WEB_BIND publishes the GUI beyond
+    # localhost, so a local run stays frictionless; an exposed one must either
+    # have a real login or an explicit AUTH_DELEGATED_ACK that a proxy owns auth.
+    fatal, warnings = config.startup_security_issues(config.settings)
+    for message in warnings:
+        logger.warning(message)
+    if fatal:
+        for message in fatal:
+            logger.error("SECURITY: %s", message)
+        raise RuntimeError(
+            "Refusing to start: insecure configuration for a network-exposed, "
+            "Docker-controlling GUI (see the SECURITY errors above). Fix the "
+            "configuration, or bind the GUI to 127.0.0.1."
         )
-    if not config.settings.auth_enabled:
-        logger.warning(
-            "AUTH_ENABLED=false — the built-in login is DISABLED. The GUI (which "
-            "controls Docker) is unauthenticated; only run this behind a reverse "
-            "proxy that enforces authentication."
-        )
-    elif not config.settings.admin_username or not config.settings.admin_password:
-        # An empty value here is almost always a stray '$' in .env: Docker Compose
-        # reads a single '$' as a variable reference and drops it, so a value that
-        # begins with one (ADMIN_USERNAME=$name) arrives empty. Login then returns
-        # 503 "not configured" and the GUI looks broken — see issue #140.
-        logger.warning(
-            "ADMIN_USERNAME or ADMIN_PASSWORD is empty — login cannot work. If your "
-            "value contains a '$', write it twice ('$$') in .env: Docker Compose eats "
-            "a single '$'. See the note next to ADMIN_PASSWORD in .env.example."
-        )
-    elif config.settings.admin_password == "change-me-now":
-        logger.warning("ADMIN_PASSWORD is still the example value — change it in .env")
     models.init_db()
     # Seed the Mods Overview registry from existing templates so mods that were
     # baked in before the registry existed still show up (#131). Idempotent.
@@ -112,7 +105,72 @@ async def _crash_monitor():
         await asyncio.sleep(15)
 
 
-app = FastAPI(title=config.APP_NAME, version=config.APP_VERSION, lifespan=lifespan)
+app = FastAPI(
+    title=config.APP_NAME,
+    version=config.APP_VERSION,
+    lifespan=lifespan,
+    # The interactive docs enumerate every endpoint of an API that controls
+    # Docker, and they are served before any auth dependency runs. Off unless
+    # API_DOCS=true is set deliberately for development (security review R6).
+    docs_url="/docs" if config.settings.api_docs else None,
+    redoc_url="/redoc" if config.settings.api_docs else None,
+    openapi_url="/openapi.json" if config.settings.api_docs else None,
+)
+
+# Kept tight on purpose: the SPA loads no third-party scripts, fonts or images,
+# so nothing here needs a CDN allowance. 'unsafe-inline' is granted for STYLES
+# only — Vue writes inline style attributes for :style bindings — and never for
+# scripts, which is the direction that matters for XSS. Override with
+# CONTENT_SECURITY_POLICY if a deployment genuinely needs a looser policy.
+DEFAULT_CSP = (
+    "default-src 'self'; "
+    "script-src 'self'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data:; "
+    "font-src 'self' data:; "
+    "connect-src 'self'; "
+    "base-uri 'self'; "
+    "form-action 'self'; "
+    "object-src 'none'; "
+    "frame-ancestors 'none'"
+)
+
+_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+@app.middleware("http")
+async def security_middleware(request, call_next):
+    """Reject cross-site state changes, then harden every response (R7)."""
+    # CSRF: the session is a cookie, so a state-changing request that a browser
+    # says came from another site must not be honoured. A request with no Origin
+    # is a non-browser client (curl, scripts) and is left alone — browsers always
+    # send Origin on cross-origin writes, which is what this is defending against.
+    if request.method not in _SAFE_METHODS and not auth.request_origin_ok(request):
+        logger.warning(
+            "Blocked cross-origin %s %s from origin %r",
+            request.method, request.url.path, request.headers.get("origin", ""),
+        )
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Cross-origin request blocked"},
+        )
+
+    response = await call_next(request)
+    headers = response.headers
+    headers.setdefault("Content-Security-Policy",
+                       config.settings.content_security_policy or DEFAULT_CSP)
+    headers.setdefault("X-Content-Type-Options", "nosniff")
+    headers.setdefault("X-Frame-Options", "DENY")  # legacy peer of frame-ancestors
+    headers.setdefault("Referrer-Policy", "no-referrer")
+    if auth.is_https(request):
+        # Only meaningful over TLS, and actively harmful on the plain-HTTP
+        # localhost default: it would pin a browser to HTTPS for a host that
+        # does not serve it.
+        headers.setdefault("Strict-Transport-Security",
+                           "max-age=31536000; includeSubDomains")
+    return response
+
+
 app.include_router(auth.router)
 app.include_router(serverfiles_api.router)
 app.include_router(workshop_api.router)
@@ -127,17 +185,24 @@ REPO_URL = "https://github.com/tubalainen/reforger-server-manager"
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": config.APP_VERSION}
+    # Deliberately just liveness. It used to report APP_VERSION, which handed an
+    # unauthenticated caller the exact build to match against known CVEs (R6).
+    return {"status": "ok"}
 
 
 @app.get("/api/version")
-async def version():
-    return {
-        "name": config.APP_NAME,
-        "version": config.APP_VERSION,
-        "repo_url": REPO_URL,
-        "auth_enabled": config.settings.auth_enabled,
-    }
+async def version(request: Request):
+    """Build info. Unauthenticated callers get only what the login page needs.
+
+    ``auth_enabled`` stays public because the SPA reads it before anyone can log
+    in, and it discloses nothing an attacker could not learn by simply calling a
+    protected endpoint. The precise version and repo link are the fingerprinting
+    risk, so those require a session (R6).
+    """
+    public = {"name": config.APP_NAME, "auth_enabled": config.settings.auth_enabled}
+    if not auth.session_username(request.cookies.get(auth.COOKIE_NAME)):
+        return public
+    return {**public, "version": config.APP_VERSION, "repo_url": REPO_URL}
 
 
 # --- SPA serving (only when a built frontend is present, i.e. in the image) ---
