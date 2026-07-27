@@ -225,6 +225,18 @@ You only need Docker with the Compose plugin. Head to [Quick start](#quick-start
 below, fill in `.env`, `docker compose up -d`, and forward the UDP game/A2S ports
 listed above. Put a TLS reverse proxy in front of the GUI for VPS use.
 
+## Which setup do I want?
+
+| Where you'll run it | Use this | You'll reach the GUI at |
+|---|---|---|
+| A Linux box at home | [One-line install — local](#one-line-install-linux) | `http://localhost:7780` |
+| A cloud VPS, on the internet | [One-line install — VPS](#one-line-install-linux) | `https://your-domain` |
+| Windows 10/11 | [PowerShell installer](#running-on-windows-11--10) | `http://localhost:7780` |
+| Anywhere, set up by hand | [Quick start](#quick-start) | up to you |
+
+Whichever you pick, players reach your game servers over **UDP** ports that you open
+separately from the GUI — each guide covers that where it applies.
+
 ## One-line install (Linux)
 
 Two installers, one for each Linux scenario. Both check for Docker (offering to
