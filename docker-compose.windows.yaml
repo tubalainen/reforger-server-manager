@@ -53,6 +53,8 @@ services:
       - reforger-serverfiles-experimental:/serverfiles/experimental:ro
     networks:
       - reforger-net
+      # Private link to the socket proxy; game containers are NOT on this one.
+      - docker-api
 
   # Least-privilege gateway to the host Docker daemon (Docker Desktop / WSL2).
   # The manager reaches the daemon through this proxy instead of mounting the
@@ -75,13 +77,19 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
-      - reforger-net
+      # ONLY the private docker-api network — never shared with the game
+      # servers, which run untrusted Workshop mods as root.
+      - docker-api
 
 # Explicit names so the manager can attach sibling server containers and so the
 # volumes survive a rename of the folder this file sits in.
 networks:
   reforger-net:
     name: reforger-net
+  # Manager <-> socket proxy only; 'internal' keeps it off any external route.
+  docker-api:
+    name: reforger-docker-api
+    internal: true
 
 volumes:
   reforger-data:

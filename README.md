@@ -314,6 +314,100 @@ not a typo — so it's flagged for visibility and never rejected.
 > a value you type for them here is kept in the template but overwritten when an instance
 > runs. Set ports on the instance, not in the template's JSON.
 
+## Running on a VPS (public server, automatic HTTPS)
+
+The quick start above binds the GUI to `127.0.0.1`, which is right for a box you sit
+in front of. On a rented VPS you want the opposite: reach the GUI from anywhere, over
+HTTPS, without ever putting it on the open internet unprotected.
+
+`docker-compose.vps.yaml` does that. **Caddy** terminates TLS and is the only thing
+published; the manager gets **no port of its own** and is reachable only through Caddy
+on an internal Docker network. Certificates are issued and renewed automatically — there
+is no proxy config file to write and no admin panel to secure.
+
+**You need:** a VPS (any 2 GB+ Linux box) and a **domain name** pointed at it. (No domain?
+See the [IP-only fallback](#no-domain-yet-ip-only-fallback) below — but read the warning.)
+
+**1 — Point your domain at the VPS.** Create a DNS **A record** for e.g.
+`reforger.example.com` → your VPS's public IP. Do this *first*: the certificate is
+requested on the very first start, and it can only succeed once the record resolves.
+
+**2 — Install Docker** (skip if your VPS image ships it):
+
+```bash
+curl -fsSL https://get.docker.com | sudo sh
+```
+
+**3 — Fetch the files and configure:**
+
+```bash
+mkdir -p ~/reforger && cd ~/reforger
+curl -fsSLO https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/docker-compose.vps.yaml
+curl -fsSL  https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/.env.example -o .env
+nano .env
+```
+
+In `.env` set these three, then save:
+
+| Setting | What to put |
+|---|---|
+| `SITE_ADDRESS` | your domain, e.g. `reforger.example.com` |
+| `ADMIN_PASSWORD` | a long, unique password — **these are effectively host-root credentials** |
+| `SESSION_SECRET` | output of `openssl rand -hex 32` |
+
+> The manager **refuses to start** on this file while `ADMIN_PASSWORD` is still
+> `change-me-now` or empty. That is deliberate: the GUI is internet-facing here, and it
+> controls Docker. A `$` in the password must be written twice (`$$`) — Compose eats a
+> single one.
+
+**4 — Open the firewall.** Caddy needs 80/443; players need the UDP game ranges. The
+GUI itself needs *no* port of its own:
+
+```bash
+sudo ufw allow OpenSSH
+sudo ufw allow 80,443/tcp        # Caddy (HTTPS + certificate renewal)
+sudo ufw allow 2001:2020/udp     # game ports    (GAME_PORT_RANGE)
+sudo ufw allow 17777:17796/udp   # server browser (A2S_PORT_RANGE)
+sudo ufw enable
+```
+
+**5 — Start it:**
+
+```bash
+docker compose -f docker-compose.vps.yaml up -d
+```
+
+Give it 10–30 seconds to obtain the certificate, then open
+**`https://reforger.example.com`** and log in. That's it — continue with
+[First run](#first-run) to download the server files.
+
+Watch the certificate being issued (or diagnose a DNS problem) with:
+
+```bash
+docker compose -f docker-compose.vps.yaml logs -f caddy
+```
+
+### What this setup does for you
+
+- **The GUI is never directly exposed.** The manager publishes no port; only Caddy is
+  on the internet. There is no `:7780` to find and no admin panel to leave on defaults.
+- **Real HTTPS, automatically.** Including renewal. The session cookie is marked
+  `Secure` automatically, because Caddy forwards `X-Forwarded-Proto: https`.
+- **The Docker API is fenced off.** The manager talks to the daemon through a
+  least-privilege socket proxy on an `internal` network that neither Caddy nor the game
+  servers can reach.
+- **Live logs work.** Caddy proxies WebSockets natively, so the streaming server log
+  and download progress bars work with no extra configuration.
+
+### No domain yet? (IP-only fallback)
+
+Set `SITE_ADDRESS=:80` and reach the GUI at `http://<your-vps-ip>`.
+
+> **Testing only.** There is no certificate and therefore **no encryption**: your
+> password and session cookie cross the internet in clear text, readable by anyone on
+> the path. Use it to confirm the stack runs, then get a domain before real use. A
+> domain costs a few euros a year and is the only way this is genuinely safe.
+
 ## Running on Windows 11 / 10
 
 Windows is supported through **Docker Desktop with its WSL2 backend** — the same

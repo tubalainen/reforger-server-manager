@@ -132,6 +132,13 @@ This is *inherent* to what the tool does, so it cannot be removed — but it can
 > the README security note. No application code changed — `docker.from_env()` already honours
 > `DOCKER_HOST`.
 >
+> **Follow-up fix — 2026-07-27 (network isolation).** The first cut of this change put the
+> socket proxy on `reforger-net`, the same network the spawned **game containers** attach to.
+> Those run untrusted Workshop mods as root, so a network-reachable Docker API on their own
+> network was a container-escape path that did not exist before the proxy was introduced (the
+> raw socket had been a file inside the manager only). The proxy now sits alone on a dedicated
+> **`internal`** `docker-api` network shared only with the manager, in all three compose files.
+>
 > **Residual risk (why "partial"):** the proxy filters by API path/method, not by request
 > body, so it cannot block a `containers.create` that bind-mounts a host path or sets
 > `--privileged` — capabilities the manager legitimately needs. An attacker who reaches the

@@ -49,6 +49,8 @@ services:
       - ./serverfiles/experimental:/serverfiles/experimental:ro
     networks:
       - reforger-net
+      # Private link to the socket proxy; game containers are NOT on this one.
+      - docker-api
 
   # Least-privilege gateway to the host Docker daemon. Mounting
   # /var/run/docker.sock straight into the manager gives that container (and
@@ -80,10 +82,19 @@ services:
       # Only this container touches the real socket (read-only bind).
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
-      - reforger-net
+      # ONLY the private docker-api network. It must not share a network with
+      # the game servers: those run untrusted Workshop mods as root, and a
+      # network-reachable Docker API would hand them a container escape.
+      - docker-api
 
 # Explicit name so the manager can attach sibling server containers
 # without depending on the compose project name.
 networks:
   reforger-net:
     name: reforger-net
+  # Manager <-> socket proxy only. 'internal' means no route off the host, so
+  # the Docker API endpoint is unreachable from anywhere else, including the
+  # game server containers that attach to reforger-net.
+  docker-api:
+    name: reforger-docker-api
+    internal: true
