@@ -12,7 +12,10 @@ name: Release
 # On each run it:
 #   * reads APP_VERSION from backend/config.py — the single source of truth the
 #     CI drift check already enforces — and derives the vX.Y.Z tag;
-#   * does nothing if that release already exists (so ordinary pushes are no-ops);
+#   * if that release already exists, re-publishes docs/release-notes/<tag>.md to
+#     it when the two have drifted (and does nothing when they match, so ordinary
+#     pushes stay no-ops) — a release body is otherwise rendered only once, at
+#     creation, so later edits to the notes file never reached readers;
 #   * otherwise creates the tag on the triggering commit plus a GitHub Release,
 #     taking notes from docs/release-notes/<tag>.md when that file exists, or the
 #     dispatch `notes` input, or GitHub's auto-generated notes;
@@ -69,11 +72,57 @@ jobs:
           tag="${{ steps.ver.outputs.tag }}"
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "create=false" >> "$GITHUB_OUTPUT"
-            echo "Release $tag already exists — nothing to do."
+            echo "Release $tag already exists — will check its notes are current."
           else
             echo "create=true" >> "$GITHUB_OUTPUT"
             echo "Will cut release $tag."
           fi
+
+      # A release body is rendered from the notes file ONCE, when the release is
+      # created. Editing docs/release-notes/<tag>.md afterwards therefore changed
+      # nothing on the Releases page, and the published notes silently drifted
+      # from the repository — exactly what happened to v0.44.0, whose breaking
+      # changes were added after the fact and never reached anyone reading the
+      # release. This re-publishes the file whenever the two differ.
+      #
+      # Content is compared rather than the changed-file list, so it also heals
+      # drift from a manual edit and is safe to re-run. Identical content is a
+      # no-op, so ordinary pushes stay quiet.
+      - name: Keep an existing release's notes in sync with its notes file
+        if: steps.gate.outputs.create == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTES: ${{ inputs.notes }}
+        run: |
+          tag="${{ steps.ver.outputs.tag }}"
+          notes_file="docs/release-notes/$tag.md"
+
+          # A dispatch with explicit notes wins; otherwise use the notes file.
+          if [ -n "$NOTES" ]; then
+            printf '%s' "$NOTES" > "$RUNNER_TEMP/desired.md"
+          elif [ -f "$notes_file" ]; then
+            cp "$notes_file" "$RUNNER_TEMP/desired.md"
+          else
+            echo "No notes file at $notes_file and no dispatch notes — leaving $tag alone."
+            exit 0
+          fi
+
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json body -q .body \
+            > "$RUNNER_TEMP/current.md"
+
+          # GitHub stores bodies with CRLF line endings and may drop the trailing
+          # newline. Normalise both sides before comparing, or every run would see
+          # a difference and re-publish the same text for ever.
+          norm() { tr -d '\r' < "$1" | sed -e 's/[[:space:]]*$//' | sed -e :a -e '/^\n*$/{$d;N;};/\n$/ba'; }
+          if [ "$(norm "$RUNNER_TEMP/current.md")" = "$(norm "$RUNNER_TEMP/desired.md")" ]; then
+            echo "Release notes for $tag are already up to date."
+            exit 0
+          fi
+
+          echo "Release notes for $tag differ from $notes_file — updating the release."
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" \
+            --notes-file "$RUNNER_TEMP/desired.md"
+          echo "Updated https://github.com/$GITHUB_REPOSITORY/releases/tag/$tag"
 
       - name: Create the release (creating its tag on this commit)
         if: steps.gate.outputs.create == 'true'
