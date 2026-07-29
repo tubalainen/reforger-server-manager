@@ -159,6 +159,7 @@ class SteamService:
                 detach=True,
                 name=f"reforger-steamcheck-{branch}-{int(time.time())}",
                 labels={docker_service.LABEL_MANAGED: "true"},
+                security_opt=docker_service.SECURITY_OPT,
             )
         except DockerException as exc:
             logger.warning("Could not start steam version check: %s", exc)
@@ -195,9 +196,13 @@ class SteamService:
                 remove=True,
                 volumes={host_dir: {"bind": "/serverfiles", "mode": "rw"}},
                 labels={docker_service.LABEL_MANAGED: "true"},
+                security_opt=docker_service.SECURITY_OPT,
             )
         except DockerException as exc:
-            raise RuntimeError(f"Could not remove server files: {exc}") from exc
+            logger.warning("Removing %s server files failed: %s", branch, exc)
+            raise RuntimeError(
+                "Could not remove the server files. Check the manager log for details."
+            ) from exc
         # Clear any cached install/job state for the branch
         self.jobs.pop(branch, None)
         logger.info("Removed %s server files", branch)
@@ -264,6 +269,7 @@ class SteamService:
                     docker_service.LABEL_ROLE: docker_service.ROLE_STEAMCMD,
                     docker_service.LABEL_BRANCH: job.branch,
                 },
+                security_opt=docker_service.SECURITY_OPT,
             )
         except DockerException as exc:
             logger.warning("Could not start steamcmd container: %s", exc)

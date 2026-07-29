@@ -16,6 +16,12 @@ if [ "$(id -u)" = "0" ]; then
     chown -R app:app /data 2>/dev/null || \
         echo "NOTE: could not chown /data (expected on a Windows bind mount)" >&2
 
+    # /data holds the database and every rendered config.json, which carry the
+    # server, admin and RCON passwords in clear text. Keep it readable only by
+    # the app user rather than world-readable (security review R5). Fails
+    # harmlessly on a Windows bind mount, same as the chown above.
+    chmod 700 /data 2>/dev/null || true
+
     # How the app reaches the daemon:
     #   * DOCKER_HOST=tcp://… — through the bundled docker-socket-proxy (the
     #     default compose setup). No local socket, so no group to join.

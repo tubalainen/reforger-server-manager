@@ -145,3 +145,29 @@ def test_resolve_dependencies_reports_missing(monkeypatch):
     assert result["missing"] == ["DDDDDDDDDDDDDDDD"]
     # D is still listed (from the parent's dep entry) so the user sees it
     assert {m["modId"] for m in result["mods"]} == {"AAAAAAAAAAAAAAAA", "DDDDDDDDDDDDDDDD"}
+
+
+# --------------------------------------------------------------------------- #
+# The dependency walk must be bounded (security review R11)
+# --------------------------------------------------------------------------- #
+
+def test_resolve_dependencies_stops_at_the_node_cap(monkeypatch):
+    """A huge graph must not run unbounded on a request thread."""
+    from services import workshop_service as ws
+
+    # Every asset declares two fresh children, so the graph never terminates.
+    def endless(self, asset_id, use_cache=True):
+        n = int(asset_id[-4:], 16)
+        return {
+            "id": asset_id, "name": f"mod{n}", "version": "1.0", "size": 1,
+            "versions": [], "scenarios": [], "kind": "addon", "tags": [],
+            "dependencies": [{"id": f"{(n * 2 + i) % 65536:016X}"} for i in (1, 2)],
+        }
+
+    monkeypatch.setattr(ws.WorkshopService, "get_asset", endless)
+    monkeypatch.setattr(ws, "_MAX_DEPENDENCY_NODES", 25)
+
+    result = ws.WorkshopService().resolve_dependencies("0" * 12 + "0001")
+    assert result["truncated"] is True
+    assert len(result["mods"]) <= 25 + 5      # bounded, not runaway
+    assert result["missing"]                  # unwalked ids reported, not dropped

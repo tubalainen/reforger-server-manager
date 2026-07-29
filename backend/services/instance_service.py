@@ -599,7 +599,10 @@ def start_instance(instance_id: int) -> None:
                     "pull it on the Downloads tab (or set REFORGER_SERVER_IMAGE)"
                 ) from exc
             except DockerException as exc:
-                raise InstanceError(f"Could not create container: {exc}") from exc
+                logger.warning("Container creation failed for %s: %s", inst.name, exc)
+                raise InstanceError(
+                    "Could not create the server container. Check the manager log for details."
+                ) from exc
         else:
             # Re-render config in case the template changed since last start.
             _write_config(inst, template_config)
@@ -607,7 +610,10 @@ def start_instance(instance_id: int) -> None:
         try:
             container.start()
         except DockerException as exc:
-            raise InstanceError(f"Could not start container: {exc}") from exc
+            logger.warning("Container start failed for %s: %s", inst.name, exc)
+            raise InstanceError(
+                "Could not start the server container. Check the manager log for details."
+            ) from exc
         # A fresh run must prove it is online from its own log (#76).
         forget_run(container.id)
         inst.desired_state = "running"
@@ -652,6 +658,7 @@ def _create_container(inst: Instance, config_path: Path, launch: "LaunchParams |
         },
         network=config.settings.docker_network,
         restart_policy={"Name": _restart_policy(inst)},
+        security_opt=docker_service.SECURITY_OPT,
     )
 
 
@@ -752,9 +759,13 @@ def _purge_instance_dir(instance_id: int) -> None:
             remove=True,
             volumes={host_root: {"bind": "/idata", "mode": "rw"}},
             labels={docker_service.LABEL_MANAGED: "true"},
+            security_opt=docker_service.SECURITY_OPT,
         )
     except DockerException as exc:
-        raise InstanceError(f"Could not remove instance data: {exc}") from exc
+        logger.warning("Purging data for instance %s failed: %s", instance_id, exc)
+        raise InstanceError(
+            "Could not remove this instance's data. Check the manager log for details."
+        ) from exc
 
 
 # --------------------------------------------------------------------------- #
@@ -1247,9 +1258,13 @@ def clear_instance_data(instance_id: int, targets: list[str]) -> dict:
                 remove=True,
                 volumes={host_dir: {"bind": "/idata", "mode": "rw"}},
                 labels={docker_service.LABEL_MANAGED: "true"},
+                security_opt=docker_service.SECURITY_OPT,
             )
         except DockerException as exc:
-            raise InstanceError(f"Could not clear instance data: {exc}") from exc
+            logger.warning("Clearing data for instance %s failed: %s", instance_id, exc)
+            raise InstanceError(
+                "Could not clear the stored data. Check the manager log for details."
+            ) from exc
 
     # The server expects these to exist; it will refill them on the next start.
     (idir / "workshop").mkdir(parents=True, exist_ok=True)

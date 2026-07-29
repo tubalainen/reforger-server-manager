@@ -6,9 +6,11 @@ itsdangerous-signed cookies; no server-side session store is needed.
 import hmac
 import ipaddress
 import logging
+import secrets
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -64,8 +66,42 @@ class LoginRequest(BaseModel):
     password: str
 
 
+_SALT_FILE = "session_salt"
+_BASE_SALT = "rsm-session"
+
+
+def _salt_path() -> Path:
+    return Path(config.settings.data_dir) / _SALT_FILE
+
+
+def _session_salt() -> str:
+    """The current signing salt, persisted so sessions survive a restart.
+
+    Kept in DATA_DIR rather than memory: a salt that changed on every boot would
+    log everyone out on each update, which is exactly the annoyance
+    SESSION_SECRET exists to avoid. Missing or unreadable falls back to the
+    original constant, so an old install keeps its sessions on upgrade.
+    """
+    try:
+        stored = _salt_path().read_text(encoding="utf-8").strip()
+        return stored or _BASE_SALT
+    except OSError:
+        return _BASE_SALT
+
+
+def rotate_session_salt() -> None:
+    """Write a fresh salt, invalidating every token signed with the old one."""
+    path = _salt_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(secrets.token_hex(16), encoding="utf-8")
+    try:
+        path.chmod(0o600)
+    except OSError:  # e.g. a Windows bind mount
+        pass
+
+
 def _serializer() -> URLSafeTimedSerializer:
-    return URLSafeTimedSerializer(config.settings.session_secret, salt="rsm-session")
+    return URLSafeTimedSerializer(config.settings.session_secret, salt=_session_salt())
 
 
 def _as_ip(raw: str):
@@ -303,6 +339,22 @@ async def login(body: LoginRequest, request: Request, response: Response):
 @router.post("/logout")
 async def logout(response: Response):
     response.delete_cookie(COOKIE_NAME)
+    return {"ok": True}
+
+
+@router.post("/logout-all")
+async def logout_all(response: Response, _user: str = Depends(require_session)):
+    """Invalidate every existing session, on every device (security review R13).
+
+    Sessions are stateless signed cookies, so /logout only clears the caller's
+    own copy — a stolen cookie stays valid until it expires. Rotating the salt
+    changes the key every token was signed with, so all of them stop verifying
+    at once. That is the missing "I think my session leaked" button; previously
+    the only remedy was changing SESSION_SECRET and restarting.
+    """
+    rotate_session_salt()
+    response.delete_cookie(COOKIE_NAME)
+    logger.warning("All sessions invalidated by an explicit logout-all request")
     return {"ok": True}
 
 

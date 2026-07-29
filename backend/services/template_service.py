@@ -8,7 +8,7 @@ config.json schema: https://community.bistudio.com/wiki/Arma_Reforger:Server_Con
 """
 import json
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 DEFAULT_SUPPORTED_PLATFORMS = ["PLATFORM_PC", "PLATFORM_XBL", "PLATFORM_PSN"]
 
@@ -114,6 +114,27 @@ class LaunchParams(BaseModel):
 
     # escape hatch for any arg not modelled above
     extra_args: str = ""
+
+    @field_validator("extra_args")
+    @classmethod
+    def _no_shell_metacharacters(cls, value: str) -> str:
+        """Reject shell metacharacters in the free-form launch arguments (R10).
+
+        These are rendered into ARMA_PARAMS and handed to the server image, which
+        commonly expands them through a shell. Anything below would therefore run
+        as a *command* rather than as an engine flag. Only an authenticated admin
+        can reach this — and they already control Docker through the GUI — so this
+        is not a privilege boundary; it keeps a stored template from being a
+        command-execution vector and stops a typo turning into one.
+        """
+        bad = [c for c in ";|&<>`$\n\r" if c in value]
+        if bad:
+            raise ValueError(
+                "extra_args may not contain shell metacharacters "
+                f"({' '.join(repr(c) for c in sorted(set(bad)))}). "
+                "Pass engine flags only, e.g. '-myFlag 123'."
+            )
+        return value
 
     # field -> exact engine arg for valued (excludes max_fps: it uses ARMA_MAX_FPS)
     _VALUED = {

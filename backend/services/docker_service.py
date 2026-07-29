@@ -21,6 +21,12 @@ LABEL_INSTANCE_ID = "reforger-manager.instance_id"
 ROLE_STEAMCMD = "steamcmd"
 ROLE_INSTANCE = "instance"
 
+# Applied to every container this manager creates. Blocks a process inside from
+# gaining privileges through setuid binaries, so a compromised Workshop mod (the
+# game servers run untrusted mod code as root) cannot escalate that way. Cheap,
+# and supported by every modern Docker daemon (security review R8).
+SECURITY_OPT = ["no-new-privileges:true"]
+
 _client: docker.DockerClient | None = None
 _self_mounts: list | None = None
 _info: dict | None = None

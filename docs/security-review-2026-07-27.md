@@ -50,16 +50,16 @@ keeping that root shell off the open internet and making it expensive to reach.
 | **R2** | `AUTH_ENABLED=false` fully removes authentication from a root-equivalent GUI — **mitigated 2026-07-27 (exposed start now gated)** | **CRITICAL** |
 | **R3** | No TLS by default + weak, single, shared credential (default `admin` / `change-me-now`) — **partially mitigated 2026-07-27 (weak-cred start gated, cookie auto-secure)** | **HIGH** |
 | **R4** | Brute-force throttle is bypassable and breaks behind a reverse proxy (no `X-Forwarded-For`) — **mitigated 2026-07-27** | **HIGH** |
-| **R5** | Secrets stored and served in plaintext (admin/RCON/server passwords in DB, `.env`, downloadable `config.json`) | **HIGH** |
+| **R5** | Secrets stored and served in plaintext (admin/RCON/server passwords in DB, `.env`, downloadable `config.json`) — **partially mitigated 2026-07-27** | **HIGH** |
 | **R6** | Unauthenticated API surface disclosure: `/docs`, `/redoc`, `/openapi.json`, `/api/version` — **mitigated 2026-07-27** | **MEDIUM** |
 | **R7** | No CSRF tokens and no security headers (CSP / X-Frame-Options / HSTS / nosniff) — **mitigated 2026-07-27** | **MEDIUM** |
-| **R8** | Spawned game-server containers run as **root** with writable host bind mounts | **MEDIUM** |
-| **R9** | `:latest` image pins for the server and steamcmd images (supply-chain / reproducibility) | **MEDIUM** |
-| **R10** | Free-form launch `extra_args` injected into the server container environment | **MEDIUM** |
-| **R11** | Unauthenticated / unbounded resource abuse (Workshop dependency BFS, no object caps) | **LOW** |
+| **R8** | Spawned game-server containers run as **root** with writable host bind mounts — **partially mitigated 2026-07-27** | **MEDIUM** |
+| **R9** | `:latest` image pins for the server and steamcmd images (supply-chain / reproducibility) — **accepted risk, documented** | **MEDIUM** |
+| **R10** | Free-form launch `extra_args` injected into the server container environment — **mitigated 2026-07-27** | **MEDIUM** |
+| **R11** | Unauthenticated / unbounded resource abuse (Workshop dependency BFS, no object caps) — **mitigated 2026-07-27** | **LOW** |
 | **R12** | WebSocket handshakes accept any Origin (Cross-Site WebSocket Hijacking) — **mitigated 2026-07-27** | **LOW** |
-| **R13** | Session-secret auto-generation and long-lived (7-day) sessions with no revocation | **LOW** |
-| **R14** | Verbose error messages and internal logging of paths/IDs | **LOW** |
+| **R13** | Session-secret auto-generation and long-lived (7-day) sessions with no revocation — **mitigated 2026-07-27** | **LOW** |
+| **R14** | Verbose error messages and internal logging of paths/IDs — **mitigated 2026-07-27** | **LOW** |
 
 ---
 
@@ -270,6 +270,18 @@ depth is weak: one leak, many secrets.
 entrypoint; consider encrypting secret fields at rest; mask secrets in any API response that
 does not strictly need them; document that config.json exports contain live credentials.
 
+> **Update — 2026-07-27 (partially mitigated).** The entrypoint now `chmod 700`s `/data`, so the
+> database and every rendered `config.json` are readable only by the app user; the Linux
+> installers already write `.env` at mode 600. The config.json download now carries an explicit
+> warning in the UI that the file contains the server, admin and RCON passwords in clear text.
+> Confirmed nothing logs secrets.
+>
+> **Deliberately not done: encryption at rest.** The key would have to live in `.env`, on the
+> same host as the database it protects, so it defends only against a leak of the DB *alone* —
+> while adding a real failure mode (rotate or lose `SESSION_SECRET` and every template becomes
+> unreadable) and an order dependency between backups. A poor trade for a single-admin tool;
+> revisit if the database ever moves off-host.
+
 ---
 
 ### R6 — Unauthenticated API/tooling disclosure  ·  MEDIUM
@@ -353,6 +365,17 @@ namespacing is applied.
 ALL` (add back only what Reforger needs), a non-root user where the image allows, and the
 narrowest bind mounts. Same treatment for the steamcmd helper containers.
 
+> **Update — 2026-07-27 (partially mitigated).** Every container the manager creates — game
+> instances, steamcmd downloads, the version check and both cleanup helpers, six call sites in
+> total — is now created with `no-new-privileges`, so a process inside cannot gain privileges
+> through a setuid binary.
+>
+> **Capability dropping was deliberately not done.** There is no Docker daemon in the development
+> environment to start a real Arma server against, and `cap_drop: ALL` against an image whose
+> requirements are undocumented would surface as servers failing to boot in production. That
+> needs one run on a real host first — tracked as the follow-up here, together with running the
+> game containers as a non-root user.
+
 ---
 
 ### R9 — `:latest` image pins for server and steamcmd images  ·  MEDIUM
@@ -365,6 +388,13 @@ problem #86 fixed for the manager's *own* Python deps, still open for the two im
 
 **Recommendation:** pin to digests (`@sha256:…`) or specific tags; document an update/verify
 flow; optionally verify image provenance/signatures.
+
+> **Update — 2026-07-27 (accepted risk, documented).** Deliberately *not* pinned. The Arma server
+> image has to track game updates: a digest pin would leave every install on a stale build after
+> a Reforger release until someone manually bumped it — trading a real, recurring usability
+> failure for a speculative supply-chain one. Both images are already operator-controlled through
+> `.env`, so `.env.example` now explains the trade-off and shows how to pin to a digest for
+> anyone who prefers reproducibility over automatic updates.
 
 ---
 
@@ -382,6 +412,12 @@ scenario) and should be constrained.
 **Recommendation:** validate/allow-list `extra_args` tokens, or document clearly that it is
 equivalent to running arbitrary flags; never let it reach a shell unquoted in any wrapper.
 
+> **Update — 2026-07-27 (mitigated).** `LaunchParams.extra_args` now rejects shell metacharacters
+> (`;` `|` `&` `<` `>` backtick `$` and newlines) at the model level, so the value cannot carry a
+> command through `ARMA_PARAMS` into a shell-expanding wrapper. A token allow-list was rejected as
+> the alternative: it would break the moment Bohemia adds an engine flag, which is precisely what
+> this escape hatch exists for. Ordinary engine flags pass unchanged.
+
 ---
 
 ### R11 — Unbounded / unauthenticated-adjacent resource abuse  ·  LOW
@@ -397,6 +433,12 @@ equivalent to running arbitrary flags; never let it reach a shell unquoted in an
 
 **Recommendation:** cap BFS breadth/depth and total wall-clock; add a global outbound concurrency
 limit; add basic per-session rate limiting on expensive endpoints.
+
+> **Update — 2026-07-27 (mitigated).** The dependency walk is now bounded at 300 nodes and 120
+> seconds. On a cap it returns what it resolved and reports the remainder as `missing` (plus a
+> `truncated` flag) rather than failing, so a pathological graph degrades instead of occupying a
+> worker thread indefinitely. Both limits sit far above real mod graphs, which run to dozens of
+> nodes.
 
 ---
 
@@ -431,6 +473,15 @@ open hole — but it should not rely solely on SameSite.
 document that credential compromise requires a secret rotation to invalidate outstanding
 sessions; consider a lightweight session version/nonce for revocation.
 
+> **Update — 2026-07-27 (mitigated).** `POST /api/auth/logout-all` rotates a persisted signing
+> salt, invalidating every outstanding session on every device at once — the "I think my cookie
+> leaked" button that previously did not exist (the only remedy was changing `SESSION_SECRET` and
+> restarting). The salt lives in `DATA_DIR` rather than memory, so ordinary restarts and upgrades
+> do *not* log everyone out, and an install predating this keeps its sessions.
+>
+> The 7-day default TTL is unchanged: shortening it would log every existing user out on upgrade
+> for a modest gain now that instant revocation exists. `SESSION_TTL_HOURS` remains available.
+
 ---
 
 ### R14 — Verbose errors and internal detail in logs/responses  ·  LOW
@@ -439,6 +490,12 @@ sessions; consider a lightweight session version/nonce for revocation.
 Docker/exception detail is surfaced to clients (`Could not create container: {exc}`) and host
 paths/instance IDs are logged. Minor information disclosure that aids an attacker mapping the
 host. Low priority, but tighten user-facing error text for internet exposure.
+
+> **Update — 2026-07-27 (mitigated).** The five Docker/SteamCMD failures that echoed raw daemon
+> exceptions (which can carry host paths and image internals) now return a short actionable
+> message and log the detail server-side instead; the three Workshop errors likewise. Messages
+> that describe the *user's own* submitted config are deliberately unchanged — that detail is the
+> point of them, and it discloses nothing the caller did not send.
 
 ---
 
@@ -489,18 +546,34 @@ configuration/documentation changes; the rest are code.
 6. **R13 (code/docs):** Require `SESSION_SECRET`, shorten TTL, document rotation as revocation.
 
 **Then — container & supply-chain hardening**
-7. **R8 (code):** `no-new-privileges`, `cap_drop: ALL`, least-privilege mounts (and non-root
-   where possible) for instance and steamcmd containers.
-8. **R9 (docs/ops):** Pin server/steamcmd images to digests; document verified updates.
-9. **R5 (code/docs):** Lock down `./data` and `.env` perms; mask/encrypt secrets at rest; warn
-   that config.json exports carry live credentials.
-10. **R10 (code):** Constrain/validate `extra_args`.
+7. **R8 (code):** ✅ **Partly done 2026-07-27** — `no-new-privileges` on all six container
+   creation sites. **Follow-up:** capability dropping and a non-root user need one test run on a
+   real Docker host first.
+8. **R9 (docs/ops):** ✅ **Decided 2026-07-27** — accepted risk. Pinning the Arma image would
+   block game updates; `.env.example` documents how to pin voluntarily.
+9. **R5 (code/docs):** ✅ **Partly done 2026-07-27** — `/data` is now mode 700, `.env` 600, and
+   the config.json download warns it carries live credentials. Encryption at rest deliberately
+   skipped (see the R5 note).
+10. **R10 (code):** ✅ **Done 2026-07-27** — shell metacharacters rejected in `extra_args`.
 
 **Cleanup / defense-in-depth**
-11. **R11 (code):** Cap Workshop BFS + outbound concurrency; basic per-session rate limits.
-12. **R14 (code):** Sanitize user-facing error text for production.
+11. **R11 (code):** ✅ **Done 2026-07-27** — dependency walk bounded at 300 nodes / 120s.
+12. **R14 (code):** ✅ **Done 2026-07-27** — Docker/Workshop errors no longer echo raw exceptions.
+13. **R13 (code):** ✅ **Done 2026-07-27** — `POST /api/auth/logout-all` revokes every session.
 
 ---
+
+## 5b. What remains open
+
+Everything in the review has now been addressed, accepted with a documented rationale, or
+reduced to a follow-up that needs a real host to verify:
+
+| Item | Why it is still open |
+|---|---|
+| **R8 follow-up** | `cap_drop: ALL` and a non-root game container need one run against a real Docker daemon; unverifiable in the dev environment |
+| **R1 follow-up** | Rootless Docker / userns-remap is a host-level ops change, not something the compose file can enforce |
+| **R5 follow-up** | Encryption at rest, if the database ever moves off the host holding `.env` |
+| **R3 follow-up** | Per-user accounts and MFA, if the single shared admin account ever stops being enough |
 
 ## 6. Suggested acceptance criteria for the fixes
 
