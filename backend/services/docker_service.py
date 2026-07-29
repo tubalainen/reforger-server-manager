@@ -11,6 +11,8 @@ import socket
 import docker
 from docker.errors import DockerException
 
+import config
+
 logger = logging.getLogger("manager.docker")
 
 LABEL_MANAGED = "reforger-manager.managed"
@@ -52,7 +54,7 @@ def daemon_info() -> dict:
         return _info
     try:
         _info = get_client().info()
-    except DockerException as exc:
+    except Exception as exc:  # DockerException, or a client that cannot answer
         logger.warning("Could not read docker info: %s", exc)
         return {}  # not cached: ask again next time
     return _info
@@ -168,3 +170,24 @@ def remove_exited(role: str) -> None:
             container.remove(force=True)
         except DockerException as exc:
             logger.warning("Could not remove %s: %s", container.name, exc)
+
+
+def use_host_network() -> bool:
+    """Should game servers use host networking rather than NAT'd bridge?
+
+    Bridge networking puts Docker's userland `docker-proxy` in front of every
+    published UDP port and rewrites the source address to the bridge gateway.
+    An Arma server then sees every player arriving from 172.x.0.1, which breaks
+    joins and BattlEye (#150). Host networking removes NAT entirely: the server
+    binds its own ports on the host and sees real client addresses — the normal
+    way to run a game server in Docker.
+
+    Docker Desktop is the exception: its Linux VM cannot provide true host
+    networking, so bridge remains the only workable mode there.
+    """
+    mode = (config.settings.instance_network_mode or "auto").lower()
+    if mode == "host":
+        return True
+    if mode == "bridge":
+        return False
+    return not is_docker_desktop()      # auto

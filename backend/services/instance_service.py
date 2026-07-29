@@ -523,6 +523,23 @@ def _container_env_matches(container, desired: dict) -> bool:
     return all(actual.get(key) == value for key, value in desired.items())
 
 
+def _container_network_mode_matches(container) -> bool:
+    """True if the container's network mode is the one we would use now (#150).
+
+    Docker fixes NetworkMode at creation, so a server built under bridge
+    networking keeps its docker-proxy'd ports for ever — the fix would never
+    reach an existing instance without this. On any read failure return True:
+    never destroy a container we cannot inspect.
+    """
+    want_host = docker_service.use_host_network()
+    try:
+        container.reload()
+        mode = str((container.attrs.get("HostConfig") or {}).get("NetworkMode", ""))
+    except (DockerException, NotFound, AttributeError):
+        return True
+    return (mode == "host") == want_host
+
+
 def _container_security_opt_matches(container) -> bool:
     """True if the container's no-new-privileges state matches what we want now.
 
@@ -604,6 +621,8 @@ def start_instance(instance_id: int) -> None:
                 reason = "network attachment is missing or stale"
             elif not _container_security_opt_matches(container):
                 reason = "container security options changed (#150)"
+            elif not _container_network_mode_matches(container):
+                reason = "network mode changed (host vs bridge, #150)"
             if reason:
                 logger.info("Recreating container for %s: %s", inst.name, reason)
                 try:
@@ -662,8 +681,25 @@ def _create_container(inst: Instance, config_path: Path, launch: "LaunchParams |
     # be remapped to a fixed internal 2001, but A2S/RCON had no matching override,
     # so the server bound the host port number inside the container while Docker
     # forwarded a *different* internal port — breaking A2S/server-browser queries.
-    port_bindings = _desired_port_bindings(inst)
     environment = _desired_environment(inst, launch)
+
+    # HOST networking is the default for game servers (#150). Bridge networking
+    # publishes each UDP port through Docker's NAT with a userland `docker-proxy`
+    # in front of it, which rewrites the source address to the bridge gateway —
+    # the Arma server then sees every player arriving from 172.x.0.1, and joins
+    # and BattlEye break. With host networking the server binds its own ports
+    # directly, there is no proxy in the path at all, and real client addresses
+    # reach the game. Instance ports are already leased unique per server, so
+    # sharing the host's network namespace cannot collide.
+    if docker_service.use_host_network():
+        net_kwargs = {"network_mode": "host"}
+    else:
+        # Docker Desktop only: its VM has no true host networking. Ports are
+        # published 1:1 (host == container), which is what A2S requires.
+        net_kwargs = {
+            "ports": _desired_port_bindings(inst),
+            "network": config.settings.docker_network,
+        }
 
     return docker_service.get_client().containers.create(
         config.settings.reforger_server_image,
@@ -671,14 +707,13 @@ def _create_container(inst: Instance, config_path: Path, launch: "LaunchParams |
         detach=True,
         environment=environment,
         volumes=volumes,
-        ports=port_bindings,
         labels={
             docker_service.LABEL_MANAGED: "true",
             docker_service.LABEL_ROLE: docker_service.ROLE_INSTANCE,
             docker_service.LABEL_BRANCH: inst.branch,
             docker_service.LABEL_INSTANCE_ID: str(inst.id),
         },
-        network=config.settings.docker_network,
+        **net_kwargs,
         restart_policy={"Name": _restart_policy(inst)},
         # Opt-in only. See config.instance_no_new_privileges: applying this to a
         # game server broke player connections in v0.45.0 (#150), because the

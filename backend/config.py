@@ -5,7 +5,7 @@ import secrets
 from dataclasses import dataclass, field
 
 APP_NAME = "Reforger Server Manager"
-APP_VERSION = "0.45.1"
+APP_VERSION = "0.45.2"
 
 # The password shipped in .env.example. Refusing to start with it (when exposed)
 # is what stops a "just ran docker compose up" box from facing the internet on
@@ -117,6 +117,19 @@ class Settings:
     # cleanup) keep it unconditionally; they have no anti-cheat and are proven
     # working. Set true to opt back in.
     instance_no_new_privileges: bool = False
+    # How game server containers attach to the network (#150).
+    #
+    #   host   — the server binds its UDP ports straight on the host. No NAT, no
+    #            docker-proxy, and the server sees each player's REAL address.
+    #            This is the normal way to run a game server in Docker.
+    #   bridge — the old behaviour: ports published through Docker's NAT, with a
+    #            userland docker-proxy in front of every UDP port. That rewrites
+    #            source addresses to the bridge gateway, which game networking and
+    #            BattlEye do not tolerate.
+    #   auto   — host everywhere except Docker Desktop (Windows/macOS), whose VM
+    #            cannot offer real host networking, so bridge is the only option
+    #            there.
+    instance_network_mode: str = "auto"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -137,6 +150,7 @@ class Settings:
             allowed_origins=origins,
             content_security_policy=os.environ.get("CONTENT_SECURITY_POLICY", "").strip(),
             instance_no_new_privileges=_env_bool("INSTANCE_NO_NEW_PRIVILEGES", False),
+            instance_network_mode=os.environ.get("INSTANCE_NETWORK_MODE", "auto").strip().lower(),
             admin_username=os.environ.get("ADMIN_USERNAME", "").strip(),
             admin_password=os.environ.get("ADMIN_PASSWORD", "").strip(),
             # Built-in login on by default; disable ONLY behind a reverse proxy
