@@ -7,7 +7,7 @@ own Docker container — from a single `docker-compose.yaml`.
 
 Runs on **Linux** (any VPS or home box) and on **Windows 10/11** via Docker Desktop,
 where a PowerShell installer sets everything up and puts a start shortcut on your
-Desktop. See [Getting started](#installation) or
+Desktop. See [Installation](#installation) or
 [Running on Windows](#3-windows-10-and-11).
 
 Inspired by (and a spiritual successor to) [Longbow / ArmaReforgerServerTool](https://github.com/soda3x/ArmaReforgerServerTool)
@@ -57,6 +57,10 @@ Docker image: `ghcr.io/tubalainen/reforger-server-manager:latest`
 ## Features
 
 - [x] Single `docker-compose.yaml` + single `.env` deployment, built-in login
+- [x] **Hardened by default** — the Docker socket is never mounted into the app (a
+      least-privilege proxy fronts it), containers run with `no-new-privileges`, and
+      the manager refuses to start exposed on a default password. The VPS setup adds
+      automatic HTTPS, and one command signs every session out if a cookie leaks
 - [x] One-click SteamCMD download of server files — **Stable** (app `1874900`) or
       **Experimental** (app `1890870`) — with live progress bars and streaming logs
 - [x] Server templates: pick a scenario straight from the
@@ -113,16 +117,24 @@ Docker image: `ghcr.io/tubalainen/reforger-server-manager:latest`
 
 ```
  Browser ──► manager container (FastAPI + Vue)
-                │  docker.sock
+                │
+                │  Docker API, through a least-privilege socket proxy
+                │  (the manager never mounts /var/run/docker.sock itself)
+                ▼
+             host Docker daemon
                 ├─► steamcmd container (one-shot downloads → shared volumes)
                 └─► reforger-instance-* containers (one per server)
 ```
 
-Only the manager lives in the compose file. Server instances and SteamCMD download jobs
-are sibling containers the manager creates through the Docker API, attached to the same
-Docker network and labeled so they survive manager restarts. Server files are downloaded
-once per branch into local folders (`./serverfiles/stable`, `./serverfiles/experimental`)
-and mounted read-only into each instance.
+The compose file holds the manager and the socket proxy — plus Caddy in the VPS setup.
+Server instances and SteamCMD download jobs are sibling containers the manager creates
+through the Docker API, attached to the same Docker network and labeled so they survive
+manager restarts. The proxy sits on its own internal network, so the game containers
+cannot reach the Docker API even though they share a network with the manager.
+
+Server files are downloaded once per branch into local folders
+(`./serverfiles/stable`, `./serverfiles/experimental`) and mounted read-only into each
+instance.
 
 ## How server instances run
 
@@ -154,6 +166,26 @@ self-contained and includes how to update it later.
 
 Players always connect over **UDP game ports**, opened separately from the web GUI —
 each section says which.
+
+> ### ⚠️ Treat the GUI login as host credentials
+>
+> Managing containers means talking to the Docker daemon, which is root-equivalent on the
+> machine. The manager never mounts the Docker socket directly — a least-privilege proxy
+> holds it, and every container the manager creates runs with `no-new-privileges` — but the
+> daemon's inherent power remains. So use a strong password, never port-forward the GUI, and
+> put TLS in front for remote access (scenario 2 does that for you).
+>
+> The app enforces the worst cases itself: bound anywhere other than `127.0.0.1`, it
+> **refuses to start** on the example password, or with the login disabled unless you set
+> `AUTH_DELEGATED_ACK=true` to confirm a reverse proxy authenticates every request. Behind
+> TLS the session cookie is marked `Secure` automatically. A localhost-only bind stays
+> frictionless — there these are warnings, not errors.
+>
+> Two things worth knowing:
+> * **Behind a reverse proxy, set `TRUSTED_PROXIES`** to its address, or login rate-limiting
+>   sees every visitor as the proxy. The VPS setup configures this for you.
+> * **If you think a session leaked**, `POST /api/auth/logout-all` signs every device out
+>   immediately — changing the password alone does not invalidate existing sessions.
 
 ### 1. Linux at home or on a LAN
 
@@ -203,28 +235,6 @@ locks expire on their own, or use **Clear edit locks** on the Templates page). T
 works over plain HTTP polling, so no extra nginx/Cloudflare-tunnel configuration is
 needed — only the live server-log and download-progress views use WebSockets, which
 both pass through by default.
-
-> **Security note:** managing containers means talking to the host Docker daemon, which is
-> root-equivalent on the host. The manager does **not** mount `/var/run/docker.sock`
-> directly; a bundled least-privilege **docker-socket-proxy** holds the socket and forwards
-> only the API calls the manager needs (containers, images, networks, info), denying the
-> rest (exec, build, volume create, swarm, secrets, …). This shrinks the attack surface but
-> does not remove the daemon's inherent power to create containers — so still treat the web
-> GUI credentials as host credentials and never expose the port directly (firewall it, and
-> put a TLS reverse proxy in front for remote use).
->
-> The built-in login can be turned off with `AUTH_ENABLED=false` so a reverse proxy
-> (NGINX, Caddy, Authelia, …) can enforce authentication instead. To do this on an
-> exposed deployment you must also set `AUTH_DELEGATED_ACK=true` — your explicit
-> confirmation that a proxy in front authenticates every request. Without it, an
-> exposed (`WEB_BIND` other than `127.0.0.1`) login-disabled start is **refused**.
->
-> As a safety net, when the GUI is bound to a non-loopback address the app also
-> **refuses to start** while `ADMIN_PASSWORD` is still the example value (or empty),
-> so an exposed box can never come up on `admin` / `change-me-now`. A localhost-only
-> bind (the default) keeps a quick local trial frictionless — these are only
-> warnings there. When a TLS reverse proxy fronts the GUI (forwarding
-> `X-Forwarded-Proto: https`), the session cookie is automatically marked `Secure`.
 
 **Updating a by-hand install** — refresh the compose file *before* pulling, or you keep
 the old wiring:
