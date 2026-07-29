@@ -621,6 +621,9 @@ def test_create_container_uses_acemod_contract(tmp_path, monkeypatch):
     monkeypatch.setattr(config.settings, "public_address", "203.0.113.5")
     # host_path_for is identity outside a container
     monkeypatch.setattr(docker_service, "host_path_for", lambda p: p)
+    # This test pins the published-port contract, which only exists in bridge
+    # mode (Docker Desktop). Host mode is asserted separately below (#150).
+    monkeypatch.setattr(docker_service, "use_host_network", lambda: False)
 
     captured = {}
 
@@ -1192,3 +1195,73 @@ def test_container_created_by_v0450_is_recreated(monkeypatch):
     monkeypatch.setattr(config.settings, "instance_no_new_privileges", True)
     assert instance_service._container_security_opt_matches(stale) is True
     assert instance_service._container_security_opt_matches(fresh) is False
+
+
+# --------------------------------------------------------------------------- #
+# Game servers must not sit behind Docker's NAT / userland proxy (#150)
+# --------------------------------------------------------------------------- #
+
+def _create_with(monkeypatch, tmp_path, host_network):
+    import config
+    from services import docker_service, instance_service
+
+    monkeypatch.setattr(config.settings, "data_dir", str(tmp_path))
+    monkeypatch.setattr(config.settings, "serverfiles_dir", str(tmp_path / "sf"))
+    monkeypatch.setattr(docker_service, "host_path_for", lambda p: p)
+    monkeypatch.setattr(docker_service, "use_host_network", lambda: host_network)
+
+    captured = {}
+
+    class _Client:
+        class containers:
+            @staticmethod
+            def create(image, **kw):
+                captured.update(kw)
+                class C:
+                    id = "c" * 16
+                return C()
+
+    monkeypatch.setattr(docker_service, "get_client", lambda: _Client)
+    instance_service._create_container(_inst(), tmp_path / "server.json")
+    return captured
+
+
+def test_host_networking_removes_the_proxy_from_the_path(monkeypatch, tmp_path):
+    """Bridge networking put docker-proxy in front of every UDP port, rewriting
+    the source address to the bridge gateway. Game traffic must not be proxied."""
+    kw = _create_with(monkeypatch, tmp_path, host_network=True)
+    assert kw["network_mode"] == "host"
+    assert "ports" not in kw, "host networking must not publish/NAT ports"
+    assert "network" not in kw, "host networking must not join the bridge network"
+
+
+def test_bridge_mode_still_publishes_ports_for_docker_desktop(monkeypatch, tmp_path):
+    """Docker Desktop has no real host networking, so it keeps 1:1 publishing."""
+    kw = _create_with(monkeypatch, tmp_path, host_network=False)
+    assert "network_mode" not in kw
+    assert kw["network"]
+    inst = _inst()
+    assert kw["ports"] == {
+        f"{inst.game_port}/udp": inst.game_port,
+        f"{inst.a2s_port}/udp": inst.a2s_port,
+        f"{inst.rcon_port}/udp": inst.rcon_port,
+    }
+
+
+def test_bridge_container_is_recreated_onto_host_networking(monkeypatch):
+    """Docker fixes NetworkMode at creation, so without this the fix would never
+    reach a server that already exists."""
+    from services import docker_service, instance_service
+
+    bridged = _FakeSecOptContainer()
+    bridged.attrs = {"HostConfig": {"NetworkMode": "reforger-net"}}
+    hosted = _FakeSecOptContainer()
+    hosted.attrs = {"HostConfig": {"NetworkMode": "host"}}
+
+    monkeypatch.setattr(docker_service, "use_host_network", lambda: True)
+    assert instance_service._container_network_mode_matches(bridged) is False  # rebuild
+    assert instance_service._container_network_mode_matches(hosted) is True
+
+    monkeypatch.setattr(docker_service, "use_host_network", lambda: False)
+    assert instance_service._container_network_mode_matches(bridged) is True
+    assert instance_service._container_network_mode_matches(hosted) is False
