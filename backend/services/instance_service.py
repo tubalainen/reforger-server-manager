@@ -458,6 +458,13 @@ def _container_ports_match(container, inst: Instance) -> bool:
     uses this to self-heal instead of silently reusing a stale container.
     On any read failure we return True — never destroy a container we can't inspect.
     """
+    # Host networking publishes nothing: the server binds the host's ports
+    # directly, so there are no bindings to compare and an empty PortBindings is
+    # CORRECT, not drift. Without this the comparison against the three desired
+    # ports never matches and every start needlessly recreates the container —
+    # and does so under the wrong reason, hiding the network-mode check (#150).
+    if docker_service.use_host_network():
+        return True
     try:
         container.reload()
         bindings = (container.attrs.get("HostConfig") or {}).get("PortBindings") or {}
