@@ -523,6 +523,26 @@ def _container_env_matches(container, desired: dict) -> bool:
     return all(actual.get(key) == value for key, value in desired.items())
 
 
+def _container_security_opt_matches(container) -> bool:
+    """True if the container's no-new-privileges state matches what we want now.
+
+    Docker fixes SecurityOpt at container CREATION, so a server created by
+    v0.45.0 keeps `no-new-privileges` baked in even after the setting is turned
+    off — which is exactly the state that stops players connecting (#150).
+    Without this check, upgrading would appear to change nothing: start_instance
+    would happily reuse the broken container. On any read failure return True —
+    never destroy a container we cannot inspect.
+    """
+    want = bool(config.settings.instance_no_new_privileges)
+    try:
+        container.reload()
+        opts = (container.attrs.get("HostConfig") or {}).get("SecurityOpt") or []
+    except (DockerException, NotFound, AttributeError):
+        return True
+    has = any("no-new-privileges" in str(o) for o in opts)
+    return has == want
+
+
 def _container_network_ok(container) -> bool:
     """True if the container is attached to the configured Docker network AND
     that attachment points at the network that exists right now.
@@ -582,6 +602,8 @@ def start_instance(instance_id: int) -> None:
                 reason = "launch parameters or server environment changed"
             elif not _container_network_ok(container):
                 reason = "network attachment is missing or stale"
+            elif not _container_security_opt_matches(container):
+                reason = "container security options changed (#150)"
             if reason:
                 logger.info("Recreating container for %s: %s", inst.name, reason)
                 try:
@@ -658,7 +680,14 @@ def _create_container(inst: Instance, config_path: Path, launch: "LaunchParams |
         },
         network=config.settings.docker_network,
         restart_policy={"Name": _restart_policy(inst)},
-        security_opt=docker_service.SECURITY_OPT,
+        # Opt-in only. See config.instance_no_new_privileges: applying this to a
+        # game server broke player connections in v0.45.0 (#150), because the
+        # flag is inherited by BattlEye and cannot be dropped again.
+        **(
+            {"security_opt": docker_service.SECURITY_OPT}
+            if config.settings.instance_no_new_privileges
+            else {}
+        ),
     )
 
 

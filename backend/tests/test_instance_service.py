@@ -1111,3 +1111,84 @@ def test_instance_stats_clears_roster_when_count_is_zero(monkeypatch):
     stats = instance_service.instance_stats(1)
     assert stats["players"] == 0
     assert stats["roster"] == []
+
+
+# --------------------------------------------------------------------------- #
+# no-new-privileges must NOT be applied to game servers by default (#150)
+# --------------------------------------------------------------------------- #
+
+class _FakeSecOptContainer:
+    def __init__(self, security_opt=None):
+        self.attrs = {"HostConfig": {"SecurityOpt": security_opt}}
+
+    def reload(self):
+        pass
+
+
+def _capture_create(monkeypatch):
+    from services import instance_service
+    captured = {}
+
+    class _Client:
+        class containers:
+            @staticmethod
+            def create(*a, **kw):
+                captured.update(kw)
+                return object()
+
+    monkeypatch.setattr(instance_service.docker_service, "get_client", lambda: _Client)
+    monkeypatch.setattr(instance_service.docker_service, "host_path_for", lambda p: p)
+    return captured
+
+
+def _dummy_instance():
+    from models import Instance
+    return Instance(id=1, name="t", template_id=1, branch="stable",
+                    game_port=2001, a2s_port=17777, rcon_port=19999)
+
+
+def test_game_containers_have_no_security_opt_by_default(monkeypatch, tmp_path):
+    """Applying no-new-privileges broke player connections in v0.45.0 (#150).
+
+    The flag is inherited by every child process and cannot be unset, and
+    BattlEye runs as a child of the server — so the server came up normally and
+    then refused players.
+    """
+    import config
+    from services import instance_service
+
+    monkeypatch.setattr(config.settings, "instance_no_new_privileges", False)
+    captured = _capture_create(monkeypatch)
+    instance_service._create_container(_dummy_instance(), tmp_path / "server.json", None)
+    assert "security_opt" not in captured, "must be opt-in for game servers"
+
+
+def test_game_containers_can_opt_back_in(monkeypatch, tmp_path):
+    import config
+    from services import instance_service
+
+    monkeypatch.setattr(config.settings, "instance_no_new_privileges", True)
+    captured = _capture_create(monkeypatch)
+    instance_service._create_container(_dummy_instance(), tmp_path / "server.json", None)
+    assert captured["security_opt"] == ["no-new-privileges:true"]
+
+
+def test_container_created_by_v0450_is_recreated(monkeypatch):
+    """The fix has to reach servers that already exist.
+
+    Docker bakes SecurityOpt at creation, so without this check an upgrade would
+    silently reuse the broken container and nothing would appear to change.
+    """
+    import config
+    from services import instance_service
+
+    stale = _FakeSecOptContainer(security_opt=["no-new-privileges:true"])
+    fresh = _FakeSecOptContainer(security_opt=None)
+
+    monkeypatch.setattr(config.settings, "instance_no_new_privileges", False)
+    assert instance_service._container_security_opt_matches(stale) is False   # -> recreate
+    assert instance_service._container_security_opt_matches(fresh) is True    # -> reuse
+
+    monkeypatch.setattr(config.settings, "instance_no_new_privileges", True)
+    assert instance_service._container_security_opt_matches(stale) is True
+    assert instance_service._container_security_opt_matches(fresh) is False
