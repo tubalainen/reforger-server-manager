@@ -297,3 +297,28 @@ def test_spec_from_config_clamps_legacy_values_but_not_when_validating():
 
     assert spec_from_config(raw)["server_min_grass_distance"] == 50
     assert spec_from_config(raw, clamp=False)["server_min_grass_distance"] == 10
+
+
+# --------------------------------------------------------------------------- #
+# extra_args must not be able to carry a shell command (security review R10)
+# --------------------------------------------------------------------------- #
+
+def test_extra_args_accepts_ordinary_engine_flags():
+    from services.template_service import LaunchParams
+
+    lp = LaunchParams(extra_args="-myFlag 123 -another value")
+    assert lp.extra_args == "-myFlag 123 -another value"
+    assert "-myFlag 123" in lp.render()[0]
+
+
+def test_extra_args_rejects_shell_metacharacters():
+    import pytest as _pytest
+
+    from services.template_service import LaunchParams
+
+    # ARMA_PARAMS is commonly expanded through a shell by the server image, so
+    # these would run as commands rather than as engine flags.
+    for payload in ["-x; id", "-x | nc host 1", "-x && curl x", "-x $(id)",
+                    "-x `id`", "-x > /etc/passwd", "-x\nid"]:
+        with _pytest.raises(ValueError):
+            LaunchParams(extra_args=payload)

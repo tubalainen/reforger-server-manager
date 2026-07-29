@@ -176,7 +176,11 @@ onUnmounted(() => clearInterval(poll))
         </div>
         <div class="btn-group">
           <button class="btn btn-sm btn-outline-secondary" @click="openLog(t)">Change log</button>
-          <button class="btn btn-sm btn-outline-secondary" @click="download(t)">config.json</button>
+          <button
+            class="btn btn-sm btn-outline-secondary"
+            title="Download the rendered config.json. It contains the server, admin and RCON passwords in clear text — treat the file as a secret."
+            @click="download(t)"
+          >config.json</button>
           <button
             class="btn btn-sm btn-outline-secondary"
             :disabled="copying === t.id"

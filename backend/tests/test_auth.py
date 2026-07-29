@@ -357,3 +357,43 @@ def test_websocket_rejects_foreign_origin(logged_in):
         ):
             pass
     assert exc.value.code == 4403
+
+
+# --------------------------------------------------------------------------- #
+# Session revocation (security review R13)
+# --------------------------------------------------------------------------- #
+
+def test_logout_all_invalidates_other_sessions(client, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import auth as auth_mod
+    import main
+
+    # Two independent "devices" signed in with the same account.
+    a = client
+    a.post("/api/auth/login", json={"username": "testadmin", "password": "testpass-123"})
+    with TestClient(main.app) as b:
+        b.post("/api/auth/login", json={"username": "testadmin", "password": "testpass-123"})
+        assert a.get("/api/auth/me").status_code == 200
+        assert b.get("/api/auth/me").status_code == 200
+
+        # Rotating the salt must invalidate BOTH cookies, not just the caller's —
+        # /logout only clears the caller's copy, which is the gap R13 describes.
+        assert a.post("/api/auth/logout-all").status_code == 200
+        assert a.get("/api/auth/me").status_code == 401
+        assert b.get("/api/auth/me").status_code == 401
+
+    auth_mod.rotate_session_salt()  # leave a clean salt for later tests
+
+
+def test_logout_all_requires_a_session(client):
+    assert client.post("/api/auth/logout-all").status_code == 401
+
+
+def test_session_salt_persists_across_serializer_calls(client):
+    import auth as auth_mod
+
+    auth_mod.rotate_session_salt()
+    first = auth_mod._session_salt()
+    assert first and first != auth_mod._BASE_SALT
+    assert auth_mod._session_salt() == first   # stable => sessions survive restarts

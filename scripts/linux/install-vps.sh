@@ -102,17 +102,36 @@ fi
 # Best-effort DNS sanity check: a domain that does not resolve here is the most
 # common reason the first certificate request fails.
 if [ -n "$DOMAIN" ]; then
-    PUBLIC_IP=$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)
-    DOMAIN_IP=$(getent hosts "$DOMAIN" 2>/dev/null | awk '{print $1}' | head -1 || true)
-    if [ -n "$PUBLIC_IP" ] && [ -n "$DOMAIN_IP" ] && [ "$PUBLIC_IP" != "$DOMAIN_IP" ]; then
-        warn "$DOMAIN currently resolves to $DOMAIN_IP, but this server is $PUBLIC_IP."
-        say  "  If you just created the DNS record this is normal — it needs to propagate."
-        say  "  Certificate issuance will keep retrying until it does."
-    elif [ -z "$DOMAIN_IP" ]; then
+    # Compare per address family. A dual-stack host publishes both A and AAAA,
+    # and getent may return either first — comparing a v6 answer against our v4
+    # address produced a false "does not match" exactly when someone was already
+    # debugging DNS. Let's Encrypt also *prefers* IPv6 when an AAAA exists, so a
+    # stale or unrouted AAAA fails validation however correct the A record is.
+    PUBLIC_IP=$(curl -fsS -4 --max-time 5 https://api.ipify.org 2>/dev/null || true)
+    PUBLIC_IP6=$(curl -fsS -6 --max-time 5 https://api64.ipify.org 2>/dev/null || true)
+    RESOLVED=$(getent ahosts "$DOMAIN" 2>/dev/null | awk '{print $1}' | sort -u || true)
+    DOMAIN_A=$(printf '%s\n' "$RESOLVED" | grep -v ':' | head -1 || true)
+    DOMAIN_AAAA=$(printf '%s\n' "$RESOLVED" | grep ':' | head -1 || true)
+
+    if [ -z "$DOMAIN_A" ] && [ -z "$DOMAIN_AAAA" ]; then
         warn "$DOMAIN does not resolve yet. Create an A record pointing at this server;"
         say  "  Caddy retries automatically once it does."
     else
-        say "  DNS looks right ($DOMAIN → ${DOMAIN_IP:-?})."
+        [ -n "$DOMAIN_A" ] && say "  A    $DOMAIN → $DOMAIN_A"
+        [ -n "$DOMAIN_AAAA" ] && say "  AAAA $DOMAIN → $DOMAIN_AAAA"
+        if [ -n "$DOMAIN_A" ] && [ -n "$PUBLIC_IP" ] && [ "$DOMAIN_A" != "$PUBLIC_IP" ]; then
+            warn "The A record points at $DOMAIN_A but this server is $PUBLIC_IP."
+            say  "  If you just created it, this is normal — it needs to propagate."
+        fi
+        if [ -n "$DOMAIN_AAAA" ] && [ -z "$PUBLIC_IP6" ]; then
+            warn "An AAAA record exists, but this server has no working IPv6."
+            say  "  Let's Encrypt PREFERS IPv6 when an AAAA is published, so validation"
+            say  "  will fail even though the A record is correct. Remove the AAAA record"
+            say  "  (or make IPv6 reachable) before continuing."
+        elif [ -n "$DOMAIN_AAAA" ] && [ -n "$PUBLIC_IP6" ] && [ "$DOMAIN_AAAA" != "$PUBLIC_IP6" ]; then
+            warn "The AAAA record points at $DOMAIN_AAAA but this server is $PUBLIC_IP6."
+            say  "  Let's Encrypt prefers IPv6, so fix or remove the AAAA record."
+        fi
     fi
 fi
 

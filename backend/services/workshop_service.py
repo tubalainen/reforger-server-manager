@@ -29,6 +29,14 @@ _ASSET_ID_RE = re.compile(r"([0-9A-Fa-f]{16})")
 
 _ASSET_CACHE_TTL = 600  # seconds
 
+# Bounds on the recursive dependency walk (security review R11). Each new node
+# costs one HTTP fetch of up to REQUEST_TIMEOUT, so an unbounded graph could tie
+# up a worker thread for a very long time and fan out a lot of outbound traffic.
+# Both limits are generous next to real mod graphs (the largest are dozens of
+# nodes); hitting one means something is wrong, not that a user was unlucky.
+_MAX_DEPENDENCY_NODES = 300
+_MAX_RESOLVE_SECONDS = 120.0
+
 
 # --------------------------------------------------------------------------- #
 # Pure parsing (unit-tested against fixtures — no network)
@@ -250,9 +258,24 @@ class WorkshopService:
         total_size += root.get("size") or 0
 
         # BFS over dependencies; each asset page already lists its direct deps.
+        # Bounded by node count and wall clock: every unseen node is one network
+        # fetch, so an enormous or cyclic-by-id graph must not be able to run
+        # unbounded on a request thread (R11). On a cap, what has been resolved is
+        # returned and the rest is reported as `missing`, which the UI already
+        # renders as "couldn't resolve these" rather than failing outright.
+        deadline = time.monotonic() + _MAX_RESOLVE_SECONDS
+        truncated = False
         seen: set[str] = {root["id"]}
         queue = list(root.get("dependencies") or [])
         while queue:
+            if len(seen) >= _MAX_DEPENDENCY_NODES or time.monotonic() > deadline:
+                truncated = True
+                logger.warning(
+                    "Dependency resolution for %s stopped at %d nodes (cap %d, %.0fs budget)",
+                    asset_id, len(seen), _MAX_DEPENDENCY_NODES, _MAX_RESOLVE_SECONDS,
+                )
+                missing.extend(d["id"] for d in queue if d.get("id") and d["id"] not in seen)
+                break
             dep = queue.pop(0)
             dep_id = dep["id"]
             if dep_id in seen:
@@ -283,6 +306,9 @@ class WorkshopService:
             "mods": list(mods.values()),
             "missing": missing,
             "total_size": total_size,
+            # True when a cap stopped the walk, so callers can say so rather than
+            # presenting a partial tree as complete.
+            "truncated": truncated,
         }
 
 
