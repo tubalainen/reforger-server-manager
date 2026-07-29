@@ -768,7 +768,11 @@ def test_container_uptime_none_when_never_started():
     assert instance_service._container_uptime_seconds(c) is None
 
 
-def test_container_ports_match_detects_stale_mapping():
+def test_container_ports_match_detects_stale_mapping(monkeypatch):
+    # Published-port drift only exists in bridge mode; host networking has no
+    # bindings at all and is covered separately (#150).
+    from services import docker_service
+    monkeypatch.setattr(docker_service, "use_host_network", lambda: False)
     inst = _inst()  # game 2005, a2s 17780, rcon 20002
 
     class FakeContainer:
@@ -1265,3 +1269,23 @@ def test_bridge_container_is_recreated_onto_host_networking(monkeypatch):
     monkeypatch.setattr(docker_service, "use_host_network", lambda: False)
     assert instance_service._container_network_mode_matches(bridged) is True
     assert instance_service._container_network_mode_matches(hosted) is False
+
+
+def test_ports_check_does_not_thrash_under_host_networking(monkeypatch):
+    """Host networking has no PortBindings, so an empty set is correct.
+
+    Comparing it against the three desired ports never matched, which recreated
+    the container on EVERY start — and under the wrong reason, masking the
+    network-mode check that the #150 fix relies on.
+    """
+    from services import docker_service, instance_service
+
+    hosted = _FakeSecOptContainer()
+    hosted.attrs = {"HostConfig": {"NetworkMode": "host", "PortBindings": {}}}
+
+    monkeypatch.setattr(docker_service, "use_host_network", lambda: True)
+    assert instance_service._container_ports_match(hosted, _inst()) is True
+
+    # In bridge mode an empty binding set is still genuine drift.
+    monkeypatch.setattr(docker_service, "use_host_network", lambda: False)
+    assert instance_service._container_ports_match(hosted, _inst()) is False
