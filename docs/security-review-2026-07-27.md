@@ -53,7 +53,7 @@ keeping that root shell off the open internet and making it expensive to reach.
 | **R5** | Secrets stored and served in plaintext (admin/RCON/server passwords in DB, `.env`, downloadable `config.json`) — **partially mitigated 2026-07-27** | **HIGH** |
 | **R6** | Unauthenticated API surface disclosure: `/docs`, `/redoc`, `/openapi.json`, `/api/version` — **mitigated 2026-07-27** | **MEDIUM** |
 | **R7** | No CSRF tokens and no security headers (CSP / X-Frame-Options / HSTS / nosniff) — **mitigated 2026-07-27** | **MEDIUM** |
-| **R8** | Spawned game-server containers run as **root** with writable host bind mounts — **partially mitigated 2026-07-27** | **MEDIUM** |
+| **R8** | Spawned game-server containers run as **root** with writable host bind mounts — **partially mitigated; game-server hardening REVERTED 2026-07-29, see #150** | **MEDIUM** |
 | **R9** | `:latest` image pins for the server and steamcmd images (supply-chain / reproducibility) — **accepted risk, documented** | **MEDIUM** |
 | **R10** | Free-form launch `extra_args` injected into the server container environment — **mitigated 2026-07-27** | **MEDIUM** |
 | **R11** | Unauthenticated / unbounded resource abuse (Workshop dependency BFS, no object caps) — **mitigated 2026-07-27** | **LOW** |
@@ -376,6 +376,21 @@ narrowest bind mounts. Same treatment for the steamcmd helper containers.
 > needs one run on a real host first — tracked as the follow-up here, together with running the
 > game containers as a non-root user.
 
+> **Update — 2026-07-29 (reverted for game servers; #150).** `no-new-privileges` on the *game*
+> containers **broke player connections** and was reverted in v0.45.1. `no_new_privs` is
+> inherited by every child process and cannot be cleared, and Reforger's BattlEye runs as a
+> child of the server — so the server started, looked healthy, and refused joining players
+> (`group 1, reason 11` client-side). It is now opt-in via `INSTANCE_NO_NEW_PRIVILEGES`, and the
+> manager recreates containers still carrying the old setting so the fix reaches existing
+> servers. The manager's own helper containers (steamcmd, cleanup) keep it — they were working
+> and have no anti-cheat.
+>
+> **The lesson, recorded deliberately:** this was the one item flagged in this very document as
+> unverifiable without a real Docker host, and it was shipped enabled by default regardless. The
+> caution was written down and then not acted on. Container-runtime restrictions that cannot be
+> tested here should ship **opt-in** until someone has run them against a real server — which is
+> exactly what the remaining follow-up (`cap_drop: ALL`, non-root) must now do.
+
 ---
 
 ### R9 — `:latest` image pins for server and steamcmd images  ·  MEDIUM
@@ -570,7 +585,7 @@ reduced to a follow-up that needs a real host to verify:
 
 | Item | Why it is still open |
 |---|---|
-| **R8 follow-up** | `cap_drop: ALL` and a non-root game container need one run against a real Docker daemon; unverifiable in the dev environment |
+| **R8 follow-up** | `cap_drop: ALL` and a non-root game container need one run against a real Docker daemon. After #150, any such change ships **opt-in first** — `no-new-privileges` was shipped on by default without that verification and broke player connections |
 | **R1 follow-up** | Rootless Docker / userns-remap is a host-level ops change, not something the compose file can enforce |
 | **R5 follow-up** | Encryption at rest, if the database ever moves off the host holding `.env` |
 | **R3 follow-up** | Per-user accounts and MFA, if the single shared admin account ever stops being enough |

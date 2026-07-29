@@ -5,7 +5,7 @@ import secrets
 from dataclasses import dataclass, field
 
 APP_NAME = "Reforger Server Manager"
-APP_VERSION = "0.45.0"
+APP_VERSION = "0.45.1"
 
 # The password shipped in .env.example. Refusing to start with it (when exposed)
 # is what stops a "just ran docker compose up" box from facing the internet on
@@ -108,6 +108,15 @@ class Settings:
     allowed_origins: tuple[str, ...] = field(default=())
     # Override the Content-Security-Policy if a deployment needs a looser one.
     content_security_policy: str = ""
+    # Apply no-new-privileges to the GAME SERVER containers (security review R8).
+    # Off by default: it broke player connections in v0.45.0 (#150). The flag is
+    # inherited by every child process and cannot be unset, and Reforger's
+    # BattlEye runs as a child of the server — so the server starts normally and
+    # then refuses players, which is a far worse failure than the escalation this
+    # was defending against. Our own short-lived helper containers (steamcmd,
+    # cleanup) keep it unconditionally; they have no anti-cheat and are proven
+    # working. Set true to opt back in.
+    instance_no_new_privileges: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -127,6 +136,7 @@ class Settings:
             api_docs=_env_bool("API_DOCS", False),
             allowed_origins=origins,
             content_security_policy=os.environ.get("CONTENT_SECURITY_POLICY", "").strip(),
+            instance_no_new_privileges=_env_bool("INSTANCE_NO_NEW_PRIVILEGES", False),
             admin_username=os.environ.get("ADMIN_USERNAME", "").strip(),
             admin_password=os.environ.get("ADMIN_PASSWORD", "").strip(),
             # Built-in login on by default; disable ONLY behind a reverse proxy
