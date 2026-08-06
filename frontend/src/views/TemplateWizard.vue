@@ -20,6 +20,15 @@ import {
   sortModsByAdded,
   sortModsByName,
 } from '../mods'
+import {
+  ADMIN_LIMIT,
+  addAdmins,
+  addNotice,
+  addPlayers,
+  idKind,
+  removeAdmin,
+  removePlayer,
+} from '../players'
 
 const props = defineProps({ id: { type: [String, Number], default: null } })
 const router = useRouter()
@@ -71,6 +80,11 @@ const spec = reactive({
   game_name: 'Arma Reforger Server',
   password: '',
   admin_password: '',
+  // Player access lists (#154). Declared here so a NEW template carries them
+  // too — on edit they arrive with the loaded spec.
+  admins: [],
+  player_whitelist: [],
+  player_ban_list: [],
   max_players: 64,
   visible: true,
   cross_platform: true,
@@ -137,6 +151,67 @@ const spec = reactive({
 
 const showAdvanced = ref(false)
 const showLaunch = ref(false)
+
+// ---- Player access: admins, whitelist, ban list (#154) ---------------------
+const adminInput = ref('')
+const adminNotice = ref('')
+const whitelistInput = reactive({ id: '', name: '' })
+const whitelistNotice = ref('')
+const banInput = reactive({ id: '', name: '', reason: '' })
+const banNotice = ref('')
+
+// The game applies at most 20 admins. A template can arrive over the limit from
+// an import or a hand-edit, so say so rather than silently truncating.
+const adminsOverLimit = computed(() => spec.admins.length > ADMIN_LIMIT)
+
+function addAdminIds() {
+  const result = addAdmins(spec.admins, adminInput.value)
+  spec.admins = result.admins
+  adminNotice.value = addNotice(result)
+  // Keep what could not be added in the box so it can be corrected in place,
+  // and clear it when everything landed (#104).
+  adminInput.value = [...result.invalid, ...result.overflow].join(' ')
+}
+
+function dropAdmin(id) {
+  spec.admins = removeAdmin(spec.admins, id)
+  adminNotice.value = ''
+}
+
+function addWhitelistPlayers() {
+  const result = addPlayers(spec.player_whitelist, whitelistInput.id, {
+    name: whitelistInput.name,
+  })
+  spec.player_whitelist = result.players
+  whitelistNotice.value = addNotice(result)
+  whitelistInput.id = result.invalid.join(' ')
+  if (result.added.length) whitelistInput.name = ''
+}
+
+function dropWhitelistPlayer(id) {
+  spec.player_whitelist = removePlayer(spec.player_whitelist, id)
+  whitelistNotice.value = ''
+}
+
+function addBannedPlayers() {
+  const result = addPlayers(spec.player_ban_list, banInput.id, {
+    name: banInput.name,
+    reason: banInput.reason,
+    withReason: true,
+  })
+  spec.player_ban_list = result.players
+  banNotice.value = addNotice(result)
+  banInput.id = result.invalid.join(' ')
+  if (result.added.length) {
+    banInput.name = ''
+    banInput.reason = ''
+  }
+}
+
+function dropBannedPlayer(id) {
+  spec.player_ban_list = removePlayer(spec.player_ban_list, id)
+  banNotice.value = ''
+}
 
 // Launch-parameter field definitions, rendered generically to keep the
 // template compact. type: 'num' | 'text' | 'switch' | 'select'.
@@ -1370,6 +1445,205 @@ onBeforeUnmount(() => {
                 <input id="tp" v-model="spec.disable_third_person" class="form-check-input" type="checkbox" />
                 <label for="tp" class="form-check-label">First-person only</label>
               </div>
+            </div>
+          </div>
+
+          <!-- Server admins, whitelist and ban list (#154) -->
+          <div class="border-top mt-4 pt-3">
+            <div class="fw-semibold mb-1">Player access</div>
+            <p class="small text-secondary">
+              Who administers this server, and who may join it. Everything here is
+              part of the template, so every server instance built from it gets the
+              same lists.
+            </p>
+
+            <!-- Admins -->
+            <div class="mb-4">
+              <label class="form-label mb-1">
+                Server admins
+                <small class="text-secondary">
+                  ({{ spec.admins.length }} of {{ ADMIN_LIMIT }})
+                </small>
+              </label>
+              <p class="small text-secondary mb-2">
+                Admins can <code>#login</code> without the admin password and use the
+                priority join queue. Accepts a Steam64 id (17 digits) or a Bohemia
+                identity id — paste several at once if you like.
+              </p>
+              <div class="input-group">
+                <input
+                  v-model="adminInput"
+                  class="form-control"
+                  placeholder="76561198000000000 or 7f9b0a4c-1d2e-4f6a-8b3c-9d0e1f2a3b4c"
+                  :disabled="locked"
+                  @keyup.enter="addAdminIds"
+                />
+                <button class="btn btn-outline-primary" :disabled="locked || !adminInput.trim()" @click="addAdminIds">
+                  Add
+                </button>
+              </div>
+              <div v-if="adminNotice" class="form-text">{{ adminNotice }}</div>
+              <div v-if="adminsOverLimit" class="alert alert-warning py-2 small mt-2 mb-0">
+                This template lists {{ spec.admins.length }} admins. Arma Reforger
+                applies at most {{ ADMIN_LIMIT }} — remove some, or the ones past the
+                limit may be ignored.
+              </div>
+              <div v-if="spec.admins.length" class="d-flex flex-wrap gap-2 mt-2">
+                <span
+                  v-for="id in spec.admins"
+                  :key="id"
+                  class="badge d-inline-flex align-items-center gap-2 text-bg-secondary"
+                >
+                  <span class="font-monospace">{{ id }}</span>
+                  <small class="opacity-75">{{ idKind(id) === 'steam' ? 'Steam' : 'identity' }}</small>
+                  <button
+                    type="button"
+                    class="btn-close btn-close-white"
+                    style="font-size: 0.55rem"
+                    aria-label="Remove admin"
+                    :disabled="locked"
+                    @click="dropAdmin(id)"
+                  ></button>
+                </span>
+              </div>
+              <div v-else class="small text-secondary mt-2">
+                No admins listed — only the admin password grants admin rights.
+              </div>
+            </div>
+
+            <!-- Whitelist -->
+            <div class="mb-4">
+              <label class="form-label mb-1">Whitelist</label>
+              <p class="small text-secondary mb-2">
+                Leave this empty and everyone may join. Add one player and the server
+                becomes <strong>whitelist-only</strong> — anyone not listed is refused.
+                Bohemia identity ids only; a Steam id will not match.
+              </p>
+              <div class="row g-2">
+                <div class="col-md-6">
+                  <input
+                    v-model="whitelistInput.id"
+                    class="form-control"
+                    placeholder="Identity id"
+                    :disabled="locked"
+                    @keyup.enter="addWhitelistPlayers"
+                  />
+                </div>
+                <div class="col-md-4">
+                  <input
+                    v-model="whitelistInput.name"
+                    class="form-control"
+                    placeholder="Name (optional)"
+                    :disabled="locked"
+                    @keyup.enter="addWhitelistPlayers"
+                  />
+                </div>
+                <div class="col-md-2 d-grid">
+                  <button
+                    class="btn btn-outline-primary"
+                    :disabled="locked || !whitelistInput.id.trim()"
+                    @click="addWhitelistPlayers"
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+              <div v-if="whitelistNotice" class="form-text">{{ whitelistNotice }}</div>
+              <div v-if="spec.player_whitelist.length" class="alert alert-warning py-2 small mt-2 mb-2">
+                Whitelist is <strong>active</strong>: only these
+                {{ spec.player_whitelist.length }}
+                {{ spec.player_whitelist.length === 1 ? 'player' : 'players' }} can join.
+                Make sure your own identity id is on it.
+              </div>
+              <ul v-if="spec.player_whitelist.length" class="list-group mt-2">
+                <li
+                  v-for="p in spec.player_whitelist"
+                  :key="p.identityId"
+                  class="list-group-item d-flex align-items-center justify-content-between py-2"
+                >
+                  <span>
+                    <span class="fw-semibold">{{ p.name || '(no name)' }}</span>
+                    <span class="font-monospace small text-secondary ms-2">{{ p.identityId }}</span>
+                  </span>
+                  <button
+                    class="btn btn-sm btn-outline-secondary"
+                    :disabled="locked"
+                    @click="dropWhitelistPlayer(p.identityId)"
+                  >
+                    Remove
+                  </button>
+                </li>
+              </ul>
+            </div>
+
+            <!-- Ban list -->
+            <div>
+              <label class="form-label mb-1">Ban list</label>
+              <p class="small text-secondary mb-2">
+                Players refused entry, by Bohemia identity id. Bans written here apply
+                when the server starts; to ban someone mid-session use the in-game
+                admin tools or RCON.
+              </p>
+              <div class="row g-2">
+                <div class="col-md-4">
+                  <input
+                    v-model="banInput.id"
+                    class="form-control"
+                    placeholder="Identity id"
+                    :disabled="locked"
+                    @keyup.enter="addBannedPlayers"
+                  />
+                </div>
+                <div class="col-md-3">
+                  <input
+                    v-model="banInput.name"
+                    class="form-control"
+                    placeholder="Name (optional)"
+                    :disabled="locked"
+                    @keyup.enter="addBannedPlayers"
+                  />
+                </div>
+                <div class="col-md-3">
+                  <input
+                    v-model="banInput.reason"
+                    class="form-control"
+                    placeholder="Reason (optional)"
+                    :disabled="locked"
+                    @keyup.enter="addBannedPlayers"
+                  />
+                </div>
+                <div class="col-md-2 d-grid">
+                  <button
+                    class="btn btn-outline-danger"
+                    :disabled="locked || !banInput.id.trim()"
+                    @click="addBannedPlayers"
+                  >
+                    Ban
+                  </button>
+                </div>
+              </div>
+              <div v-if="banNotice" class="form-text">{{ banNotice }}</div>
+              <ul v-if="spec.player_ban_list.length" class="list-group mt-2">
+                <li
+                  v-for="p in spec.player_ban_list"
+                  :key="p.identityId"
+                  class="list-group-item d-flex align-items-center justify-content-between py-2"
+                >
+                  <span>
+                    <span class="fw-semibold">{{ p.name || '(no name)' }}</span>
+                    <span class="font-monospace small text-secondary ms-2">{{ p.identityId }}</span>
+                    <span v-if="p.reason" class="small text-secondary ms-2">— {{ p.reason }}</span>
+                  </span>
+                  <button
+                    class="btn btn-sm btn-outline-secondary"
+                    :disabled="locked"
+                    @click="dropBannedPlayer(p.identityId)"
+                  >
+                    Unban
+                  </button>
+                </li>
+              </ul>
+              <div v-else class="small text-secondary mt-2">Nobody is banned.</div>
             </div>
           </div>
 

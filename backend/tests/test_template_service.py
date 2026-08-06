@@ -322,3 +322,107 @@ def test_extra_args_rejects_shell_metacharacters():
                     "-x `id`", "-x > /etc/passwd", "-x\nid"]:
         with _pytest.raises(ValueError):
             LaunchParams(extra_args=payload)
+
+
+# --------------------------------------------------------------------------- #
+# Player access lists: admins, whitelist, ban list (#154)
+# --------------------------------------------------------------------------- #
+
+def test_access_lists_absent_from_config_when_unused():
+    # The whole safety property of #154: a template that names no whitelisted or
+    # banned player must render exactly the config it rendered before the
+    # feature existed, so an unused list can never affect a running server.
+    cfg = _spec().to_config()
+    assert "playerWhitelist" not in cfg["game"]
+    assert "playerBanList" not in cfg["game"]
+    assert cfg["game"]["admins"] == []
+
+
+def test_access_lists_rendered_when_populated():
+    spec = _spec(
+        admins=["76561198000000000"],
+        player_whitelist=[{"identityId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "name": "Ann"}],
+        player_ban_list=[
+            {"identityId": "11111111-2222-3333-4444-555555555555", "name": "Bob",
+             "reason": "Griefing"},
+        ],
+    )
+    game = spec.to_config()["game"]
+    assert game["admins"] == ["76561198000000000"]
+    assert game["playerWhitelist"] == [
+        {"identityId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "name": "Ann"},
+    ]
+    # Every documented key is written even when blank, so the server always sees
+    # the same shape.
+    assert game["playerBanList"] == [
+        {"identityId": "11111111-2222-3333-4444-555555555555", "name": "Bob",
+         "reason": "Griefing"},
+    ]
+
+
+def test_admins_trimmed_and_deduplicated():
+    spec = _spec(admins=[" 76561198000000000 ", "76561198000000000", "", "  ",
+                         "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+                         "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"])
+    # Case-insensitive dedupe (identity ids are hex), first spelling kept.
+    assert spec.admins == ["76561198000000000", "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"]
+
+
+def test_admins_unknown_shape_and_over_limit_still_load():
+    # Deliberately lenient: an import or hand-edit must open for editing. The
+    # wizard is where a human gets warned about both.
+    spec = _spec(admins=["not-an-id"] + [str(70000000000000000 + i) for i in range(25)])
+    assert spec.admins[0] == "not-an-id"
+    assert len(spec.admins) == 26
+
+
+def test_player_entries_trimmed_and_deduplicated_by_identity():
+    spec = _spec(player_ban_list=[
+        {"identityId": " 11111111-2222-3333-4444-555555555555 ", "name": " Bob ",
+         "reason": " Griefing "},
+        {"identityId": "11111111-2222-3333-4444-555555555555", "name": "Bob again"},
+    ])
+    assert len(spec.player_ban_list) == 1
+    assert spec.player_ban_list[0].identityId == "11111111-2222-3333-4444-555555555555"
+    assert spec.player_ban_list[0].name == "Bob"
+    assert spec.player_ban_list[0].reason == "Griefing"
+
+
+def test_player_entry_requires_an_identity_id():
+    with pytest.raises(ValidationError):
+        _spec(player_whitelist=[{"identityId": "", "name": "Nobody"}])
+
+
+def test_access_lists_round_trip_through_config():
+    spec = _spec(
+        admins=["76561198000000000"],
+        player_whitelist=[{"identityId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "name": "Ann"}],
+        player_ban_list=[{"identityId": "11111111-2222-3333-4444-555555555555",
+                          "name": "Bob", "reason": "Griefing"}],
+    )
+    back = spec_from_config(render_config_json(spec))
+    assert back["admins"] == ["76561198000000000"]
+    assert back["player_whitelist"] == [
+        {"identityId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "name": "Ann"},
+    ]
+    assert back["player_ban_list"] == [
+        {"identityId": "11111111-2222-3333-4444-555555555555", "name": "Bob",
+         "reason": "Griefing"},
+    ]
+    # And the round trip is stable through the model a second time.
+    assert TemplateSpec(name="x", **{k: v for k, v in back.items() if k != "name"}).to_config()
+
+
+def test_hand_written_access_lists_are_read_leniently():
+    cfg = json.loads(render_config_json(_spec()))
+    cfg["game"]["playerBanList"] = [
+        {"identityId": "11111111-2222-3333-4444-555555555555"},   # no name/reason
+        {"name": "no identity"},                                   # skipped
+        "not an object",                                           # skipped
+    ]
+    cfg["game"]["playerWhitelist"] = "not a list"                  # skipped whole
+    back = spec_from_config(json.dumps(cfg))
+    assert back["player_ban_list"] == [
+        {"identityId": "11111111-2222-3333-4444-555555555555", "name": "", "reason": ""},
+    ]
+    assert back["player_whitelist"] == []

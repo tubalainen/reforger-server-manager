@@ -75,6 +75,45 @@ class ModEntry(BaseModel):
     added_order: int | None = None
 
 
+class WhitelistEntry(BaseModel):
+    """A player allowed in when game.playerWhitelist is non-empty (#154).
+
+    identityId is the player's *Bohemia account* identity id — not a Steam id.
+    `name` is a label for the admin reading the list; the server matches on the
+    id alone.
+    """
+    identityId: str = Field(min_length=1)
+    name: str = ""
+
+    @field_validator("identityId", "name")
+    @classmethod
+    def _trim(cls, value: str) -> str:
+        return (value or "").strip()
+
+
+class BanEntry(WhitelistEntry):
+    """A player denied entry via game.playerBanList (#154)."""
+    reason: str = ""
+
+    @field_validator("reason")
+    @classmethod
+    def _trim_reason(cls, value: str) -> str:
+        return (value or "").strip()
+
+
+def _dedupe_players(entries: list) -> list:
+    """Keep the first entry per identityId, preserving order."""
+    seen: set[str] = set()
+    out = []
+    for entry in entries:
+        key = entry.identityId.lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(entry)
+    return out
+
+
 class LaunchParams(BaseModel):
     """Engine command-line launch parameters (Longbow's Advanced panel).
 
@@ -206,6 +245,11 @@ class TemplateSpec(BaseModel):
     cross_platform: bool = True
     supported_platforms: list[str] = Field(default_factory=lambda: list(DEFAULT_SUPPORTED_PLATFORMS))
     admins: list[str] = []
+    # Player access lists (#154). Both are written to config.json ONLY when
+    # non-empty, so a template that uses neither renders exactly the config it
+    # rendered before these existed.
+    player_whitelist: list[WhitelistEntry] = []
+    player_ban_list: list[BanEntry] = []
     mods_required_by_default: bool = False
 
     # gameProperties
@@ -246,6 +290,33 @@ class TemplateSpec(BaseModel):
     # merge patch and re-applied over every render so hand-edits survive a wizard
     # save instead of being dropped by to_config's dict literal (#29).
     extras: dict = {}
+
+    @field_validator("admins")
+    @classmethod
+    def _clean_admins(cls, value: list[str]) -> list[str]:
+        """Trim, drop blanks and de-duplicate the admin id list (#154).
+
+        Deliberately does NOT reject an id whose shape we don't recognise, nor
+        cap the list at the 20 the game accepts: a config.json import or a
+        hand-edit must still load for editing, and Bohemia can change what an id
+        looks like faster than this model does. The wizard validates shapes as
+        you type and warns past 20 — that is where a human can react to it.
+        """
+        seen: set[str] = set()
+        out: list[str] = []
+        for entry in value:
+            admin = str(entry or "").strip()
+            key = admin.lower()
+            if not admin or key in seen:
+                continue
+            seen.add(key)
+            out.append(admin)
+        return out
+
+    @field_validator("player_whitelist", "player_ban_list")
+    @classmethod
+    def _clean_players(cls, value: list) -> list:
+        return _dedupe_players(value)
 
     def to_config(self) -> dict:
         """Render the full server config.json.
@@ -300,6 +371,21 @@ class TemplateSpec(BaseModel):
                 "joinQueue": {"maxSize": self.join_queue_max_size},
             },
         }
+        # Player access lists (#154). Written only when they hold something, so
+        # a template that names no whitelisted or banned player renders exactly
+        # the config it rendered before this feature existed — nobody who
+        # doesn't use the lists can be affected by them. Both entry shapes are
+        # written in full (empty strings included) rather than pruned, so the
+        # server sees the documented shape whether or not a name was filled in.
+        if self.player_whitelist:
+            config["game"]["playerWhitelist"] = [
+                {"identityId": p.identityId, "name": p.name} for p in self.player_whitelist
+            ]
+        if self.player_ban_list:
+            config["game"]["playerBanList"] = [
+                {"identityId": p.identityId, "name": p.name, "reason": p.reason}
+                for p in self.player_ban_list
+            ]
         # disableNavmeshStreaming is a string ARRAY (not a bool): an empty
         # array disables streaming for all navmeshes; omit it when off (#28).
         if self.disable_navmesh_streaming:
@@ -349,6 +435,29 @@ def persistence_summary(config_json: str) -> dict:
     return {"persistence": True, "hive_id": p.get("hiveId", 0)}
 
 
+def _players_from_config(raw, reason: bool = False) -> list[dict]:
+    """Read a playerWhitelist / playerBanList back out of a config.json (#154).
+
+    Lenient by design — this feeds the wizard, so a hand-written list must still
+    open for editing: anything that isn't a list of objects with an identityId
+    is skipped rather than raised on.
+    """
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        identity = str(entry.get("identityId") or "").strip()
+        if not identity:
+            continue
+        player = {"identityId": identity, "name": str(entry.get("name") or "").strip()}
+        if reason:
+            player["reason"] = str(entry.get("reason") or "").strip()
+        out.append(player)
+    return out
+
+
 def spec_from_config(config_json: str, clamp: bool = True) -> dict:
     """Reconstruct the wizard's editable fields from a saved config.json.
 
@@ -382,6 +491,8 @@ def spec_from_config(config_json: str, clamp: bool = True) -> dict:
         "cross_platform": game.get("crossPlatform", True),
         "supported_platforms": game.get("supportedPlatforms", list(DEFAULT_SUPPORTED_PLATFORMS)),
         "admins": game.get("admins", []),
+        "player_whitelist": _players_from_config(game.get("playerWhitelist")),
+        "player_ban_list": _players_from_config(game.get("playerBanList"), reason=True),
         "mods_required_by_default": game.get("modsRequiredByDefault", False),
         "battleye": props.get("battlEye", True),
         "server_max_view_distance": props.get("serverMaxViewDistance", 1600),
