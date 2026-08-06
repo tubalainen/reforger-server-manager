@@ -145,7 +145,15 @@ const faq = [
   {
     q: 'How do I become admin in-game?',
     a: `Set an Admin password on the template's Settings step, then in the in-game chat
-       type #login followed by that password.`,
+       type #login followed by that password. To skip the password entirely, add your
+       Steam64 or Bohemia identity id to the Server admins list in the same step —
+       listed admins are recognised the moment they join.`,
+  },
+  {
+    q: 'Where do I find a player’s Bohemia identity id?',
+    a: `In the Arma Reforger launcher, in the player's Bohemia account profile, or in the
+       server log when they connect. It is not the same as a Steam id: the whitelist and
+       ban list match on the identity id only, while the admins list takes either.`,
   },
   {
     q: 'How do I update the server files when the game updates?',
@@ -280,6 +288,17 @@ const faq = [
             distances up front; VON, persistence (save games), RCON and engine launch
             parameters under "advanced". Max players is seeded from the player count the
             chosen scenario declares on the Workshop — override it freely, it is yours.
+          </li>
+          <li class="mb-2">
+            <strong>Player access:</strong> on the same Settings step you can name the
+            server's <strong>admins</strong>, a <strong>whitelist</strong> and a
+            <strong>ban list</strong>. Admins may <code>#login</code> without the admin
+            password and skip the join queue — a Steam64 id (17 digits) or a Bohemia
+            identity id works, and the game applies at most 20. The whitelist and ban
+            list match on <em>Bohemia identity ids only</em>: a Steam id will not work
+            there. Leave the whitelist empty and everybody may join; put one player on it
+            and the server turns whitelist-only, so make sure you are on it yourself.
+            The lists belong to the template, so every instance built from it shares them.
           </li>
           <li class="mb-2">
             <strong>Import/export:</strong> upload an existing <code>config.json</code> to

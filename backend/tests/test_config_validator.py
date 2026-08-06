@@ -103,3 +103,23 @@ def test_optional_blocks_are_known_keys():
     result = validate_config(cfg)
     assert result["errors"] == []
     assert result["warnings"] == []
+
+
+def test_hand_written_access_lists_are_known_keys():
+    # to_config writes these only when non-empty (#154), so without seeding the
+    # maximal spec they would be reported as custom keys the GUI doesn't manage
+    # â€” and the wizard would badge every whitelist as a hand-edit.
+    cfg = _config()
+    cfg["game"]["playerWhitelist"] = [{"identityId": "id-1", "name": "Ann"}]
+    cfg["game"]["playerBanList"] = [{"identityId": "id-2", "name": "Bob", "reason": "x"}]
+    result = validate_config(cfg)
+    assert result["errors"] == []
+    assert result["warnings"] == []
+
+
+def test_ban_entry_without_an_identity_is_an_error():
+    cfg = _config()
+    cfg["game"]["playerBanList"] = [{"name": "Bob"}]
+    # Read leniently (the entry is dropped), so this is not an error â€” it simply
+    # doesn't survive. The GUI shows what was kept.
+    assert validate_config(cfg)["errors"] == []

@@ -88,6 +88,12 @@ Docker image: `ghcr.io/tubalainen/reforger-server-manager:latest`
       template is gone. Tick mods at any level and **add them to a template in one click**;
       pin mods as **persist** so a prune never removes them, and **Clear &amp; rescan** to
       drop the ones no template uses any more
+- [x] **Admins, whitelist and ban list** — name the server's admins (Steam64 or Bohemia
+      identity id; they `#login` without the admin password and skip the join queue), and
+      keep a whitelist and a ban list of identity ids. The wizard checks each id as you
+      type, takes a whole pasted batch at once, warns past the 20 admins the game applies,
+      and says so plainly when a whitelist is about to make the server invite-only. Both
+      lists are written to `config.json` **only when you use them**
 - [x] **Per-template change log** — every template keeps a searchable, tamper-proof history
       of what changed and when: mods added/removed and version locks, scenario changes, and
       each setting edit (old → new), timestamped in your server's timezone. Read-only — it

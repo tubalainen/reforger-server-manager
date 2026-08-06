@@ -21,8 +21,15 @@ from sqlmodel import Session, select
 from models import Template, TemplateChange
 
 # config paths handled on their own, so they're skipped by the generic settings
-# diff (mods as add/remove lines, the scenario as its own line).
-_SKIP_PATHS = {("game", "mods"), ("game", "scenarioId")}
+# diff (mods as add/remove lines, the scenario as its own line, the player
+# access lists as one line per player added or removed).
+_SKIP_PATHS = {
+    ("game", "mods"),
+    ("game", "scenarioId"),
+    ("game", "admins"),
+    ("game", "playerWhitelist"),
+    ("game", "playerBanList"),
+}
 
 
 def snapshot(template: Template) -> dict:
@@ -101,6 +108,55 @@ def _mod_changes(old_mods, new_mods) -> list[tuple[str, str]]:
     return items
 
 
+def _admin_changes(old_admins, new_admins) -> list[tuple[str, str]]:
+    """Who gained or lost server admin rights (#154)."""
+    old = [str(a) for a in old_admins if isinstance(a, (str, int))]
+    new = [str(a) for a in new_admins if isinstance(a, (str, int))]
+    items: list[tuple[str, str]] = []
+    for admin in [a for a in new if a not in old]:
+        items.append(("setting", f"Added server admin {admin}"))
+    for admin in [a for a in old if a not in new]:
+        items.append(("setting", f"Removed server admin {admin}"))
+    return items
+
+
+def _player_label(player: dict) -> str:
+    identity = str(player.get("identityId") or "")
+    name = str(player.get("name") or "")
+    return f"'{name}' ({identity})" if name else identity or "?"
+
+
+def _player_list_changes(old_list, new_list, added: str, removed: str) -> list[tuple[str, str]]:
+    """One line per player added to or removed from an access list (#154).
+
+    Written as "<verb> <who>" rather than a raw array diff so the log reads as
+    what an admin actually did — and so a search for a player's name or id finds
+    every time they were banned, unbanned, whitelisted or removed.
+    """
+    def index(entries):
+        return {
+            str(p.get("identityId") or ""): p
+            for p in entries if isinstance(p, dict) and p.get("identityId")
+        }
+
+    old, new = index(old_list or []), index(new_list or [])
+    items: list[tuple[str, str]] = []
+    for identity in [i for i in new if i not in old]:
+        items.append(("setting", f"{added} {_player_label(new[identity])}"))
+    for identity in [i for i in old if i not in new]:
+        items.append(("setting", f"{removed} {_player_label(old[identity])}"))
+    for identity in [i for i in new if i in old]:
+        old_reason = str(old[identity].get("reason") or "")
+        new_reason = str(new[identity].get("reason") or "")
+        if old_reason != new_reason:
+            items.append((
+                "setting",
+                f"Ban reason for {_player_label(new[identity])} changed to "
+                f"{_fmt(new_reason or '(none)')}",
+            ))
+    return items
+
+
 def _setting_changes(old_cfg: dict, new_cfg: dict) -> list[tuple[str, str]]:
     old = _flatten(old_cfg)
     new = _flatten(new_cfg)
@@ -136,6 +192,15 @@ def diff(old: dict, new: dict) -> list[tuple[str, str]]:
             items.append(("scenario", "Scenario cleared"))
 
     items += _mod_changes(_game(old).get("mods", []), _game(new).get("mods", []))
+    items += _admin_changes(_game(old).get("admins", []), _game(new).get("admins", []))
+    items += _player_list_changes(
+        _game(old).get("playerWhitelist"), _game(new).get("playerWhitelist"),
+        "Whitelisted", "Removed from the whitelist:",
+    )
+    items += _player_list_changes(
+        _game(old).get("playerBanList"), _game(new).get("playerBanList"),
+        "Banned", "Unbanned",
+    )
     items += _setting_changes(old.get("config", {}), new.get("config", {}))
     return items
 
@@ -181,6 +246,12 @@ def record_creation(session: Session, template: Template) -> None:
     for mod in _game(snap).get("mods", []):
         if isinstance(mod, dict):
             items.append(("mod", f"Added mod {_mod_label(mod)}"))
+    # Access lists a template starts with — from an import, or from copying a
+    # template that already had them (#129/#154). Default settings stay omitted;
+    # who may administer or join a server never is.
+    items += _admin_changes([], _game(snap).get("admins", []))
+    items += _player_list_changes([], _game(snap).get("playerWhitelist"), "Whitelisted", "")
+    items += _player_list_changes([], _game(snap).get("playerBanList"), "Banned", "")
     _append(session, template.id, items, template.created_at)
 
 

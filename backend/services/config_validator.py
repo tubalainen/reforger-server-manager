@@ -31,6 +31,8 @@ _FIELD_PATHS = {
     "password": "game.password",
     "admin_password": "game.passwordAdmin",
     "admins": "game.admins",
+    "player_whitelist": "game.playerWhitelist",
+    "player_ban_list": "game.playerBanList",
     "max_players": "game.maxPlayers",
     "visible": "game.visible",
     "cross_platform": "game.crossPlatform",
@@ -91,6 +93,10 @@ def known_paths() -> set[str]:
         persistence_enabled=True,
         rcon_password="_",
         disable_navmesh_streaming=True,
+        # Written only when non-empty (#154) — one entry each so the paths count
+        # as known and a hand-written list isn't reported as a custom key.
+        player_whitelist=[{"identityId": "_"}],
+        player_ban_list=[{"identityId": "_"}],
     ).to_config()
     return _paths(maximal)
 

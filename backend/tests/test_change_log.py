@@ -143,3 +143,51 @@ def test_changelog_has_no_mutation_endpoint(logged_in):
 
 def test_changelog_requires_auth(client):
     assert client.get("/api/templates/1/changelog").status_code == 401
+
+
+# --------------------------------------------------------------------------- #
+# Player access lists get their own lines, not a raw array diff (#154)
+# --------------------------------------------------------------------------- #
+
+def test_admin_changes_are_named():
+    old = _snap(admins=["76561198000000000"])
+    new = _snap(admins=["76561198000000000", "76561198111111111"])
+    lines = [s for _, s in change_log.diff(old, new)]
+    assert "Added server admin 76561198111111111" in lines
+
+    lines = [s for _, s in change_log.diff(new, old)]
+    assert "Removed server admin 76561198111111111" in lines
+
+
+def test_ban_and_whitelist_changes_are_named():
+    empty = _snap(playerBanList=[], playerWhitelist=[])
+    listed = _snap(
+        playerBanList=[{"identityId": "id-1", "name": "Bob", "reason": "Griefing"}],
+        playerWhitelist=[{"identityId": "id-2", "name": "Ann"}],
+    )
+    lines = [s for _, s in change_log.diff(empty, listed)]
+    assert "Banned 'Bob' (id-1)" in lines
+    assert "Whitelisted 'Ann' (id-2)" in lines
+
+    lines = [s for _, s in change_log.diff(listed, empty)]
+    assert "Unbanned 'Bob' (id-1)" in lines
+    assert "Removed from the whitelist: 'Ann' (id-2)" in lines
+
+
+def test_ban_reason_change_is_recorded():
+    old = _snap(playerBanList=[{"identityId": "id-1", "name": "Bob", "reason": "Griefing"}])
+    new = _snap(playerBanList=[{"identityId": "id-1", "name": "Bob", "reason": "Team killing"}])
+    lines = [s for _, s in change_log.diff(old, new)]
+    assert "Ban reason for 'Bob' (id-1) changed to Team killing" in lines
+
+
+def test_access_lists_do_not_leak_into_the_generic_setting_diff():
+    # Without the skip these would read as game.admins: [] -> ["7656..."], which
+    # is both ugly and duplicates the dedicated line.
+    old = _snap(admins=[], playerBanList=[])
+    new = _snap(admins=["76561198000000000"],
+                playerBanList=[{"identityId": "id-1", "name": "Bob"}])
+    lines = [s for _, s in change_log.diff(old, new)]
+    assert not [line for line in lines if line.startswith("game.admins")]
+    assert not [line for line in lines if line.startswith("game.playerBanList")]
+    assert len(lines) == 2
