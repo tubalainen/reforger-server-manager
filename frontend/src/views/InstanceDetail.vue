@@ -210,8 +210,8 @@ const DATA_KINDS = {
     danger: false,
   },
   saves: {
-    label: 'Saved game data',
-    hint: 'The persistent world your players built. Clearing it starts the scenario from scratch — there is no undo.',
+    label: 'Persistence (save games)',
+    hint: 'The save points the persistence system wrote — the world your players built. Clearing it starts the scenario from scratch — there is no undo.',
     danger: true,
   },
   logs: {
@@ -255,6 +255,27 @@ const dataItems = computed(() =>
 )
 const pickedItems = computed(() => dataItems.value.filter((i) => dataPicked.value.includes(i.target)))
 const clearingSaves = computed(() => dataPicked.value.includes('saves'))
+
+// The save row is the output of the template's persistence settings, so say what
+// those settings are — and, when there is no save, why there might not be (#160).
+// "Empty" on its own reads as a broken readout rather than as an answer.
+const persistenceNote = computed(() => {
+  const p = dataInfo.value?.persistence
+  if (!p) return ''
+  const saves = dataItems.value.find((i) => i.target === 'saves')
+  const empty = !saves?.files
+  const where = p.template_name ? `template "${p.template_name}"` : 'this template'
+  if (p.persistence) {
+    const hive = `${where} configures persistence (hive id ${p.hive_id}).`
+    return empty
+      ? `${hive} Nothing has been saved yet — a save point appears once the scenario writes one.`
+      : hive
+  }
+  const engine = `${where} does not configure persistence, so the server uses the engine's own defaults — which still save.`
+  return empty
+    ? `${engine} Nothing has been saved yet: not every scenario writes a save (Game Master, for one, does not).`
+    : engine
+})
 
 async function clearData() {
   dataBusy.value = true
@@ -742,6 +763,10 @@ onUnmounted(() => {
                 <small v-if="item.paths.length" class="d-block text-secondary">
                   <code>{{ item.paths.join(', ') }}</code> · {{ item.files }} file(s)
                 </small>
+                <small
+                  v-if="item.target === 'saves' && persistenceNote"
+                  class="d-block text-secondary fst-italic"
+                >{{ persistenceNote }}</small>
               </label>
             </div>
           </div>
@@ -806,7 +831,7 @@ onUnmounted(() => {
               </li>
             </ul>
             <div v-if="clearingSaves" class="alert alert-danger py-2 small mb-2">
-              The saved game data goes with it: this server's persistent world is gone for
+              Every save point goes with it: this server's persistent world is gone for
               good, and the scenario starts over from scratch. Nothing here can bring it back.
             </div>
             <p class="small text-secondary mb-0">

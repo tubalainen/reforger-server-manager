@@ -390,9 +390,104 @@ def test_the_save_dir_the_server_actually_uses_is_detected(tmp_path, monkeypatch
     monkeypatch.setattr(instance_service.docker_service, "ping", lambda: False)
 
     saves = {i["target"]: i for i in instance_service.instance_data(1)["items"]}["saves"]
-    assert saves["paths"] == [".save"]
+    assert saves["paths"] == ["profile/.save"]
     assert saves["size_bytes"] == 512
     assert saves["mount"] == instance_service.PROFILE_DIR
+
+
+def test_a_save_nested_below_the_profile_top_level_is_found(tmp_path, monkeypatch): # #160
+    """The engine does not commit to one depth for the save tree.
+
+    Looking only at the profile's top level reported "empty" for a server with a
+    real save, which is the row people check before wiping something.
+    """
+    from sqlmodel import Session
+
+    import config
+    import models
+
+    monkeypatch.setattr(config.settings, "data_dir", str(tmp_path))
+    with Session(models.get_engine()) as session:
+        session.add(_inst(id=1))
+        session.commit()
+    profile = tmp_path / "instances" / "1" / "profile"
+    save = profile / "profile" / ".save" / "app_user" / "game"
+    save.mkdir(parents=True)
+    (save / "savepoint.json").write_bytes(b"s" * 256)
+    monkeypatch.setattr(instance_service.docker_service, "ping", lambda: False)
+
+    saves = {i["target"]: i for i in instance_service.instance_data(1)["items"]}["saves"]
+    assert saves["paths"] == ["profile/profile/.save"]
+    assert saves["size_bytes"] == 256
+
+
+def test_the_save_scan_does_not_walk_into_the_other_targets(tmp_path, monkeypatch): # #160
+    """Logs and the mod bake are counted under their own targets.
+
+    A .db dropped in a log dir must not also land in the save total — and the
+    scan must never descend the addons tree, which can be tens of gigabytes.
+    """
+    from sqlmodel import Session
+
+    import config
+    import models
+
+    monkeypatch.setattr(config.settings, "data_dir", str(tmp_path))
+    with Session(models.get_engine()) as session:
+        session.add(_inst(id=1))
+        session.commit()
+    profile = tmp_path / "instances" / "1" / "profile"
+    (profile / "logs" / "session").mkdir(parents=True)
+    (profile / "logs" / "session" / "leftover.db").write_bytes(b"x" * 999)
+    (profile / "addons" / "deep").mkdir(parents=True)
+    (profile / "addons" / "deep" / "cache.db").write_bytes(b"x" * 999)
+    (profile / ".save").mkdir()
+    (profile / ".save" / "world.bin").write_bytes(b"s" * 64)
+    monkeypatch.setattr(instance_service.docker_service, "ping", lambda: False)
+
+    saves = {i["target"]: i for i in instance_service.instance_data(1)["items"]}["saves"]
+    assert saves["paths"] == ["profile/.save"]
+    assert saves["size_bytes"] == 64
+
+
+def test_instance_data_reports_the_templates_persistence_settings(tmp_path, monkeypatch): # #160
+    """The save row is the persistence settings' output, so name them."""
+    from sqlmodel import Session
+
+    import config
+    import models
+
+    monkeypatch.setattr(config.settings, "data_dir", str(tmp_path))
+    with Session(models.get_engine()) as session:
+        session.add(models.Template(
+            id=1, name="Conflict Everon",
+            config_json=_template_config(persistence_enabled=True, hive_id=7),
+        ))
+        session.add(_inst(id=1))
+        session.commit()
+    monkeypatch.setattr(instance_service.docker_service, "ping", lambda: False)
+
+    persistence = instance_service.instance_data(1)["persistence"]
+    assert persistence["persistence"] is True
+    assert persistence["hive_id"] == 7
+    assert persistence["template_name"] == "Conflict Everon"
+
+
+def test_instance_data_survives_a_template_that_no_longer_exists(tmp_path, monkeypatch): # #160
+    """The files on disk are real whether or not the template still is."""
+    from sqlmodel import Session
+
+    import config
+    import models
+
+    monkeypatch.setattr(config.settings, "data_dir", str(tmp_path))
+    with Session(models.get_engine()) as session:
+        session.add(_inst(id=1))
+        session.commit()
+    monkeypatch.setattr(instance_service.docker_service, "ping", lambda: False)
+
+    persistence = instance_service.instance_data(1)["persistence"]
+    assert persistence == {"persistence": False, "hive_id": None, "template_name": None}
 
 
 def test_instance_data_reports_what_is_on_disk(tmp_path, monkeypatch):
@@ -405,7 +500,7 @@ def test_instance_data_reports_what_is_on_disk(tmp_path, monkeypatch):
     assert by_target["mods"]["size_bytes"] == 1000
     assert by_target["mods"]["paths"] == ["workshop"]
     assert by_target["saves"]["size_bytes"] == 100
-    assert by_target["saves"]["paths"] == ["save"]
+    assert by_target["saves"]["paths"] == ["profile/save"]
     assert by_target["logs"]["files"] == 1
 
 

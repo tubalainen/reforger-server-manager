@@ -25,7 +25,7 @@ from sqlmodel import Session, select
 
 import config
 from models import Instance, Template, get_engine
-from services import docker_service, ports
+from services import docker_service, ports, template_service
 
 # Pure log parsing lives in server_log (#88). Re-exported so callers and tests keep
 # using instance_service.parse_* unchanged.
@@ -1180,6 +1180,16 @@ def resolve_log_file(instance_id: int, relpath: str) -> Path:
 _SAVE_DIR_NAMES = {"save", "saves", ".save"}
 _SAVE_SUFFIXES = {".db"}
 
+# Directories the save scan must not walk into: the first two are other targets
+# (their bytes are counted there, and descending would double-count them), and
+# `configs` is the rendered config.json, which is never wiped here.
+_SAVE_SCAN_SKIP = {"logs", "crash", "crashes", "addons", "configs"}
+
+# The profile is a handful of directories, but `addons` under it can hold a
+# 20 GB mod bake. The scan prunes that by name; this is the backstop for a
+# layout nobody has seen yet, so a pathological tree cannot stall the request.
+_SAVE_SCAN_MAX_DEPTH = 6
+
 DATA_MODS = "mods"
 DATA_SAVES = "saves"
 DATA_LOGS = "logs"
@@ -1208,17 +1218,46 @@ def _dir_usage(paths) -> tuple[int, int]:
 
 
 def _save_paths(profile: Path) -> list[Path]:
-    """Persistence artifacts inside an instance's profile dir."""
+    """Persistence artifacts anywhere under an instance's profile dir (#160).
+
+    This used to look only at the profile's top level, which is one guess at a
+    layout the engine does not commit to: the save tree is reported as
+    `<profile>/.save/...` in some builds and nested a level deeper in others,
+    and a scenario's own persistence storage can put a .db somewhere else again.
+    A single missed level showed up in the GUI as "empty" on a server with a
+    perfectly good save, which is worse than useless — it is the row people
+    check before wiping something.
+
+    So walk instead, and stop at the first match: reporting `.save` is what the
+    user wants to see, not each of its hundreds of save points. Directories
+    belonging to the other targets are pruned so nothing is counted twice.
+    """
     if not profile.is_dir():
         return []
-    found = []
-    try:
-        for entry in profile.iterdir():
+    found: list[Path] = []
+
+    def walk(directory: Path, depth: int) -> None:
+        try:
+            entries = sorted(directory.iterdir())
+        except OSError:
+            return
+        for entry in entries:
             name = entry.name.lower()
-            if name in _SAVE_DIR_NAMES or Path(name).suffix in _SAVE_SUFFIXES:
+            try:
+                is_dir = entry.is_dir()
+            except OSError:
+                continue
+            if is_dir:
+                if name in _SAVE_DIR_NAMES:
+                    found.append(entry)  # matched: its children are the save
+                    continue
+                if name in _SAVE_SCAN_SKIP or depth >= _SAVE_SCAN_MAX_DEPTH:
+                    continue
+                walk(entry, depth + 1)
+            elif Path(name).suffix in _SAVE_SUFFIXES:
                 found.append(entry)
-    except OSError:
-        return []
+
+    walk(profile, 0)
     return found
 
 
@@ -1261,8 +1300,19 @@ _TARGET_MOUNT = {
 def instance_data(instance_id: int) -> dict:
     """What this instance has on disk, per target, so the GUI can offer to wipe it."""
     with Session(get_engine()) as session:
-        if not session.get(Instance, instance_id):
+        inst = session.get(Instance, instance_id)
+        if not inst:
             raise InstanceError("Instance not found")
+        # The save row is the persistence settings' output, so the GUI can say
+        # which template wrote it and whether that template configures
+        # persistence at all (#160). A template deleted out from under the
+        # instance is not an error here — the files on disk are still real.
+        template = session.get(Template, inst.template_id)
+        persistence = (
+            template_service.persistence_summary(template.config_json)
+            if template else {"persistence": False, "hive_id": None}
+        )
+        persistence["template_name"] = template.name if template else None
     running = container_status(instance_id) == "running" if docker_service.ping() else False
     idir = Path(config.settings.data_dir) / "instances" / str(instance_id)
     items = []
@@ -1273,14 +1323,17 @@ def instance_data(instance_id: int) -> dict:
             "target": target,
             "size_bytes": size,
             "files": files,
-            # The actual names on disk, so the user can see what is about to go.
-            "paths": sorted(p.name for p in paths),
+            # Where they sit relative to the instance dir, not just the leaf
+            # name: a save can be nested, and "profile/.save" tells the user
+            # where to look on the host while ".save" alone does not.
+            "paths": sorted(p.relative_to(idir).as_posix() for p in paths),
             # Where the server writes it inside its container.
             "mount": _TARGET_MOUNT[target],
         })
     return {
         "running": running,
         "items": items,
+        "persistence": persistence,
         # Where all of it really lives, on the host — none of it is in the image,
         # so it survives container rebuilds and image updates (#79).
         "host_path": docker_service.host_path_for(str(idir)),

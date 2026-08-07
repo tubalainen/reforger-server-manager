@@ -109,8 +109,8 @@ const faq = [
     a: `The server downloads and "bakes" its addons once and then reuses that copy. Open the
        instance, stop it, and use the "Stored data" card to clear Downloaded & baked mods:
        the next start fetches and bakes the template's current mod list from scratch (give it
-       a few minutes). The same card clears saved game data — which resets the persistent
-       world, so only do that when you want a clean slate — and old logs. Changing a
+       a few minutes). The same card clears Persistence (save games) — which resets the
+       persistent world, so only do that when you want a clean slate — and old logs. Changing a
        template's launch parameters no longer needs any of this: the instance rebuilds its
        container by itself on the next start.`,
   },
@@ -141,6 +141,15 @@ const faq = [
        When you swap an instance to a template that writes to a different save — or has
        persistence off — the app warns you before applying. Keeping the same hive id
        keeps the same save.`,
+  },
+  {
+    q: 'Where does the save game actually live, and how do I back it up?',
+    a: `On the host, not in the container: the instance's "Stored data" card prints the exact
+       directory and lists what it found under Persistence (save games) — copy that folder to
+       back the world up while the server is stopped. If it says empty, nothing has been saved
+       yet: a save point appears only once the scenario writes one, and not every scenario does
+       (Game Master, for one, keeps no persistent world). The card names the template whose
+       persistence settings produced it, and its hive id when one is configured.`,
   },
   {
     q: 'What do the persistence settings do?',
