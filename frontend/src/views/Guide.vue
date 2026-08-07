@@ -300,9 +300,12 @@ const faq = [
             chosen scenario declares on the Workshop — override it freely, it is yours.
           </li>
           <li class="mb-2">
-            <strong>Player access:</strong> on the same Settings step you can name the
-            server's <strong>admins</strong>, a <strong>whitelist</strong> and a
-            <strong>ban list</strong>. Admins may <code>#login</code> without the admin
+            <strong>Player access:</strong> at the bottom of the same Settings step,
+            under <em>Show player access</em>, you can name the server's
+            <strong>admins</strong>, a <strong>whitelist</strong> and a
+            <strong>ban list</strong>. The section is collapsed by default and
+            summarises what is set beside its heading, so an active whitelist stays
+            visible without opening it. Admins may <code>#login</code> without the admin
             password and skip the join queue — a Steam64 id (17 digits) or a Bohemia
             identity id works, and the game applies at most 20. The whitelist and ban
             list match on <em>Bohemia identity ids only</em>: a Steam id will not work
