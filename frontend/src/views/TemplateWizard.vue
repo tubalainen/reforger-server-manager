@@ -1555,40 +1555,43 @@ onBeforeUnmount(() => {
                 at all, add <code>"missionHeader": &#123; "m_eSaveTypes": 0 &#125;</code> under
                 <code>game.gameProperties</code> with Edit JSON.
               </p>
-              <div class="row g-2 align-items-end">
-                <div class="col-6 col-md-3">
+              <!-- Three equal columns, top-aligned. Do NOT add align-items-end
+                   here: the help texts are different heights, so bottom-aligning
+                   the columns lifts the taller one's label and input off the row. -->
+              <div class="row g-2">
+                <div class="col-6 col-md-4">
                   <label class="form-label small">Auto-save interval (min)</label>
                   <input v-model.number="spec.auto_save_interval" type="number" min="0" max="60"
                     class="form-control" :disabled="!spec.persistence_enabled" />
                   <div class="form-text">0 turns automatic saves off.</div>
                 </div>
-                <div class="col-6 col-md-3">
+                <div class="col-6 col-md-4">
                   <label class="form-label small">Save points kept</label>
                   <input v-model.number="spec.save_retention" type="number" min="1" max="128"
                     class="form-control" :disabled="!spec.persistence_enabled" />
                   <div class="form-text">1–128 per mission.</div>
                 </div>
-                <div class="col-6 col-md-3">
+                <div class="col-6 col-md-4">
                   <label class="form-label small">Hive ID</label>
                   <input v-model.number="spec.hive_id" type="number" min="0" max="16383"
                     class="form-control" :disabled="!spec.persistence_enabled" />
                   <div class="form-text">Separates saves when servers share a database.</div>
                 </div>
-                <div class="col-12 col-md-3">
-                  <div class="form-check">
-                    <input id="persist-load" v-model="spec.load_session_save" class="form-check-input"
-                      type="checkbox" :disabled="!spec.persistence_enabled" />
-                    <label for="persist-load" class="form-check-label small">
-                      Load the latest save on startup
-                    </label>
-                  </div>
-                  <div class="form-check">
-                    <input id="persist-keep" v-model="spec.keep_session_save" class="form-check-input"
-                      type="checkbox" :disabled="!spec.persistence_enabled" />
-                    <label for="persist-keep" class="form-check-label small">
-                      Keep save points after the mission ends
-                    </label>
-                  </div>
+              </div>
+              <div class="d-flex gap-4 flex-wrap mt-2">
+                <div class="form-check">
+                  <input id="persist-load" v-model="spec.load_session_save" class="form-check-input"
+                    type="checkbox" :disabled="!spec.persistence_enabled" />
+                  <label for="persist-load" class="form-check-label small">
+                    Load the latest save on startup
+                  </label>
+                </div>
+                <div class="form-check">
+                  <input id="persist-keep" v-model="spec.keep_session_save" class="form-check-input"
+                    type="checkbox" :disabled="!spec.persistence_enabled" />
+                  <label for="persist-keep" class="form-check-label small">
+                    Keep save points after the mission ends
+                  </label>
                 </div>
               </div>
             </div>
