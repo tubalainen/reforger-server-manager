@@ -21,6 +21,21 @@ by soda3x — reimagined as a Dockerized web application.
 
 Docker image: `ghcr.io/tubalainen/reforger-server-manager:latest`
 
+## Video walkthrough
+
+<p align="center">
+  <a href="https://youtu.be/s6ml4SacnRo">
+    <img src="https://img.youtube.com/vi/s6ml4SacnRo/maxresdefault.jpg" alt="Watch the introduction and VPS setup walkthrough on YouTube" width="820">
+  </a><br>
+  <em><a href="https://youtu.be/s6ml4SacnRo">Introduction &amp; VPS setup walkthrough</a> —
+  by <a href="https://www.youtube.com/@tubalainen">Tubalainen</a></em>
+</p>
+
+A tour of what the manager does, followed by a full setup on a public VPS: installing
+it, putting it behind HTTPS, and getting a first Arma Reforger server running. Worth
+watching before [Installation](#installation) if you would rather see the whole thing
+done once than read it step by step — the two cover the same ground.
+
 ## Screenshots
 
 <p align="center">
@@ -258,6 +273,9 @@ Your `.env` is never touched. Upgrading restarts running servers; those with
 </details>
 
 ### 2. Linux on a public VPS (HTTPS)
+
+> 📺 This is the scenario walked through end to end in the
+> [video](https://youtu.be/s6ml4SacnRo).
 
 **First:** point a domain at the server — an **A record** for e.g.
 `reforger.example.com` → your VPS IP. Do this before installing, so the certificate
