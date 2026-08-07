@@ -109,6 +109,9 @@ const spec = reactive({
   join_queue_max_size: 0,
   persistence_enabled: false,
   auto_save_interval: 10,
+  save_retention: 10,
+  load_session_save: true,
+  keep_session_save: false,
   hive_id: 0,
   rcon_password: '',
   rcon_permission: 'admin',
@@ -1728,22 +1731,51 @@ onBeforeUnmount(() => {
 
             <div class="col-12">
               <div class="fw-semibold small text-secondary mb-1">Persistence (save games)</div>
+              <div class="form-check mb-2">
+                <input id="persist" v-model="spec.persistence_enabled" class="form-check-input" type="checkbox" />
+                <label for="persist" class="form-check-label">Configure persistence</label>
+              </div>
+              <p class="text-secondary small mb-2">
+                The server saves the mission on its own by default. Tick the box to write a
+                <code>persistence</code> block and set these values yourself; leave it clear to let
+                the engine decide. Unticking does not switch saving off — to stop a scenario saving
+                at all, add <code>"missionHeader": &#123; "m_eSaveTypes": 0 &#125;</code> under
+                <code>game.gameProperties</code> with Edit JSON.
+              </p>
               <div class="row g-2 align-items-end">
-                <div class="col-auto">
-                  <div class="form-check mb-2">
-                    <input id="persist" v-model="spec.persistence_enabled" class="form-check-input" type="checkbox" />
-                    <label for="persist" class="form-check-label">Enable persistence</label>
-                  </div>
-                </div>
                 <div class="col-6 col-md-3">
                   <label class="form-label small">Auto-save interval (min)</label>
                   <input v-model.number="spec.auto_save_interval" type="number" min="0" max="60"
                     class="form-control" :disabled="!spec.persistence_enabled" />
+                  <div class="form-text">0 turns automatic saves off.</div>
+                </div>
+                <div class="col-6 col-md-3">
+                  <label class="form-label small">Save points kept</label>
+                  <input v-model.number="spec.save_retention" type="number" min="1" max="128"
+                    class="form-control" :disabled="!spec.persistence_enabled" />
+                  <div class="form-text">1–128 per mission.</div>
                 </div>
                 <div class="col-6 col-md-3">
                   <label class="form-label small">Hive ID</label>
                   <input v-model.number="spec.hive_id" type="number" min="0" max="16383"
                     class="form-control" :disabled="!spec.persistence_enabled" />
+                  <div class="form-text">Separates saves when servers share a database.</div>
+                </div>
+                <div class="col-12 col-md-3">
+                  <div class="form-check">
+                    <input id="persist-load" v-model="spec.load_session_save" class="form-check-input"
+                      type="checkbox" :disabled="!spec.persistence_enabled" />
+                    <label for="persist-load" class="form-check-label small">
+                      Load the latest save on startup
+                    </label>
+                  </div>
+                  <div class="form-check">
+                    <input id="persist-keep" v-model="spec.keep_session_save" class="form-check-input"
+                      type="checkbox" :disabled="!spec.persistence_enabled" />
+                    <label for="persist-keep" class="form-check-label small">
+                      Keep save points after the mission ends
+                    </label>
+                  </div>
                 </div>
               </div>
             </div>

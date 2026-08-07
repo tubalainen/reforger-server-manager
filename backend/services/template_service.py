@@ -275,9 +275,15 @@ class TemplateSpec(BaseModel):
     slot_reservation_timeout: int = Field(default=60, ge=5, le=300)
     join_queue_max_size: int = Field(default=0, ge=0, le=50)
 
-    # persistence (save games) — written only when enabled
+    # persistence (save games) — the whole block is written only when enabled.
+    # Ranges and defaults are the engine's own (Server Config wiki, 1.6.0).
+    # Note: load_/keep_session_save are the *config* keys under persistence, not
+    # LaunchParams.load_session_save, which is the -loadSessionSave engine arg.
     persistence_enabled: bool = False
     auto_save_interval: int = Field(default=10, ge=0, le=60)
+    save_retention: int = Field(default=10, ge=1, le=128)
+    load_session_save: bool = True
+    keep_session_save: bool = False
     hive_id: int = Field(default=0, ge=0, le=16383)
 
     # rcon (optional; block written only when a password is set)
@@ -391,8 +397,17 @@ class TemplateSpec(BaseModel):
         if self.disable_navmesh_streaming:
             config["operating"]["disableNavmeshStreaming"] = []
         if self.persistence_enabled:
+            # Every documented persistence key is written (#156) — the block used
+            # to carry only autoSaveInterval/hiveId, so save retention and the two
+            # session-save switches silently stayed at the engine default however
+            # the template was configured. databases/storages stay as empty
+            # objects: they are free-form named overrides with no GUI, and a
+            # hand-written one survives through `extras`.
             config["game"]["gameProperties"]["persistence"] = {
                 "autoSaveInterval": self.auto_save_interval,
+                "saveRetention": self.save_retention,
+                "loadSessionSave": self.load_session_save,
+                "keepSessionSave": self.keep_session_save,
                 "hiveId": self.hive_id,
                 "databases": {},
                 "storages": {},
@@ -475,6 +490,10 @@ def spec_from_config(config_json: str, clamp: bool = True) -> dict:
     props = game.get("gameProperties", {})
     operating = cfg.get("operating", {})
     rcon = cfg.get("rcon", {})
+    # A config written before #156 has only some of the persistence keys; each
+    # missing one falls back to the engine default, which is what the server was
+    # running with anyway.
+    persistence = props.get("persistence") or {}
     return {
         "scenario_id": game.get("scenarioId", ""),
         # Neither is part of config.json; both are filled from the DB row (and,
@@ -518,8 +537,11 @@ def spec_from_config(config_json: str, clamp: bool = True) -> dict:
         "slot_reservation_timeout": operating.get("slotReservationTimeout", 60),
         "join_queue_max_size": (operating.get("joinQueue") or {}).get("maxSize", 0),
         "persistence_enabled": "persistence" in props,
-        "auto_save_interval": (props.get("persistence") or {}).get("autoSaveInterval", 10),
-        "hive_id": (props.get("persistence") or {}).get("hiveId", 0),
+        "auto_save_interval": persistence.get("autoSaveInterval", 10),
+        "save_retention": persistence.get("saveRetention", 10),
+        "load_session_save": persistence.get("loadSessionSave", True),
+        "keep_session_save": persistence.get("keepSessionSave", False),
+        "hive_id": persistence.get("hiveId", 0),
         "rcon_password": rcon.get("password", ""),
         "rcon_permission": rcon.get("permission", "admin"),
         "rcon_max_clients": rcon.get("maxClients", 16),

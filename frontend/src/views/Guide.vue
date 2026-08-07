@@ -143,6 +143,16 @@ const faq = [
        keeps the same save.`,
   },
   {
+    q: 'What do the persistence settings do?',
+    a: `The Settings step writes the server's full persistence block: auto-save interval
+       (0 turns automatic saves off), how many save points to keep per mission (1–128),
+       whether the latest save is loaded on startup, whether save points survive the end
+       of the mission, and the hive id that separates saves when several servers share a
+       database. Leaving "Configure persistence" unticked does not switch saving off — the
+       server saves on its own by default, and only a scenario's
+       missionHeader.m_eSaveTypes set to 0 stops it entirely (add that with Edit JSON).`,
+  },
+  {
     q: 'How do I become admin in-game?',
     a: `Set an Admin password on the template's Settings step, then in the in-game chat
        type #login followed by that password. To skip the password entirely, add your

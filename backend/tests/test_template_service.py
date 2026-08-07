@@ -177,6 +177,45 @@ def test_persistence_omitted_when_disabled():
     assert spec_from_config(json.dumps(cfg))["persistence_enabled"] is False
 
 
+def test_persistence_writes_every_documented_key(): # #156
+    cfg = _spec(
+        persistence_enabled=True, auto_save_interval=5, save_retention=20,
+        load_session_save=False, keep_session_save=True, hive_id=3,
+    ).to_config()
+    assert cfg["game"]["gameProperties"]["persistence"] == {
+        "autoSaveInterval": 5,
+        "saveRetention": 20,
+        "loadSessionSave": False,
+        "keepSessionSave": True,
+        "hiveId": 3,
+        "databases": {},
+        "storages": {},
+    }
+    restored = spec_from_config(json.dumps(cfg))
+    assert restored["save_retention"] == 20
+    assert restored["load_session_save"] is False
+    assert restored["keep_session_save"] is True
+
+
+def test_persistence_bounds_validated(): # #156
+    with pytest.raises(ValidationError):
+        _spec(save_retention=0)
+    with pytest.raises(ValidationError):
+        _spec(save_retention=129)
+
+
+def test_persistence_keys_missing_from_an_older_config_fall_back_to_defaults():
+    """A template saved before #156 has only autoSaveInterval/hiveId."""
+    cfg = _spec().to_config()
+    cfg["game"]["gameProperties"]["persistence"] = {"autoSaveInterval": 15, "hiveId": 42}
+    restored = spec_from_config(json.dumps(cfg))
+    assert restored["persistence_enabled"] is True
+    assert restored["auto_save_interval"] == 15 and restored["hive_id"] == 42
+    assert restored["save_retention"] == 10
+    assert restored["load_session_save"] is True
+    assert restored["keep_session_save"] is False
+
+
 def test_rcon_permission_pattern_validated():
     with pytest.raises(ValidationError):
         _spec(rcon_permission="superuser")
