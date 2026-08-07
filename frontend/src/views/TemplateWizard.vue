@@ -154,6 +154,7 @@ const spec = reactive({
 
 const showAdvanced = ref(false)
 const showLaunch = ref(false)
+const showAccess = ref(false)
 
 // ---- Player access: admins, whitelist, ban list (#154) ---------------------
 const adminInput = ref('')
@@ -166,6 +167,17 @@ const banNotice = ref('')
 // The game applies at most 20 admins. A template can arrive over the limit from
 // an import or a hand-edit, so say so rather than silently truncating.
 const adminsOverLimit = computed(() => spec.admins.length > ADMIN_LIMIT)
+
+// Shown next to the collapsed "player access" toggle. The section starts closed,
+// so without this a whitelist-only server looks exactly like an open one.
+const accessSummary = computed(() => {
+  const parts = []
+  const { admins, player_whitelist: white, player_ban_list: banned } = spec
+  if (admins.length) parts.push(`${admins.length} admin${admins.length === 1 ? '' : 's'}`)
+  if (white.length) parts.push(`whitelist-only (${white.length})`)
+  if (banned.length) parts.push(`${banned.length} banned`)
+  return parts.join(' · ')
+})
 
 function addAdminIds() {
   const result = addAdmins(spec.admins, adminInput.value)
@@ -1451,9 +1463,208 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
+          <button
+            class="btn btn-link px-0 mt-3"
+            @click="showAdvanced = !showAdvanced"
+          >
+            {{ showAdvanced ? '▾ Hide' : '▸ Show' }} advanced settings
+          </button>
+
+          <div v-show="showAdvanced" class="row g-3 border-top pt-3">
+            <div class="col-md-4">
+              <label class="form-label">Min grass distance <small class="text-secondary">(≥ 50)</small></label>
+              <input v-model.number="spec.server_min_grass_distance" type="number" min="50" max="150" class="form-control" />
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Player save interval (s)</label>
+              <input v-model.number="spec.player_save_time" type="number" min="0" class="form-control" />
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">AI limit <small class="text-secondary">(-1 = unlimited)</small></label>
+              <input v-model.number="spec.ai_limit" type="number" min="-1" class="form-control" />
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Slot reservation timeout (s)</label>
+              <input v-model.number="spec.slot_reservation_timeout" type="number" min="5" max="300" class="form-control" />
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Join queue max size <small class="text-secondary">(0 = off)</small></label>
+              <input v-model.number="spec.join_queue_max_size" type="number" min="0" max="50" class="form-control" />
+            </div>
+            <div class="col-12">
+              <div class="fw-semibold small text-secondary mb-1">VON (voice)</div>
+              <div class="d-flex gap-4 flex-wrap">
+                <div class="form-check">
+                  <input id="von1" v-model="spec.von_disable_ui" class="form-check-input" type="checkbox" />
+                  <label for="von1" class="form-check-label">Disable VON UI</label>
+                </div>
+                <div class="form-check">
+                  <input id="von2" v-model="spec.von_disable_direct_speech_ui" class="form-check-input" type="checkbox" />
+                  <label for="von2" class="form-check-label">Disable direct-speech UI</label>
+                </div>
+                <div class="form-check">
+                  <input id="von3" v-model="spec.von_can_transmit_cross_faction" class="form-check-input" type="checkbox" />
+                  <label for="von3" class="form-check-label">Cross-faction VON</label>
+                </div>
+              </div>
+            </div>
+            <div class="col-12">
+              <div class="fw-semibold small text-secondary mb-1">Operating</div>
+              <div class="d-flex gap-4 flex-wrap">
+                <div class="form-check">
+                  <input id="op1" v-model="spec.fast_validation" class="form-check-input" type="checkbox" />
+                  <label for="op1" class="form-check-label">Fast validation</label>
+                </div>
+                <div class="form-check">
+                  <input id="op2" v-model="spec.lobby_player_synchronise" class="form-check-input" type="checkbox" />
+                  <label for="op2" class="form-check-label">Lobby player sync</label>
+                </div>
+                <div class="form-check">
+                  <input id="op3" v-model="spec.disable_navmesh_streaming" class="form-check-input" type="checkbox" />
+                  <label for="op3" class="form-check-label">Disable navmesh streaming</label>
+                </div>
+                <div class="form-check">
+                  <input id="op4" v-model="spec.disable_server_shutdown" class="form-check-input" type="checkbox" />
+                  <label for="op4" class="form-check-label">Disable auto-shutdown</label>
+                </div>
+                <div class="form-check">
+                  <input id="op5" v-model="spec.disable_crash_reporter" class="form-check-input" type="checkbox" />
+                  <label for="op5" class="form-check-label">Disable crash reporter</label>
+                </div>
+                <div class="form-check">
+                  <input id="op6" v-model="spec.disable_ai" class="form-check-input" type="checkbox" />
+                  <label for="op6" class="form-check-label">Disable AI</label>
+                </div>
+                <div class="form-check">
+                  <input id="op7" v-model="spec.mods_required_by_default" class="form-check-input" type="checkbox" />
+                  <label for="op7" class="form-check-label">Mods required by default</label>
+                </div>
+              </div>
+            </div>
+
+            <div class="col-12">
+              <div class="fw-semibold small text-secondary mb-1">Persistence (save games)</div>
+              <div class="form-check mb-2">
+                <input id="persist" v-model="spec.persistence_enabled" class="form-check-input" type="checkbox" />
+                <label for="persist" class="form-check-label">Configure persistence</label>
+              </div>
+              <p class="text-secondary small mb-2">
+                The server saves the mission on its own by default. Tick the box to write a
+                <code>persistence</code> block and set these values yourself; leave it clear to let
+                the engine decide. Unticking does not switch saving off — to stop a scenario saving
+                at all, add <code>"missionHeader": &#123; "m_eSaveTypes": 0 &#125;</code> under
+                <code>game.gameProperties</code> with Edit JSON.
+              </p>
+              <div class="row g-2 align-items-end">
+                <div class="col-6 col-md-3">
+                  <label class="form-label small">Auto-save interval (min)</label>
+                  <input v-model.number="spec.auto_save_interval" type="number" min="0" max="60"
+                    class="form-control" :disabled="!spec.persistence_enabled" />
+                  <div class="form-text">0 turns automatic saves off.</div>
+                </div>
+                <div class="col-6 col-md-3">
+                  <label class="form-label small">Save points kept</label>
+                  <input v-model.number="spec.save_retention" type="number" min="1" max="128"
+                    class="form-control" :disabled="!spec.persistence_enabled" />
+                  <div class="form-text">1–128 per mission.</div>
+                </div>
+                <div class="col-6 col-md-3">
+                  <label class="form-label small">Hive ID</label>
+                  <input v-model.number="spec.hive_id" type="number" min="0" max="16383"
+                    class="form-control" :disabled="!spec.persistence_enabled" />
+                  <div class="form-text">Separates saves when servers share a database.</div>
+                </div>
+                <div class="col-12 col-md-3">
+                  <div class="form-check">
+                    <input id="persist-load" v-model="spec.load_session_save" class="form-check-input"
+                      type="checkbox" :disabled="!spec.persistence_enabled" />
+                    <label for="persist-load" class="form-check-label small">
+                      Load the latest save on startup
+                    </label>
+                  </div>
+                  <div class="form-check">
+                    <input id="persist-keep" v-model="spec.keep_session_save" class="form-check-input"
+                      type="checkbox" :disabled="!spec.persistence_enabled" />
+                    <label for="persist-keep" class="form-check-label small">
+                      Keep save points after the mission ends
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="col-12">
+              <div class="fw-semibold small text-secondary mb-1">RCON <small>(only used when a password is set on the previous screen)</small></div>
+              <div class="row g-2">
+                <div class="col-6 col-md-4">
+                  <label class="form-label small">Permission</label>
+                  <select v-model="spec.rcon_permission" class="form-select">
+                    <option value="admin">admin</option>
+                    <option value="monitor">monitor</option>
+                  </select>
+                </div>
+                <div class="col-6 col-md-4">
+                  <label class="form-label small">Max clients</label>
+                  <input v-model.number="spec.rcon_max_clients" type="number" min="1" max="16" class="form-control" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <button class="btn btn-link px-0 mt-3" @click="showLaunch = !showLaunch">
+            {{ showLaunch ? '▾ Hide' : '▸ Show' }} engine launch parameters
+          </button>
+          <div v-show="showLaunch" class="border-top pt-3">
+            <p class="text-secondary small">
+              Command-line parameters passed to the server engine (blank = engine default).
+            </p>
+            <div class="row g-3">
+              <div v-for="[key, label] in launchNumFields" :key="key" class="col-6 col-md-3">
+                <label class="form-label small">{{ label }}</label>
+                <input v-model.number="spec.launch[key]" type="number" class="form-control form-control-sm" placeholder="default" />
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small">Freeze check mode</label>
+                <select v-model="spec.launch.freeze_check_mode" class="form-select form-select-sm">
+                  <option :value="null">default</option>
+                  <option value="crash">crash</option>
+                  <option value="disabled">disabled</option>
+                </select>
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small">Debugger address</label>
+                <input v-model="spec.launch.debugger_address" class="form-control form-control-sm" placeholder="(off)" />
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label small">Load session save</label>
+                <input v-model="spec.launch.load_session_save" class="form-control form-control-sm" placeholder="(latest)" />
+              </div>
+            </div>
+            <div class="d-flex gap-4 flex-wrap mt-3">
+              <div v-for="[key, label] in launchSwitchFields" :key="key" class="form-check">
+                <input :id="'lp_' + key" v-model="spec.launch[key]" class="form-check-input" type="checkbox" />
+                <label :for="'lp_' + key" class="form-check-label small">{{ label }}</label>
+              </div>
+            </div>
+            <div class="mt-3">
+              <label class="form-label small">Extra launch arguments <small class="text-secondary">(raw, appended verbatim)</small></label>
+              <input v-model="spec.launch.extra_args" class="form-control form-control-sm" placeholder="-someArg value" />
+            </div>
+          </div>
+
+          <button class="btn btn-link px-0 mt-3" @click="showAccess = !showAccess">
+            {{ showAccess ? '▾ Hide' : '▸ Show' }} player access
+          </button>
+          <!-- Collapsed is the default, so the toggle has to say what is set —
+               a hidden whitelist is how someone locks themselves out (#154). -->
+          <span
+            v-if="accessSummary"
+            class="small ms-2"
+            :class="spec.player_whitelist.length ? 'text-warning-emphasis' : 'text-secondary'"
+          >{{ accessSummary }}</span>
+
           <!-- Server admins, whitelist and ban list (#154) -->
-          <div class="border-top mt-4 pt-3">
-            <div class="fw-semibold mb-1">Player access</div>
+          <div v-show="showAccess" class="border-top pt-3">
             <p class="small text-secondary">
               Who administers this server, and who may join it. Everything here is
               part of the template, so every server instance built from it gets the
@@ -1647,195 +1858,6 @@ onBeforeUnmount(() => {
                 </li>
               </ul>
               <div v-else class="small text-secondary mt-2">Nobody is banned.</div>
-            </div>
-          </div>
-
-          <button
-            class="btn btn-link px-0 mt-3"
-            @click="showAdvanced = !showAdvanced"
-          >
-            {{ showAdvanced ? '▾ Hide' : '▸ Show' }} advanced settings
-          </button>
-
-          <div v-show="showAdvanced" class="row g-3 border-top pt-3">
-            <div class="col-md-4">
-              <label class="form-label">Min grass distance <small class="text-secondary">(≥ 50)</small></label>
-              <input v-model.number="spec.server_min_grass_distance" type="number" min="50" max="150" class="form-control" />
-            </div>
-            <div class="col-md-4">
-              <label class="form-label">Player save interval (s)</label>
-              <input v-model.number="spec.player_save_time" type="number" min="0" class="form-control" />
-            </div>
-            <div class="col-md-4">
-              <label class="form-label">AI limit <small class="text-secondary">(-1 = unlimited)</small></label>
-              <input v-model.number="spec.ai_limit" type="number" min="-1" class="form-control" />
-            </div>
-            <div class="col-md-4">
-              <label class="form-label">Slot reservation timeout (s)</label>
-              <input v-model.number="spec.slot_reservation_timeout" type="number" min="5" max="300" class="form-control" />
-            </div>
-            <div class="col-md-4">
-              <label class="form-label">Join queue max size <small class="text-secondary">(0 = off)</small></label>
-              <input v-model.number="spec.join_queue_max_size" type="number" min="0" max="50" class="form-control" />
-            </div>
-            <div class="col-12">
-              <div class="fw-semibold small text-secondary mb-1">VON (voice)</div>
-              <div class="d-flex gap-4 flex-wrap">
-                <div class="form-check">
-                  <input id="von1" v-model="spec.von_disable_ui" class="form-check-input" type="checkbox" />
-                  <label for="von1" class="form-check-label">Disable VON UI</label>
-                </div>
-                <div class="form-check">
-                  <input id="von2" v-model="spec.von_disable_direct_speech_ui" class="form-check-input" type="checkbox" />
-                  <label for="von2" class="form-check-label">Disable direct-speech UI</label>
-                </div>
-                <div class="form-check">
-                  <input id="von3" v-model="spec.von_can_transmit_cross_faction" class="form-check-input" type="checkbox" />
-                  <label for="von3" class="form-check-label">Cross-faction VON</label>
-                </div>
-              </div>
-            </div>
-            <div class="col-12">
-              <div class="fw-semibold small text-secondary mb-1">Operating</div>
-              <div class="d-flex gap-4 flex-wrap">
-                <div class="form-check">
-                  <input id="op1" v-model="spec.fast_validation" class="form-check-input" type="checkbox" />
-                  <label for="op1" class="form-check-label">Fast validation</label>
-                </div>
-                <div class="form-check">
-                  <input id="op2" v-model="spec.lobby_player_synchronise" class="form-check-input" type="checkbox" />
-                  <label for="op2" class="form-check-label">Lobby player sync</label>
-                </div>
-                <div class="form-check">
-                  <input id="op3" v-model="spec.disable_navmesh_streaming" class="form-check-input" type="checkbox" />
-                  <label for="op3" class="form-check-label">Disable navmesh streaming</label>
-                </div>
-                <div class="form-check">
-                  <input id="op4" v-model="spec.disable_server_shutdown" class="form-check-input" type="checkbox" />
-                  <label for="op4" class="form-check-label">Disable auto-shutdown</label>
-                </div>
-                <div class="form-check">
-                  <input id="op5" v-model="spec.disable_crash_reporter" class="form-check-input" type="checkbox" />
-                  <label for="op5" class="form-check-label">Disable crash reporter</label>
-                </div>
-                <div class="form-check">
-                  <input id="op6" v-model="spec.disable_ai" class="form-check-input" type="checkbox" />
-                  <label for="op6" class="form-check-label">Disable AI</label>
-                </div>
-                <div class="form-check">
-                  <input id="op7" v-model="spec.mods_required_by_default" class="form-check-input" type="checkbox" />
-                  <label for="op7" class="form-check-label">Mods required by default</label>
-                </div>
-              </div>
-            </div>
-
-            <div class="col-12">
-              <div class="fw-semibold small text-secondary mb-1">Persistence (save games)</div>
-              <div class="form-check mb-2">
-                <input id="persist" v-model="spec.persistence_enabled" class="form-check-input" type="checkbox" />
-                <label for="persist" class="form-check-label">Configure persistence</label>
-              </div>
-              <p class="text-secondary small mb-2">
-                The server saves the mission on its own by default. Tick the box to write a
-                <code>persistence</code> block and set these values yourself; leave it clear to let
-                the engine decide. Unticking does not switch saving off — to stop a scenario saving
-                at all, add <code>"missionHeader": &#123; "m_eSaveTypes": 0 &#125;</code> under
-                <code>game.gameProperties</code> with Edit JSON.
-              </p>
-              <div class="row g-2 align-items-end">
-                <div class="col-6 col-md-3">
-                  <label class="form-label small">Auto-save interval (min)</label>
-                  <input v-model.number="spec.auto_save_interval" type="number" min="0" max="60"
-                    class="form-control" :disabled="!spec.persistence_enabled" />
-                  <div class="form-text">0 turns automatic saves off.</div>
-                </div>
-                <div class="col-6 col-md-3">
-                  <label class="form-label small">Save points kept</label>
-                  <input v-model.number="spec.save_retention" type="number" min="1" max="128"
-                    class="form-control" :disabled="!spec.persistence_enabled" />
-                  <div class="form-text">1–128 per mission.</div>
-                </div>
-                <div class="col-6 col-md-3">
-                  <label class="form-label small">Hive ID</label>
-                  <input v-model.number="spec.hive_id" type="number" min="0" max="16383"
-                    class="form-control" :disabled="!spec.persistence_enabled" />
-                  <div class="form-text">Separates saves when servers share a database.</div>
-                </div>
-                <div class="col-12 col-md-3">
-                  <div class="form-check">
-                    <input id="persist-load" v-model="spec.load_session_save" class="form-check-input"
-                      type="checkbox" :disabled="!spec.persistence_enabled" />
-                    <label for="persist-load" class="form-check-label small">
-                      Load the latest save on startup
-                    </label>
-                  </div>
-                  <div class="form-check">
-                    <input id="persist-keep" v-model="spec.keep_session_save" class="form-check-input"
-                      type="checkbox" :disabled="!spec.persistence_enabled" />
-                    <label for="persist-keep" class="form-check-label small">
-                      Keep save points after the mission ends
-                    </label>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="col-12">
-              <div class="fw-semibold small text-secondary mb-1">RCON <small>(only used when a password is set on the previous screen)</small></div>
-              <div class="row g-2">
-                <div class="col-6 col-md-4">
-                  <label class="form-label small">Permission</label>
-                  <select v-model="spec.rcon_permission" class="form-select">
-                    <option value="admin">admin</option>
-                    <option value="monitor">monitor</option>
-                  </select>
-                </div>
-                <div class="col-6 col-md-4">
-                  <label class="form-label small">Max clients</label>
-                  <input v-model.number="spec.rcon_max_clients" type="number" min="1" max="16" class="form-control" />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <button class="btn btn-link px-0 mt-3" @click="showLaunch = !showLaunch">
-            {{ showLaunch ? '▾ Hide' : '▸ Show' }} engine launch parameters
-          </button>
-          <div v-show="showLaunch" class="border-top pt-3">
-            <p class="text-secondary small">
-              Command-line parameters passed to the server engine (blank = engine default).
-            </p>
-            <div class="row g-3">
-              <div v-for="[key, label] in launchNumFields" :key="key" class="col-6 col-md-3">
-                <label class="form-label small">{{ label }}</label>
-                <input v-model.number="spec.launch[key]" type="number" class="form-control form-control-sm" placeholder="default" />
-              </div>
-              <div class="col-6 col-md-3">
-                <label class="form-label small">Freeze check mode</label>
-                <select v-model="spec.launch.freeze_check_mode" class="form-select form-select-sm">
-                  <option :value="null">default</option>
-                  <option value="crash">crash</option>
-                  <option value="disabled">disabled</option>
-                </select>
-              </div>
-              <div class="col-6 col-md-3">
-                <label class="form-label small">Debugger address</label>
-                <input v-model="spec.launch.debugger_address" class="form-control form-control-sm" placeholder="(off)" />
-              </div>
-              <div class="col-6 col-md-3">
-                <label class="form-label small">Load session save</label>
-                <input v-model="spec.launch.load_session_save" class="form-control form-control-sm" placeholder="(latest)" />
-              </div>
-            </div>
-            <div class="d-flex gap-4 flex-wrap mt-3">
-              <div v-for="[key, label] in launchSwitchFields" :key="key" class="form-check">
-                <input :id="'lp_' + key" v-model="spec.launch[key]" class="form-check-input" type="checkbox" />
-                <label :for="'lp_' + key" class="form-check-label small">{{ label }}</label>
-              </div>
-            </div>
-            <div class="mt-3">
-              <label class="form-label small">Extra launch arguments <small class="text-secondary">(raw, appended verbatim)</small></label>
-              <input v-model="spec.launch.extra_args" class="form-control form-control-sm" placeholder="-someArg value" />
             </div>
           </div>
         </div>
