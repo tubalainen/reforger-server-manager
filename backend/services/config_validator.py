@@ -48,6 +48,7 @@ _FIELD_PATHS = {
     "von_disable_ui": "game.gameProperties.VONDisableUI",
     "von_disable_direct_speech_ui": "game.gameProperties.VONDisableDirectSpeechUI",
     "von_can_transmit_cross_faction": "game.gameProperties.VONCanTransmitCrossFaction",
+    "mission_header": "game.gameProperties.missionHeader",
     "auto_save_interval": "game.gameProperties.persistence.autoSaveInterval",
     "save_retention": "game.gameProperties.persistence.saveRetention",
     "load_session_save": "game.gameProperties.persistence.loadSessionSave",
@@ -70,6 +71,23 @@ _UNKNOWN_KEY_MESSAGE = (
     "Not managed by the GUI. It will be saved to config.json exactly as written "
     "and preserved when you edit this template."
 )
+
+
+# Blocks the wizard round-trips whole but whose keys it cannot enumerate (#162).
+# The mission header's keys are members of the scenario's own header class — and
+# of whatever a mod derives from it — so "is this key known?" has no answer we
+# could compute. The wizard owns the entire object instead: every key inside is
+# managed, none is a custom key, and none is reported to the user as one.
+_FREE_FORM_SUBTREES = ("game.gameProperties.missionHeader",)
+
+
+def in_free_form_subtree(path: str) -> bool:
+    """Is `path` *inside* a block the wizard manages wholesale? (#162)
+
+    The root itself is not — it's an ordinary known key — so only its children
+    answer True.
+    """
+    return any(path.startswith(f"{root}.") for root in _FREE_FORM_SUBTREES)
 
 
 def _paths(node: dict, prefix: str = "") -> set[str]:
@@ -100,6 +118,10 @@ def known_paths() -> set[str]:
         # as known and a hand-written list isn't reported as a custom key.
         player_whitelist=[{"identityId": "_"}],
         player_ban_list=[{"identityId": "_"}],
+        # Same trick for the mission header (#162): one key so the block itself
+        # is rendered and its path counts as known. What's *inside* it is never
+        # matched against this set — see in_free_form_subtree.
+        mission_header={"_": "_"},
     ).to_config()
     return _paths(maximal)
 
@@ -118,6 +140,8 @@ def unknown_paths(cfg: dict) -> list[str]:
     def walk(node: dict, prefix: str = "") -> None:
         for key, value in node.items():
             path = f"{prefix}{key}"
+            if in_free_form_subtree(path):
+                continue  # the wizard manages this whole block; nothing to report
             if path not in known:
                 unknown.append(path)
                 continue  # its children are unknown too; one report is enough

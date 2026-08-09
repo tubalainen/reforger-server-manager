@@ -32,6 +32,34 @@ def _client_id(request: Request) -> str:
     return request.headers.get("X-Client-Id", "").strip()
 
 
+def _drop_mission_header(extras: dict) -> dict:
+    """Take the mission header out of a stored extras patch (#162).
+
+    Anyone who set a mission header before the wizard modelled it has it sitting
+    in extras_json, and to_config applies extras *last* — so that stale copy
+    would win over whatever the new UI writes, for ever: you'd edit a value,
+    save, and nothing would change. The rendered config_json already carries the
+    same values (extras were merged in when it was written), so spec_from_config
+    has already read them into mission_header; all that's left is to stop the
+    patch re-applying them. Emptied parents are pruned so the overlay doesn't
+    keep hollow objects around.
+    """
+    game = extras.get("game")
+    if not isinstance(game, dict):
+        return extras
+    props = game.get("gameProperties")
+    if not isinstance(props, dict) or "missionHeader" not in props:
+        return extras
+    props = {k: v for k, v in props.items() if k != "missionHeader"}
+    game = {k: v for k, v in game.items() if k != "gameProperties"}
+    if props:
+        game["gameProperties"] = props
+    out = {k: v for k, v in extras.items() if k != "game"}
+    if game:
+        out["game"] = game
+    return out
+
+
 def _out(t: Template) -> dict:
     spec = template_service.spec_from_config(t.config_json)
     spec["scenario_name"] = t.scenario_name
@@ -47,7 +75,7 @@ def _out(t: Template) -> dict:
     # The hand-edited overlay (#29). Stored rather than re-derived from
     # config_json so the user's intent survives even if to_config's defaults move.
     try:
-        spec["extras"] = json.loads(t.extras_json or "{}")
+        spec["extras"] = _drop_mission_header(json.loads(t.extras_json or "{}"))
     except (ValueError, TypeError):
         spec["extras"] = {}
     return {
@@ -104,7 +132,7 @@ def _custom_keys_only(patch: dict, prefix: str = "") -> dict:
     out: dict = {}
     for key, value in patch.items():
         path = f"{prefix}{key}"
-        if value is None and path in known:
+        if value is None and (path in known or config_validator.in_free_form_subtree(path)):
             continue
         if isinstance(value, dict):
             sub = _custom_keys_only(value, f"{path}.")

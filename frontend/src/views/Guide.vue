@@ -159,7 +159,26 @@ const faq = [
        of the mission, and the hive id that separates saves when several servers share a
        database. Leaving "Configure persistence" unticked does not switch saving off — the
        server saves on its own by default, and only a scenario's
-       missionHeader.m_eSaveTypes set to 0 stops it entirely (add that with Edit JSON).`,
+       missionHeader.m_eSaveTypes set to 0 stops it entirely — add that under
+       Mission header on the same step.`,
+  },
+  {
+    q: 'What is the mission header, and how do I change it?',
+    a: `It overrides the scenario's own settings — player count, XP multiplier, time of
+       day, campaign supplies — without you having to build a custom scenario. Open
+       Mission header at the bottom of the Settings step. Search for a setting by name
+       and it arrives with the engine's own default filled in, or type any name at all:
+       which settings a scenario accepts is up to the scenario, and mods add their own.`,
+  },
+  {
+    q: 'I was given a mission header from a forum or another control panel. Now what?',
+    a: `Use "Paste from AMP or a config…" and paste it exactly as you got it. It takes
+       AMP's brace-less "m_iPlayerCount":"64" format, a whole config.json, or a snippet
+       with ragged indentation, comments, trailing commas, curly quotes or a tail that
+       got cut off mid-copy. It repairs those, lists what it changed, shows how many
+       settings would be added or changed, and inserts nothing until you confirm. Values
+       are never reinterpreted — a quoted "64" stays quoted unless you ask for it to be
+       converted.`,
   },
   {
     q: 'How do I become admin in-game?',

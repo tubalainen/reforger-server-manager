@@ -109,6 +109,14 @@ done once than read it step by step — the two cover the same ground.
       type, takes a whole pasted batch at once, warns past the 20 admins the game applies,
       and says so plainly when a whitelist is about to make the server invite-only. Both
       lists are written to `config.json` **only when you use them**
+- [x] **Mission header overrides** — change the scenario's own settings (player count, XP
+      multiplier, time of day, campaign supplies) without building a custom scenario.
+      Search settings by name and they arrive on the engine's own default; any name a
+      scenario or mod accepts can be typed in. **Paste a header from anywhere** — another
+      panel's brace-less box, a whole `config.json`, a forum snippet with ragged
+      indentation, comments, trailing commas or a tail cut off mid-copy — and it is
+      repaired, itemised and previewed before anything is inserted. Written to
+      `config.json` **only when you use it**
 - [x] **Per-template change log** — every template keeps a searchable, tamper-proof history
       of what changed and when: mods added/removed and version locks, scenario changes, and
       each setting edit (old → new), timestamped in your server's timezone. Read-only — it
