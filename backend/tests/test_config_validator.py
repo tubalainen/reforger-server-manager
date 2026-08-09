@@ -123,3 +123,26 @@ def test_ban_entry_without_an_identity_is_an_error():
     # Read leniently (the entry is dropped), so this is not an error â€” it simply
     # doesn't survive. The GUI shows what was kept.
     assert validate_config(cfg)["errors"] == []
+
+
+# ---- the mission header is a free-form block the wizard owns (#162) ---------
+
+def test_mission_header_keys_are_never_custom_keys():
+    # The wizard round-trips the whole object, so its keys are managed — even
+    # though we can't enumerate them. Reporting them would light up the
+    # "N custom keys" badge for every override the user adds.
+    cfg = _config()
+    cfg["game"]["gameProperties"]["missionHeader"] = {
+        "m_iPlayerCount": 96,
+        "m_ACE_Settings": {"m_ACE_Medical_Core": {"m_fBleedingRateScale": 0.6}},
+    }
+    result = validate_config(cfg)
+    assert result["errors"] == []
+    assert result["warnings"] == []
+
+
+def test_mission_header_that_is_not_an_object_errors():
+    cfg = _config()
+    cfg["game"]["gameProperties"]["missionHeader"] = "m_iPlayerCount:64"
+    paths = [e["path"] for e in validate_config(cfg)["errors"]]
+    assert paths == ["game.gameProperties.missionHeader"]

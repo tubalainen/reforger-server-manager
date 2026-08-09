@@ -12,6 +12,11 @@ from pydantic import BaseModel, Field, field_validator
 
 DEFAULT_SUPPORTED_PLATFORMS = ["PLATFORM_PC", "PLATFORM_XBL", "PLATFORM_PSN"]
 
+# Ceiling on the mission header override block (#162). Big enough for a modded
+# header (ACE's settings tree is a few KB), small enough that a mispaste can't
+# turn config.json into something the engine has to chew through.
+MISSION_HEADER_MAX_BYTES = 64 * 1024
+
 
 def merge_patch(base: dict, patch: dict) -> dict:
     """Apply an RFC 7386 JSON Merge Patch to `base`, returning a new dict.
@@ -286,6 +291,14 @@ class TemplateSpec(BaseModel):
     keep_session_save: bool = False
     hive_id: int = Field(default=0, ge=0, le=16383)
 
+    # Mission header overrides (#162) — free-form by nature. The keys are members
+    # of the scenario's own mission header class (SCR_MissionHeader and whatever
+    # the scenario or a mod derives from it), so the manager can't enumerate them
+    # and doesn't try: it validates the shape (an object) and nothing else, and
+    # writes the block ONLY when it holds something. A template that sets no
+    # override renders exactly the config it rendered before this existed.
+    mission_header: dict = {}
+
     # rcon (optional; block written only when a password is set)
     rcon_password: str = ""
     rcon_permission: str = Field(default="admin", pattern="^(admin|monitor)$")
@@ -323,6 +336,27 @@ class TemplateSpec(BaseModel):
     @classmethod
     def _clean_players(cls, value: list) -> list:
         return _dedupe_players(value)
+
+    @field_validator("mission_header")
+    @classmethod
+    def _check_mission_header(cls, value: dict) -> dict:
+        """Shape only: a JSON object, of a sane size (#162).
+
+        Deliberately does NOT judge the keys or their values. Which keys a
+        scenario accepts is decided by its mission header class, and a mod adds
+        its own — rejecting a key we don't recognise would make the wizard
+        useless for exactly the modded servers that need it most. The size cap
+        is a guard against a runaway paste, not a schema.
+        """
+        if not isinstance(value, dict):
+            raise ValueError("must be a JSON object")
+        if any(not isinstance(key, str) for key in value):
+            raise ValueError("every key must be a string")
+        if len(json.dumps(value)) > MISSION_HEADER_MAX_BYTES:
+            raise ValueError(
+                f"is too large (limit {MISSION_HEADER_MAX_BYTES // 1024} KB of JSON)"
+            )
+        return value
 
     def to_config(self) -> dict:
         """Render the full server config.json.
@@ -412,6 +446,16 @@ class TemplateSpec(BaseModel):
                 "databases": {},
                 "storages": {},
             }
+        # Mission header overrides (#162), written only when non-empty. AMP
+        # writes `"missionHeader": { }` unconditionally because it interpolates
+        # the user's raw text between braces; we render an object, so we can
+        # simply leave the key out and stay byte-identical for everyone who
+        # doesn't use it. Copied, not referenced: to_config must not hand out a
+        # view onto the spec's own dict for a caller to mutate.
+        if self.mission_header:
+            config["game"]["gameProperties"]["missionHeader"] = json.loads(
+                json.dumps(self.mission_header)
+            )
         if self.rcon_password:
             config["rcon"] = {
                 "address": "0.0.0.0",
@@ -471,6 +515,21 @@ def _players_from_config(raw, reason: bool = False) -> list[dict]:
             player["reason"] = str(entry.get("reason") or "").strip()
         out.append(player)
     return out
+
+
+def _mission_header_from(props: dict, clamp: bool) -> dict:
+    """Read game.gameProperties.missionHeader back out of a config (#162).
+
+    Lenient for editing (clamp=True): a header that isn't an object opens as
+    "no overrides" instead of refusing to load the template at all. Raw for
+    validation (clamp=False): the user's exact value has to reach the model, or
+    a header the server would choke on gets quietly swallowed here and reported
+    as valid. Same split, and the same reason, as server_min_grass_distance.
+    """
+    header = props.get("missionHeader")
+    if clamp and not isinstance(header, dict):
+        return {}
+    return header if header is not None else {}
 
 
 def spec_from_config(config_json: str, clamp: bool = True) -> dict:
@@ -542,6 +601,7 @@ def spec_from_config(config_json: str, clamp: bool = True) -> dict:
         "load_session_save": persistence.get("loadSessionSave", True),
         "keep_session_save": persistence.get("keepSessionSave", False),
         "hive_id": persistence.get("hiveId", 0),
+        "mission_header": _mission_header_from(props, clamp),
         "rcon_password": rcon.get("password", ""),
         "rcon_permission": rcon.get("permission", "admin"),
         "rcon_max_clients": rcon.get("maxClients", 16),

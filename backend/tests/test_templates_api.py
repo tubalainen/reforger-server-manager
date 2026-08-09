@@ -549,3 +549,76 @@ def test_mod_added_order_roundtrips_but_stays_out_of_config(logged_in):
     assert [m["added_order"] for m in got] == [2, 1]
     cfg = json.loads(logged_in.get(f"/api/templates/{tid}/config.json").text)
     assert all("added_order" not in m for m in cfg["game"]["mods"])
+
+
+# ---- mission header (#162) --------------------------------------------------
+
+def test_mission_header_edits_survive_saving_and_reloading(logged_in):
+    header = {"m_iPlayerCount": 96, "m_fXpMultiplier": 2.5}
+    tid = logged_in.post(
+        "/api/templates", json=_spec() | {"mission_header": header}
+    ).json()["id"]
+
+    assert _config_of(logged_in, tid)["game"]["gameProperties"]["missionHeader"] == header
+
+    spec = logged_in.get(f"/api/templates/{tid}").json()["spec"]
+    assert spec["mission_header"] == header
+    spec["name"] = "API Server"  # the template's name lives outside the spec
+    spec["mission_header"] = {"m_iPlayerCount": 40}
+    assert logged_in.put(f"/api/templates/{tid}", json=spec).status_code == 200
+
+    cfg = _config_of(logged_in, tid)
+    assert cfg["game"]["gameProperties"]["missionHeader"] == {"m_iPlayerCount": 40}
+
+
+def test_a_pre_existing_hand_edited_header_moves_out_of_extras(logged_in):
+    # A template from before the wizard modelled the header has it in extras,
+    # and to_config applies extras LAST — so without the lift the stale copy
+    # would shadow the new field for ever: edit, save, nothing changes (#162).
+    extras = {
+        "game": {"gameProperties": {
+            "missionHeader": {"m_iPlayerCount": 96},
+            "customKey": "keep-me",
+        }},
+    }
+    tid = logged_in.post("/api/templates", json=_spec() | {"extras": extras}).json()["id"]
+
+    spec = logged_in.get(f"/api/templates/{tid}").json()["spec"]
+    # read back into the modelled field, and gone from the overlay...
+    assert spec["mission_header"] == {"m_iPlayerCount": 96}
+    assert spec["extras"] == {"game": {"gameProperties": {"customKey": "keep-me"}}}
+
+    # ...so editing it now actually takes, and the real custom key is untouched.
+    spec["name"] = "API Server"
+    spec["mission_header"] = {"m_iPlayerCount": 40}
+    assert logged_in.put(f"/api/templates/{tid}", json=spec).status_code == 200
+    props = _config_of(logged_in, tid)["game"]["gameProperties"]
+    assert props["missionHeader"] == {"m_iPlayerCount": 40}
+    assert props["customKey"] == "keep-me"
+
+
+def test_lifting_the_header_leaves_no_hollow_extras(logged_in):
+    extras = {"game": {"gameProperties": {"missionHeader": {"m_iPlayerCount": 96}}}}
+    tid = logged_in.post("/api/templates", json=_spec() | {"extras": extras}).json()["id"]
+    assert logged_in.get(f"/api/templates/{tid}").json()["spec"]["extras"] == {}
+
+
+def test_mission_header_typed_by_hand_lands_in_the_spec_not_extras(logged_in):
+    # The raw JSON editor and the wizard's own section must agree about who owns
+    # the block, or a hand-edit would come back as a "custom key".
+    spec = _spec()
+    cfg = logged_in.post("/api/templates/preview", json=spec).json()
+    cfg["game"]["gameProperties"]["missionHeader"] = {"m_fXpMultiplier": 10}
+
+    r = logged_in.post("/api/templates/reconcile", json={"spec": spec, "config": cfg})
+    assert r.status_code == 200
+    assert r.json()["spec"]["mission_header"] == {"m_fXpMultiplier": 10}
+    assert r.json()["spec"]["extras"] == {}
+    assert r.json()["warnings"] == []
+
+
+def test_a_template_without_a_header_is_unchanged_by_the_feature(logged_in):
+    tid = logged_in.post("/api/templates", json=_spec()).json()["id"]
+    props = _config_of(logged_in, tid)["game"]["gameProperties"]
+    assert "missionHeader" not in props
+    assert logged_in.get(f"/api/templates/{tid}").json()["extras_paths"] == []

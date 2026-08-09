@@ -465,3 +465,74 @@ def test_hand_written_access_lists_are_read_leniently():
         {"identityId": "11111111-2222-3333-4444-555555555555", "name": "", "reason": ""},
     ]
     assert back["player_whitelist"] == []
+
+
+# ---- mission header overrides (#162) ---------------------------------------
+# The block is free-form on purpose: its keys are members of the scenario's own
+# mission header class, so the model checks the shape and nothing else.
+
+def test_mission_header_omitted_when_empty():
+    # Byte-identical output for everyone who doesn't use it. (AMP writes
+    # "missionHeader": { } unconditionally because it interpolates raw text;
+    # rendering an object means we can just leave the key out.)
+    cfg = _spec().to_config()
+    assert "missionHeader" not in cfg["game"]["gameProperties"]
+
+
+def test_mission_header_written_and_read_back():
+    header = {"m_iPlayerCount": 96, "m_fXpMultiplier": 2.5, "m_sName": "Ops night"}
+    cfg = _spec(mission_header=header).to_config()
+    assert cfg["game"]["gameProperties"]["missionHeader"] == header
+    assert spec_from_config(render_config_json(_spec(mission_header=header)))[
+        "mission_header"
+    ] == header
+
+
+def test_mission_header_keeps_nested_mod_blocks():
+    # A mod's header class can nest arbitrarily deep (ACE's settings tree does).
+    header = {
+        "m_ACE_Settings": {
+            "m_ACE_Medical_Core": {"m_fBleedingRateScale": 0.6, "m_bBleedOutForPlayersEnabled": 1},
+        },
+        "m_iPlayerCount": 64,
+    }
+    cfg = _spec(mission_header=header).to_config()
+    assert (
+        cfg["game"]["gameProperties"]["missionHeader"]["m_ACE_Settings"]
+        ["m_ACE_Medical_Core"]["m_fBleedingRateScale"] == 0.6
+    )
+    assert spec_from_config(json.dumps(cfg))["mission_header"] == header
+
+
+def test_mission_header_values_are_never_reinterpreted():
+    # AMP's own example quotes its numbers ("m_iPlayerCount":"64") while every
+    # other source writes them bare, and nothing documents whether the engine
+    # coerces. Whatever the user wrote is what we write.
+    cfg = _spec(mission_header={"m_iPlayerCount": "64", "m_bRandomStartingWeather": True}).to_config()
+    assert cfg["game"]["gameProperties"]["missionHeader"]["m_iPlayerCount"] == "64"
+    assert cfg["game"]["gameProperties"]["missionHeader"]["m_bRandomStartingWeather"] is True
+
+
+def test_mission_header_is_copied_not_shared():
+    # to_config must not hand out a view onto the spec's own dict.
+    spec = _spec(mission_header={"m_iPlayerCount": 64})
+    cfg = spec.to_config()
+    cfg["game"]["gameProperties"]["missionHeader"]["m_iPlayerCount"] = 1
+    assert spec.mission_header["m_iPlayerCount"] == 64
+
+
+def test_mission_header_rejects_a_non_object():
+    with pytest.raises(ValidationError):
+        _spec(mission_header=["m_iPlayerCount"])
+
+
+def test_mission_header_rejects_a_runaway_paste():
+    with pytest.raises(ValidationError):
+        _spec(mission_header={"m_sDetails": "x" * 70_000})
+
+
+def test_hand_written_mission_header_is_read_leniently():
+    # A template whose header isn't an object must still open for editing.
+    cfg = json.loads(render_config_json(_spec()))
+    cfg["game"]["gameProperties"]["missionHeader"] = "m_iPlayerCount:64"
+    assert spec_from_config(json.dumps(cfg))["mission_header"] == {}

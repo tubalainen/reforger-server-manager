@@ -29,6 +29,18 @@ import {
   removeAdmin,
   removePlayer,
 } from '../players'
+import {
+  applyMerge,
+  coerceValue,
+  convertQuotedNumbers,
+  countKeys,
+  format as formatHeader,
+  fromRows,
+  parsePaste,
+  previewMerge,
+  toRows,
+} from '../missionHeader'
+import { GROUPS, defaultValueFor, describeKey, searchKeys } from '../missionHeaderKeys'
 
 const props = defineProps({ id: { type: [String, Number], default: null } })
 const router = useRouter()
@@ -116,6 +128,9 @@ const spec = reactive({
   rcon_password: '',
   rcon_permission: 'admin',
   rcon_max_clients: 16,
+  // Mission header overrides (#162). Declared here so a NEW template carries the
+  // field too; on edit it arrives with the loaded spec.
+  mission_header: {},
   // Hand-edited keys the wizard doesn't model, as a merge patch the backend
   // re-applies over every render (#29). Set by the JSON editor's Apply.
   extras: {},
@@ -155,6 +170,7 @@ const spec = reactive({
 const showAdvanced = ref(false)
 const showLaunch = ref(false)
 const showAccess = ref(false)
+const showMissionHeader = ref(false)
 
 // ---- Player access: admins, whitelist, ban list (#154) ---------------------
 const adminInput = ref('')
@@ -226,6 +242,178 @@ function addBannedPlayers() {
 function dropBannedPlayer(id) {
   spec.player_ban_list = removePlayer(spec.player_ban_list, id)
   banNotice.value = ''
+}
+
+// ---- Mission header overrides (#162) ---------------------------------------
+// Two views over one object: a row per setting, and the raw JSON for the nested
+// blocks a mod's header class brings (ACE nests a whole settings tree). The
+// object in `spec.mission_header` is the source of truth; rows are a projection
+// of it that is rebuilt whenever it changes from somewhere else — the JSON view,
+// the paste dialog, or an Edit JSON apply.
+const headerView = ref('rows') // 'rows' | 'json'
+const headerRows = ref([])
+const headerJson = ref('{}')
+const headerJsonError = ref('')
+const headerPick = reactive({ open: false, query: '' })
+
+const missionHeaderCount = computed(() => countKeys(spec.mission_header))
+
+watch(
+  () => JSON.stringify(spec.mission_header),
+  () => {
+    if (JSON.stringify(fromRows(headerRows.value)) !== JSON.stringify(spec.mission_header)) {
+      headerRows.value = toRows(spec.mission_header)
+    }
+    if (headerView.value !== 'json') headerJson.value = formatHeader(spec.mission_header)
+  },
+  { immediate: true },
+)
+
+function commitHeaderRows() {
+  spec.mission_header = fromRows(headerRows.value)
+}
+
+function addHeaderRow(entry, rawKey) {
+  const key = entry?.key ?? String(rawKey ?? '').trim()
+  if (!key || headerRows.value.some((row) => row.key === key)) return
+  const value = entry ? defaultValueFor(entry) : ''
+  headerRows.value.push({ key, value, kind: entry?.kind ?? 'string' })
+  headerPick.query = ''
+  headerPick.open = false
+  commitHeaderRows()
+}
+
+function dropHeaderRow(index) {
+  headerRows.value.splice(index, 1)
+  commitHeaderRows()
+}
+
+function changeHeaderRowKind(row, kind) {
+  row.kind = kind
+  row.value = coerceValue(row.value, kind)
+  commitHeaderRows()
+}
+
+const headerMatches = computed(() =>
+  searchKeys(headerPick.query, headerRows.value.map((row) => row.key)).slice(0, 8),
+)
+
+const headerGroupLabel = Object.fromEntries(GROUPS.map((g) => [g.id, g.label]))
+
+// A setting that only takes effect once another one is switched on — the time
+// of day settings need m_bOverrideScenarioTimeAndWeather. Surfaced as a prompt
+// rather than added behind the user's back.
+const headerMissingPrereqs = computed(() => {
+  const present = new Set(headerRows.value.map((row) => row.key))
+  const missing = []
+  for (const row of headerRows.value) {
+    const needs = describeKey(row.key)?.requires
+    if (!needs || missing.includes(needs)) continue
+    if (!present.has(needs) || spec.mission_header[needs] !== true) missing.push(needs)
+  }
+  return missing
+})
+
+function addPrereq(key) {
+  const entry = describeKey(key)
+  const existing = headerRows.value.find((row) => row.key === key)
+  if (existing) {
+    existing.value = true
+    existing.kind = 'boolean'
+  } else {
+    headerRows.value.push({ key, value: true, kind: entry?.kind ?? 'boolean' })
+  }
+  commitHeaderRows()
+}
+
+function describeRow(key) {
+  return describeKey(key)
+}
+
+function nestedSummary(value) {
+  const n = countKeys(value)
+  return `{…} ${n} setting${n === 1 ? '' : 's'}`
+}
+
+function openHeaderJson() {
+  headerJson.value = formatHeader(spec.mission_header)
+  headerJsonError.value = ''
+  headerView.value = 'json'
+}
+
+function applyHeaderJson() {
+  const result = parsePaste(headerJson.value)
+  if (!result.ok) {
+    headerJsonError.value = result.error
+    return
+  }
+  headerJsonError.value = ''
+  spec.mission_header = result.header
+  headerJson.value = formatHeader(result.header)
+}
+
+// ---- the paste dialog -------------------------------------------------------
+// The reason this exists: a mission header is nearly always copied from
+// somewhere else — a forum post, AMP's brace-less box, someone's config.json —
+// and it arrives with ragged indentation, comments, trailing commas or a
+// truncated tail. Repair it, say what was repaired, show what it would change,
+// and only then insert. Nothing is ever spliced into the config as text.
+const paste = reactive({
+  open: false,
+  text: '',
+  mode: 'merge', // 'merge' | 'replace'
+  error: '',
+  repairs: [],
+  header: null,
+  quoted: [],
+  convertQuoted: false,
+})
+
+function openPaste() {
+  Object.assign(paste, {
+    open: true, text: '', mode: 'merge', error: '', repairs: [],
+    header: null, quoted: [], convertQuoted: false,
+  })
+}
+
+// Re-parsed as the user types, so the repair list and the preview are visible
+// before anything is committed.
+watch(
+  () => paste.text,
+  (text) => {
+    if (!text.trim()) {
+      Object.assign(paste, { error: '', repairs: [], header: null, quoted: [] })
+      return
+    }
+    const result = parsePaste(text)
+    if (!result.ok) {
+      Object.assign(paste, { error: result.error, repairs: [], header: null, quoted: [] })
+      return
+    }
+    Object.assign(paste, {
+      error: '',
+      repairs: result.repairs,
+      header: result.header,
+      quoted: result.quotedNumberKeys,
+    })
+  },
+)
+
+const pasteHeader = computed(() =>
+  paste.header && paste.convertQuoted
+    ? convertQuotedNumbers(paste.header, paste.quoted)
+    : paste.header,
+)
+
+const pastePreview = computed(() =>
+  pasteHeader.value ? previewMerge(spec.mission_header, pasteHeader.value) : null,
+)
+
+function confirmPaste() {
+  if (!pasteHeader.value) return
+  spec.mission_header = applyMerge(spec.mission_header, pasteHeader.value, paste.mode)
+  headerJson.value = formatHeader(spec.mission_header)
+  paste.open = false
 }
 
 // Launch-parameter field definitions, rendered generically to keep the
@@ -1863,6 +2051,210 @@ onBeforeUnmount(() => {
               <div v-else class="small text-secondary mt-2">Nobody is banned.</div>
             </div>
           </div>
+
+          <button class="btn btn-link px-0 mt-3" @click="showMissionHeader = !showMissionHeader">
+            {{ showMissionHeader ? '▾ Hide' : '▸ Show' }} mission header
+          </button>
+          <!-- Collapsed by default like player access, so the toggle has to say
+               whether anything is set (#162). -->
+          <span v-if="missionHeaderCount" class="small ms-2 text-secondary">
+            {{ missionHeaderCount }} override{{ missionHeaderCount === 1 ? '' : 's' }}
+          </span>
+
+          <!-- Mission header overrides (#162) -->
+          <div v-show="showMissionHeader" class="border-top pt-3">
+            <p class="small text-secondary">
+              Overrides for the scenario's own mission header — player count, XP rate,
+              time of day, campaign supplies. Which settings a scenario accepts depends
+              on the scenario, and a mod can add its own; anything you type is written
+              through, whether or not it's on the list below.
+            </p>
+
+            <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+              <div class="btn-group btn-group-sm" role="group">
+                <button
+                  class="btn"
+                  :class="headerView === 'rows' ? 'btn-primary' : 'btn-outline-secondary'"
+                  @click="headerView = 'rows'"
+                >
+                  Settings
+                </button>
+                <button
+                  class="btn"
+                  :class="headerView === 'json' ? 'btn-primary' : 'btn-outline-secondary'"
+                  @click="openHeaderJson"
+                >
+                  JSON
+                </button>
+              </div>
+              <button class="btn btn-sm btn-outline-primary" :disabled="locked" @click="openPaste">
+                Paste from AMP or a config…
+              </button>
+            </div>
+
+            <!-- Rows -->
+            <template v-if="headerView === 'rows'">
+              <div v-if="!headerRows.length" class="small text-secondary mb-3">
+                No overrides — the scenario's own values are used.
+              </div>
+              <div v-for="(row, i) in headerRows" :key="i" class="row g-2 align-items-start mb-2">
+                <div class="col-md-4">
+                  <input
+                    v-model="row.key"
+                    class="form-control form-control-sm font-monospace"
+                    :disabled="locked"
+                    @change="commitHeaderRows"
+                  />
+                  <div v-if="describeRow(row.key)" class="form-text">
+                    {{ describeRow(row.key).help }}
+                    <span v-if="describeRow(row.key).caveat" class="text-warning-emphasis">
+                      {{ describeRow(row.key).caveat }}
+                    </span>
+                  </div>
+                </div>
+                <div class="col-md-2">
+                  <select
+                    class="form-select form-select-sm"
+                    :value="row.kind"
+                    :disabled="locked || row.kind === 'json'"
+                    @change="changeHeaderRowKind(row, $event.target.value)"
+                  >
+                    <option value="number">Number</option>
+                    <option value="string">Text</option>
+                    <option value="boolean">On / off</option>
+                    <option v-if="row.kind === 'json'" value="json">Block</option>
+                  </select>
+                </div>
+                <div class="col-md-5">
+                  <input
+                    v-if="row.kind === 'number'"
+                    v-model.number="row.value"
+                    type="number"
+                    step="any"
+                    class="form-control form-control-sm"
+                    :disabled="locked"
+                    @change="commitHeaderRows"
+                  />
+                  <input
+                    v-else-if="row.kind === 'string'"
+                    v-model="row.value"
+                    class="form-control form-control-sm"
+                    :disabled="locked"
+                    @change="commitHeaderRows"
+                  />
+                  <div v-else-if="row.kind === 'boolean'" class="form-check mt-1">
+                    <input
+                      :id="'mh-' + i"
+                      v-model="row.value"
+                      class="form-check-input"
+                      type="checkbox"
+                      :disabled="locked"
+                      @change="commitHeaderRows"
+                    />
+                    <label :for="'mh-' + i" class="form-check-label small">
+                      {{ row.value ? 'On' : 'Off' }}
+                    </label>
+                  </div>
+                  <!-- A nested block (a mod's settings tree) is edited as JSON
+                       rather than flattened into rows that lie about its shape. -->
+                  <div v-else class="d-flex align-items-center gap-2">
+                    <span class="badge text-bg-secondary font-monospace">
+                      {{ nestedSummary(row.value) }}
+                    </span>
+                    <button class="btn btn-sm btn-link px-0" @click="openHeaderJson">
+                      Edit as JSON
+                    </button>
+                  </div>
+                </div>
+                <div class="col-md-1 d-grid">
+                  <button
+                    class="btn btn-sm btn-outline-secondary"
+                    :disabled="locked"
+                    title="Remove this override"
+                    @click="dropHeaderRow(i)"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+
+              <div v-if="headerMissingPrereqs.length" class="alert alert-warning py-2 small">
+                <div v-for="key in headerMissingPrereqs" :key="key">
+                  <code>{{ key }}</code> has to be on before those settings do anything.
+                  <button class="btn btn-sm btn-link p-0 align-baseline" @click="addPrereq(key)">
+                    Switch it on
+                  </button>
+                </div>
+              </div>
+
+              <!-- Add a setting -->
+              <div class="position-relative" style="max-width: 32rem">
+                <input
+                  v-model="headerPick.query"
+                  class="form-control form-control-sm"
+                  placeholder="Add a setting — search, or type any name"
+                  :disabled="locked"
+                  @focus="headerPick.open = true"
+                  @keyup.enter="addHeaderRow(headerMatches[0], headerPick.query)"
+                />
+                <div
+                  v-if="headerPick.open && (headerMatches.length || headerPick.query.trim())"
+                  class="list-group position-absolute w-100 shadow"
+                  style="z-index: 5; max-height: 20rem; overflow: auto"
+                >
+                  <button
+                    v-for="entry in headerMatches"
+                    :key="entry.key"
+                    class="list-group-item list-group-item-action py-2"
+                    @click="addHeaderRow(entry)"
+                  >
+                    <div class="d-flex justify-content-between gap-2">
+                      <code>{{ entry.key }}</code>
+                      <small class="text-secondary">{{ headerGroupLabel[entry.group] }}</small>
+                    </div>
+                    <div class="small text-secondary">
+                      {{ entry.help }}
+                      <span v-if="entry.default !== undefined">
+                        Default {{ JSON.stringify(entry.default) }}.
+                      </span>
+                    </div>
+                  </button>
+                  <button
+                    v-if="headerPick.query.trim()"
+                    class="list-group-item list-group-item-action py-2"
+                    @click="addHeaderRow(null, headerPick.query)"
+                  >
+                    Add <code>{{ headerPick.query.trim() }}</code> — a setting this list
+                    doesn't know about
+                  </button>
+                </div>
+              </div>
+              <div class="form-text">
+                Names and defaults come from the published mission header classes. A
+                scenario or mod can accept others.
+              </div>
+            </template>
+
+            <!-- Raw JSON -->
+            <template v-else>
+              <JsonEditor v-model="headerJson" max-height="24rem" />
+              <div v-if="headerJsonError" class="alert alert-danger py-1 px-2 my-2 small">
+                {{ headerJsonError }}
+              </div>
+              <div class="d-flex gap-2 mt-2">
+                <button class="btn btn-sm btn-primary" :disabled="locked" @click="applyHeaderJson">
+                  Apply
+                </button>
+                <button class="btn btn-sm btn-outline-secondary" @click="headerView = 'rows'">
+                  Back to settings
+                </button>
+              </div>
+              <div class="form-text">
+                Applying tidies the indentation and repairs the usual copy-paste
+                damage — trailing commas, missing braces, curly quotes.
+              </div>
+            </template>
+          </div>
         </div>
 
         <!-- STEP 4: SAVE -->
@@ -1966,6 +2358,83 @@ onBeforeUnmount(() => {
             class="card-body bg-black text-light small mb-0 rounded-bottom"
             style="max-height: 70vh; overflow: auto; white-space: pre-wrap"
           >{{ preview || '// pick a scenario to see the config' }}</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Paste a mission header from anywhere (#162) -->
+    <div v-if="paste.open" class="rsm-modal-backdrop" @click.self="paste.open = false">
+      <div class="card rsm-modal shadow" style="max-width: 46rem">
+        <div class="card-body">
+          <h2 class="h6">Paste a mission header</h2>
+          <p class="small text-secondary mb-2">
+            Paste AMP's <code>"m_iPlayerCount":"64"</code> box, a whole
+            <code>config.json</code>, or any snippet you were given. Indentation,
+            comments, trailing commas, missing braces and curly quotes are all sorted
+            out for you — nothing is inserted until you say so.
+          </p>
+          <textarea
+            v-model="paste.text"
+            class="form-control font-monospace small"
+            rows="10"
+            spellcheck="false"
+            placeholder='"m_iPlayerCount": 64, "m_fXpMultiplier": 10'
+          ></textarea>
+
+          <div v-if="paste.error" class="alert alert-danger py-1 px-2 mt-2 mb-0 small">
+            {{ paste.error }}
+          </div>
+
+          <template v-if="pasteHeader">
+            <div v-if="paste.repairs.length" class="alert alert-info py-2 px-2 mt-2 mb-2 small">
+              <div class="fw-semibold mb-1">
+                Tidied up {{ paste.repairs.length }} thing{{ paste.repairs.length === 1 ? '' : 's' }}:
+              </div>
+              <ul class="mb-0 ps-3">
+                <li v-for="(note, i) in paste.repairs" :key="i">{{ note }}</li>
+              </ul>
+            </div>
+
+            <div v-if="paste.quoted.length" class="form-check small mt-2">
+              <input
+                id="mh-convert"
+                v-model="paste.convertQuoted"
+                class="form-check-input"
+                type="checkbox"
+              />
+              <label for="mh-convert" class="form-check-label">
+                Convert {{ paste.quoted.length }} quoted number{{ paste.quoted.length === 1 ? '' : 's' }}
+                (<code>"64"</code> → <code>64</code>). AMP writes them quoted; the
+                documented examples don't. Left as pasted unless you tick this.
+              </label>
+            </div>
+
+            <div class="d-flex flex-wrap gap-3 align-items-center mt-3">
+              <div class="form-check">
+                <input id="mh-merge" v-model="paste.mode" class="form-check-input" type="radio" value="merge" />
+                <label for="mh-merge" class="form-check-label small">Merge into what's there</label>
+              </div>
+              <div class="form-check">
+                <input id="mh-replace" v-model="paste.mode" class="form-check-input" type="radio" value="replace" />
+                <label for="mh-replace" class="form-check-label small">Replace everything</label>
+              </div>
+            </div>
+
+            <p v-if="pastePreview" class="small text-secondary mt-2 mb-0">
+              {{ pastePreview.added.length }} added,
+              {{ pastePreview.changed.length }} changed,
+              {{ pastePreview.unchanged.length }} unchanged<template
+                v-if="paste.mode === 'replace' && pastePreview.removed.length"
+              >, {{ pastePreview.removed.length }} removed</template>.
+            </p>
+          </template>
+
+          <div class="d-flex gap-2 justify-content-end mt-3">
+            <button class="btn btn-sm btn-outline-secondary" @click="paste.open = false">Cancel</button>
+            <button class="btn btn-sm btn-primary" :disabled="!pasteHeader" @click="confirmPaste">
+              Insert
+            </button>
+          </div>
         </div>
       </div>
     </div>
