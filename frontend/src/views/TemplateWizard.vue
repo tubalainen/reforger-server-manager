@@ -17,8 +17,15 @@ import {
   clearScenarioMods,
   mergeResolved,
   orderedMods,
+  partitionOrder,
   sortModsByAdded,
   sortModsByName,
+  applyOrderIds,
+  dependencyViolations,
+  moveMod,
+  movedMods,
+  reorderMods,
+  topoOrder,
 } from '../mods'
 import {
   ADMIN_LIMIT,
@@ -595,9 +602,10 @@ const searchIsModId = computed(() => searchModIds.value.length > 0)
 
 const byModId = (id) => spec.mods.find((m) => m.modId === id)
 
-// The two visual tiers of the enabled list.
-const explicitMods = computed(() => spec.mods.filter((m) => m.explicit))
-const dependencyMods = computed(() => spec.mods.filter((m) => !m.explicit))
+// Mods listed before something they require. Since #164 the list is one
+// reorderable sequence, so this is a state the user can put it in — it is
+// pointed out, never corrected behind their back.
+const depOrderWarnings = computed(() => dependencyViolations(spec.mods))
 
 // Is `m` required (transitively) by the mod backing the selected scenario?
 function requiredByScenario(m) {
@@ -878,13 +886,167 @@ function sortByAdded() {
   modNotice.value = 'Mods sorted in the order they were added.'
 }
 
-function moveExplicit(id, dir) {
-  const ex = spec.mods.filter((m) => m.explicit)
-  const i = ex.findIndex((m) => m.modId === id)
-  const j = i + dir
-  if (i < 0 || j < 0 || j >= ex.length) return
-  ;[ex[i], ex[j]] = [ex[j], ex[i]]
-  spec.mods = [...ex, ...spec.mods.filter((m) => !m.explicit)]
+// Deterministic and offline: every mod after what it requires, everything else
+// left where it is (#164).
+function sortByDependencies() {
+  const before = spec.mods
+  spec.mods = topoOrder(spec.mods)
+  const moved = movedMods(before, spec.mods).length
+  modNotice.value = moved
+    ? `Moved ${moved} mod(s) so each one is listed after what it requires.`
+    : 'Every mod was already listed after what it requires — nothing moved.'
+}
+
+function moveOne(id, dir) {
+  spec.mods = moveMod(spec.mods, id, dir)
+}
+
+// ---- Drag and drop (#164) ---------------------------------------------------
+// Native HTML5 drag events — no new dependency for what is one splice. The
+// ↑/↓ buttons stay: they are the keyboard and touch path, which drag is not.
+const drag = reactive({ from: -1, over: -1 })
+
+function onDragStart(i, event) {
+  drag.from = i
+  drag.over = i
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+    // Firefox starts no drag at all unless some data is set.
+    event.dataTransfer.setData('text/plain', String(i))
+  }
+}
+
+function onDragOver(i, event) {
+  if (drag.from < 0) return
+  event.preventDefault()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+  drag.over = i
+}
+
+function onDrop(i) {
+  if (drag.from >= 0 && drag.from !== i) spec.mods = reorderMods(spec.mods, drag.from, i)
+  onDragEnd()
+}
+
+function onDragEnd() {
+  drag.from = -1
+  drag.over = -1
+}
+
+// ---- Order the mods with an AI (#164) ---------------------------------------
+// Two routes to the same place, because there is no AI service that is both
+// free and keyless to call from here (checked: the "anonymous" endpoints either
+// want payment now or have retired their free tier):
+//
+//   * copy the prompt into ChatGPT / Gemini / Claude, paste the answer back —
+//     free, needs no setup, and the mod list leaves through the user's own
+//     browser rather than through their server;
+//   * one click, when the operator has pointed AI_ORDER_URL at an OpenAI-
+//     compatible service of their own (a free Gemini or OpenRouter key, or a
+//     local Ollama).
+//
+// Both end at the same preview: an answer is never applied until it has been
+// read back as a list of mod ids, checked against the mods actually in the
+// template, and confirmed.
+const aiOrder = reactive({
+  open: false,
+  loading: false, // fetching the prompt
+  busy: false, // waiting on the AI service
+  available: false, // a provider is configured on this manager
+  prompt: '',
+  reply: '',
+  model: '',
+  error: '',
+  copied: false,
+  fixDeps: true,
+})
+const aiPromptBox = ref(null)
+
+function modsForPrompt() {
+  return spec.mods.map((m) => ({
+    modId: m.modId,
+    name: m.name,
+    explicit: m.explicit,
+    dependencies: m.dependencies,
+  }))
+}
+
+async function openAiOrder() {
+  Object.assign(aiOrder, {
+    open: true, loading: true, busy: false, prompt: '', reply: '', model: '',
+    error: '', copied: false, fixDeps: true,
+  })
+  try {
+    const res = await api('/api/mods/order/prompt', {
+      method: 'POST',
+      body: { mods: modsForPrompt() },
+    })
+    aiOrder.prompt = res.prompt
+    aiOrder.available = res.ai_available
+  } catch (e) {
+    aiOrder.error = e.message
+  } finally {
+    aiOrder.loading = false
+  }
+}
+
+async function askAi() {
+  aiOrder.busy = true
+  aiOrder.error = ''
+  try {
+    const res = await api('/api/mods/order/ai', {
+      method: 'POST',
+      body: { mods: modsForPrompt() },
+    })
+    aiOrder.reply = res.reply
+    aiOrder.model = res.model
+  } catch (e) {
+    aiOrder.error = e.message
+  } finally {
+    aiOrder.busy = false
+  }
+}
+
+// navigator.clipboard exists only in a secure context, which a plain-HTTP LAN
+// deployment is not — so fall back to selecting the text, which works anywhere
+// and leaves the user one Ctrl+C away.
+async function copyPrompt() {
+  aiOrder.copied = false
+  try {
+    await navigator.clipboard.writeText(aiOrder.prompt)
+    aiOrder.copied = true
+    setTimeout(() => (aiOrder.copied = false), 2500)
+  } catch {
+    aiPromptBox.value?.select()
+    aiOrder.error = 'Could not reach the clipboard — the prompt is selected, press Ctrl+C to copy.'
+  }
+}
+
+// What the reply would do, recomputed as it is typed or pasted. Everything the
+// user needs to judge it is here: what moves, what the answer forgot, what it
+// made up, and whether the result still lists each mod after what it requires.
+const aiProposal = computed(() => {
+  const ids = extractModIds(aiOrder.reply)
+  if (!ids.length) return null
+  const applied = applyOrderIds(spec.mods, ids)
+  const proposed = aiOrder.fixDeps ? topoOrder(applied.mods) : applied.mods
+  return {
+    ...applied,
+    mods: proposed,
+    moved: movedMods(spec.mods, proposed),
+    violations: dependencyViolations(proposed),
+    repaired: aiOrder.fixDeps ? movedMods(applied.mods, proposed).length : 0,
+  }
+})
+
+function applyAiOrder() {
+  if (!aiProposal.value) return
+  const moved = aiProposal.value.moved.length
+  spec.mods = aiProposal.value.mods
+  aiOrder.open = false
+  modNotice.value = moved
+    ? `Applied the suggested order — ${moved} mod(s) moved. Nothing was added or removed.`
+    : 'That order matches the list you already have — nothing moved.'
 }
 
 // ---- Export / import the enabled mod list as JSON (issue #55) ---------------
@@ -913,7 +1075,11 @@ async function importMods(event) {
     ) {
       return
     }
-    spec.mods = normalizeMods(list)
+    // A file written before #164 carries no meaningful order of its own — it was
+    // always picks-then-dependencies — so it is re-partitioned. A @2 file was
+    // saved from a list the user ordered themselves: take it exactly as it is.
+    const loaded = normalizeMods(list)
+    spec.mods = parsed.format === MODS_FILE_FORMAT ? loaded : partitionOrder(loaded)
     modNotice.value = `Loaded ${spec.mods.length} mod(s) from ${file.name}.`
     hydrateVersionHistories()
   } catch (e) {
@@ -1158,8 +1324,11 @@ onMounted(async () => {
       Object.assign(spec, t.spec)
       // merge launch onto defaults so older templates (empty launch) keep keys
       spec.launch = { ...launchDefaults, ...(t.spec.launch || {}) }
-      // normalise mods so older templates (flat mods[]) gain the metadata fields
-      spec.mods = normalizeMods(t.spec.mods)
+      // normalise mods so older templates (flat mods[]) gain the metadata
+      // fields, and put them in the order this template has been rendering with
+      // — before #164 that was always "picks first, dependencies after",
+      // whatever order the array itself was stored in (#164).
+      spec.mods = partitionOrder(normalizeMods(t.spec.mods))
       spec.name = t.name
       spec.description = t.description
       extrasPaths.value = t.extras_paths || []
@@ -1370,8 +1539,9 @@ onBeforeUnmount(() => {
           <p class="text-secondary">
             Add mods on top of the scenario. Only the mod itself goes in the config — its
             sub-dependencies are downloaded by the server automatically, so you don't add or
-            manage them here. Mods follow the latest Workshop release unless you lock a
-            version — only locked versions are written to config.json.
+            remove them here, though you can move them in the list. Mods follow the latest
+            Workshop release unless you lock a version — only locked versions are written to
+            config.json.
           </p>
           <p class="text-secondary small">
             <span class="badge text-bg-info">scenario</span> provides the selected scenario ·
@@ -1462,14 +1632,26 @@ onBeforeUnmount(() => {
             <div class="btn-group btn-group-sm">
               <button
                 class="btn btn-outline-secondary"
-                :disabled="explicitMods.length < 2"
-                title="Sort the enabled mods alphabetically — this is the order saved to config.json"
+                :disabled="spec.mods.length < 2"
+                title="Order the mods with an AI — copy the prompt into ChatGPT, Gemini or Claude, or ask a service you have configured"
+                @click="openAiOrder"
+              >✨ AI order…</button>
+              <button
+                class="btn btn-outline-secondary"
+                :disabled="spec.mods.length < 2"
+                title="Reorder so every mod is listed after the mods it requires, leaving everything else where it is"
+                @click="sortByDependencies"
+              >Dependencies first</button>
+              <button
+                class="btn btn-outline-secondary"
+                :disabled="spec.mods.length < 2"
+                title="Sort the mods alphabetically — this is the order saved to config.json"
                 @click="sortByName"
               >Sort A–Z</button>
               <button
                 class="btn btn-outline-secondary"
-                :disabled="explicitMods.length < 2"
-                title="Sort the enabled mods in the order they were added"
+                :disabled="spec.mods.length < 2"
+                title="Sort the mods in the order they were added"
                 @click="sortByAdded"
               >Sort as added</button>
               <button
@@ -1501,20 +1683,51 @@ onBeforeUnmount(() => {
             No mods yet — the scenario runs vanilla. Add mods above.
           </div>
 
-          <!-- Explicit picks (scenario + user-added): reorderable, removable -->
-          <ul v-if="explicitMods.length" class="list-group mb-2">
+          <!-- One list, in load order (#164): drag a row anywhere, dependencies
+               included. Row 1 is the first entry of config.json's mods[]. -->
+          <div v-if="spec.mods.length" class="text-secondary small mb-1">
+            This is the order the mods are written to <code>config.json</code>. Drag a row
+            (or use ↑ ↓) to change it.
+            <span v-if="depOrderWarnings.length" class="text-warning-emphasis">
+              {{ depOrderWarnings.length }} mod(s) are listed before something they require —
+              "Dependencies first" fixes that.
+            </span>
+          </div>
+          <ul v-if="spec.mods.length" class="list-group mb-2">
             <li
-              v-for="(m, i) in explicitMods"
+              v-for="(m, i) in spec.mods"
               :key="m.modId"
               class="list-group-item d-flex justify-content-between align-items-center py-2"
+              :class="{
+                'bg-body-tertiary': !m.explicit,
+                'opacity-50': drag.from === i,
+                'border-primary border-2': drag.over === i && drag.from !== i && drag.from >= 0,
+              }"
+              draggable="true"
+              @dragstart="onDragStart(i, $event)"
+              @dragover="onDragOver(i, $event)"
+              @drop="onDrop(i)"
+              @dragend="onDragEnd"
             >
+              <span
+                class="text-secondary me-2 flex-shrink-0 text-nowrap"
+                style="cursor: grab"
+                title="Drag to reorder"
+              >
+                <span class="font-monospace small">{{ i + 1 }}</span> ⠿
+              </span>
               <div class="me-2 text-truncate">
                 <span
                   class="badge me-1"
                   :class="modBadge(m).cls"
                   :title="modBadge(m).title"
                 >{{ modBadge(m).text }}</span>
-                <span class="fw-semibold">{{ m.name || m.modId }}</span>
+                <span :class="m.explicit ? 'fw-semibold' : ''">{{ m.name || m.modId }}</span>
+                <small
+                  v-if="!m.explicit"
+                  class="text-secondary ms-1"
+                  :title="'Required by: ' + requiredByNames(m.modId)"
+                >· required by {{ requiredBy(spec.mods, m.modId).length }}</small>
                 <small class="text-secondary d-block">{{ m.modId }}</small>
               </div>
               <select
@@ -1530,52 +1743,159 @@ onBeforeUnmount(() => {
                   class="btn btn-outline-secondary"
                   :disabled="i === 0"
                   title="Move up"
-                  @click="moveExplicit(m.modId, -1)"
+                  @click="moveOne(m.modId, -1)"
                 >↑</button>
                 <button
                   class="btn btn-outline-secondary"
-                  :disabled="i === explicitMods.length - 1"
+                  :disabled="i === spec.mods.length - 1"
                   title="Move down"
-                  @click="moveExplicit(m.modId, 1)"
+                  @click="moveOne(m.modId, 1)"
                 >↓</button>
                 <button
+                  v-if="m.explicit"
                   class="btn btn-outline-danger"
                   :title="m.from_scenario ? 'Change the scenario to remove this' : 'Remove'"
                   @click="removeMod(m.modId)"
                 >✕</button>
+                <button
+                  v-else
+                  class="btn btn-outline-secondary"
+                  disabled
+                  title="Added automatically because another mod requires it — remove that mod to drop this one"
+                >✕</button>
               </div>
             </li>
           </ul>
+        </div>
 
-          <!-- Auto-added dependencies: read-only, managed via their parents -->
-          <div v-if="dependencyMods.length">
-            <div class="text-secondary small text-uppercase mb-1" style="letter-spacing: .04em">
-              Dependencies · added automatically ({{ dependencyMods.length }})
-            </div>
-            <ul class="list-group">
-              <li
-                v-for="m in dependencyMods"
-                :key="m.modId"
-                class="list-group-item d-flex justify-content-between align-items-center py-1 bg-body-tertiary"
-              >
-                <div class="me-2 text-truncate">
-                  <span class="text-truncate">{{ m.name || m.modId }}</span>
-                  <small class="text-secondary d-block">{{ m.modId }}</small>
+        <!-- Order the mods with an AI (#164) -->
+        <div v-if="aiOrder.open" class="modal d-block" tabindex="-1" style="background: rgba(0,0,0,.5)">
+          <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+              <div class="modal-header">
+                <h5 class="modal-title">Order {{ spec.mods.length }} mods with an AI</h5>
+                <button class="btn-close" @click="aiOrder.open = false"></button>
+              </div>
+              <div class="modal-body">
+                <p class="small text-secondary">
+                  The prompt below describes your mods — their ids, names and what requires
+                  what — and asks for a load order back. Nothing about your server, its
+                  password or its players is in it, and nothing moves until you press
+                  <em>Apply</em>.
+                </p>
+
+                <div v-if="aiOrder.loading" class="text-secondary small">
+                  <span class="spinner-border spinner-border-sm me-1"></span>Building the prompt…
                 </div>
-                <select
-                  v-model="m.version"
-                  class="form-select form-select-sm w-auto ms-auto me-2 flex-shrink-0"
-                  :title="m.version ? 'Locked to v' + m.version : 'Follows the latest Workshop release'"
-                >
-                  <option :value="null">latest</option>
-                  <option v-for="v in lockOptions(m)" :key="v" :value="v">🔒 v{{ v }}</option>
-                </select>
-                <small
-                  class="text-secondary flex-shrink-0"
-                  :title="'Required by: ' + requiredByNames(m.modId)"
-                >required by {{ requiredBy(spec.mods, m.modId).length }}</small>
-              </li>
-            </ul>
+
+                <template v-else>
+                  <!-- Route 1: a service the operator configured -->
+                  <div v-if="aiOrder.available" class="mb-3">
+                    <button class="btn btn-primary btn-sm" :disabled="aiOrder.busy" @click="askAi">
+                      <span v-if="aiOrder.busy" class="spinner-border spinner-border-sm me-1"></span>
+                      {{ aiOrder.busy ? 'Asking…' : 'Ask the AI service' }}
+                    </button>
+                    <span v-if="aiOrder.model" class="small text-secondary ms-2">
+                      answered by {{ aiOrder.model }}
+                    </span>
+                  </div>
+
+                  <!-- Route 2: the free web assistants, via the clipboard -->
+                  <div class="mb-2">
+                    <button class="btn btn-outline-secondary btn-sm me-2" @click="copyPrompt">
+                      {{ aiOrder.copied ? 'Copied ✓' : 'Copy the prompt' }}
+                    </button>
+                    <span class="small text-secondary">then paste it into</span>
+                    <a class="small ms-2" href="https://chatgpt.com/" target="_blank" rel="noopener noreferrer">ChatGPT</a>
+                    <a class="small ms-2" href="https://gemini.google.com/" target="_blank" rel="noopener noreferrer">Gemini</a>
+                    <a class="small ms-2" href="https://claude.ai/" target="_blank" rel="noopener noreferrer">Claude</a>
+                    <span class="small text-secondary ms-2">— all free — and paste the answer below.</span>
+                  </div>
+                  <details class="mb-3">
+                    <summary class="small text-secondary">Show the prompt</summary>
+                    <textarea
+                      ref="aiPromptBox"
+                      class="form-control form-control-sm font-monospace mt-2"
+                      rows="10"
+                      readonly
+                      :value="aiOrder.prompt"
+                    ></textarea>
+                  </details>
+
+                  <label class="form-label small fw-semibold">Paste the answer</label>
+                  <textarea
+                    v-model="aiOrder.reply"
+                    class="form-control form-control-sm font-monospace"
+                    rows="6"
+                    placeholder="Paste the AI's reply here — any format, as long as the mod ids are in it."
+                  ></textarea>
+
+                  <div v-if="aiOrder.error" class="alert alert-warning py-2 small mt-2 mb-0">
+                    {{ aiOrder.error }}
+                  </div>
+
+                  <div v-if="aiOrder.reply.trim() && !aiProposal" class="alert alert-warning py-2 small mt-2 mb-0">
+                    No mod ids in that text. Paste the whole reply — each id is 16 characters,
+                    like <code>{{ spec.mods[0]?.modId }}</code>.
+                  </div>
+
+                  <template v-if="aiProposal">
+                    <hr />
+                    <h6 class="mb-2">What this would do</h6>
+                    <ul class="small mb-2">
+                      <li>
+                        <strong>{{ aiProposal.moved.length }}</strong> of
+                        {{ spec.mods.length }} mods change position. Nothing is added or removed.
+                      </li>
+                      <li v-if="aiProposal.missing.length" class="text-warning-emphasis">
+                        The answer left out {{ aiProposal.missing.length }} mod(s) — they stay
+                        where they are now, so the list is still complete.
+                      </li>
+                      <li v-if="aiProposal.unknown.length" class="text-warning-emphasis">
+                        It named {{ aiProposal.unknown.length }} id(s) that are not in this
+                        template. Ignored — nothing is added by this.
+                      </li>
+                      <li v-if="aiProposal.repaired" class="text-secondary">
+                        {{ aiProposal.repaired }} mod(s) were nudged so each one is still listed
+                        after what it requires.
+                      </li>
+                      <li v-if="aiProposal.violations.length" class="text-warning-emphasis">
+                        {{ aiProposal.violations.length }} mod(s) would sit before something they
+                        require (a dependency loop — it cannot be fixed automatically).
+                      </li>
+                    </ul>
+                    <div class="form-check small mb-2">
+                      <input
+                        id="ai-fix-deps"
+                        v-model="aiOrder.fixDeps"
+                        class="form-check-input"
+                        type="checkbox"
+                      />
+                      <label class="form-check-label" for="ai-fix-deps">
+                        Keep every mod after the mods it requires, even if the answer says otherwise
+                      </label>
+                    </div>
+                    <ol class="list-group list-group-numbered" style="max-height: 18rem; overflow-y: auto">
+                      <li
+                        v-for="row in aiProposal.mods"
+                        :key="row.modId"
+                        class="list-group-item py-1 small d-flex justify-content-between"
+                        :class="{ 'list-group-item-warning': aiProposal.moved.some((r) => r.mod.modId === row.modId) }"
+                      >
+                        <span class="text-truncate">{{ row.name || row.modId }}</span>
+                        <small class="text-secondary flex-shrink-0 ms-2">{{ row.modId }}</small>
+                      </li>
+                    </ol>
+                  </template>
+                </template>
+              </div>
+              <div class="modal-footer">
+                <button class="btn btn-outline-secondary" @click="aiOrder.open = false">Cancel</button>
+                <button class="btn btn-primary" :disabled="!aiProposal" @click="applyAiOrder">
+                  Apply this order
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
