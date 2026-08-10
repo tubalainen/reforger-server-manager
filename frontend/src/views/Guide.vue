@@ -122,6 +122,21 @@ const faq = [
        versions are written into config.json.`,
   },
   {
+    q: 'Does the order of the mods matter, and what does "AI order…" do?',
+    a: `The list on the Mods step is written to config.json in exactly the order you see, so
+       you control it: drag a row, use ↑ ↓, or press "Dependencies first" to put every mod
+       after the mods it requires. Community guidance is that frameworks and libraries
+       belong at the top and mods that patch or override other mods at the bottom, because
+       a later entry gets the last word. We could not find an official Bohemia statement
+       that the engine honours the array order at all — it may well resolve the order
+       itself — so treat ordering as something that can help and cannot hurt, not as a fix
+       for a broken server. "AI order…" writes the question for you: copy the prompt into
+       ChatGPT, Gemini or Claude (all free) and paste the answer back, or press one button
+       if your admin has configured an AI service in .env. Nothing is sent anywhere until
+       you press the button, the prompt contains only mod ids, names and which mod needs
+       which, and no answer is applied until you have seen exactly what it would move.`,
+  },
+  {
     q: 'What is the difference between Stable and Experimental?',
     a: `They are two separate builds of the dedicated server with separate ~10 GB
        downloads (Steam app 1874900 vs 1890870). Experimental servers only accept
@@ -312,9 +327,12 @@ const faq = [
             several at once, comma-separated, if you like.
             Dependencies (and their dependencies) come along automatically and are removed
             again when nothing needs them. Mods follow the latest Workshop release unless
-            you lock a version. The list can be sorted by name or by the order you added
-            mods, or rearranged by hand, and exported/imported as JSON to share
-            between templates or friends. Badges show each mod's role:
+            you lock a version. The list is in load order — the order the mods are written
+            to <code>config.json</code> — and you can drag any row to change it, sort by
+            name or by when you added them, put every mod after what it requires with
+            <em>Dependencies first</em>, or ask an AI for an order with
+            <em>AI order…</em> (see below). It exports/imports as JSON to share between
+            templates or friends. Badges show each mod's role:
             <em>scenario</em> (provides the scenario), <em>scenario dependency</em>
             (needed for the scenario to work), <em>addon</em> (an extra you chose),
             <em>dependency</em> (pulled in by an addon) and <em>scenario mod</em> (an addon

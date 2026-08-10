@@ -86,9 +86,16 @@ done once than read it step by step — the two cover the same ground.
       replace/remove drops the mods it brought in
 - [x] Mod manager: search or paste-by-id to enable mods on top of a scenario —
       dependencies (and sub-dependencies) follow automatically; disabling a mod prompts
-      whether to drop the dependencies it brought in; reorder mods and export/import the
+      whether to drop the dependencies it brought in; export/import the
       mod list as JSON; mods follow the latest Workshop release by default, or **lock any
       mod to a specific version** (only locked versions are written to `config.json`)
+- [x] **Mod load order you control** — the list is written to `config.json` in the order
+      you see it: **drag any row** to move it, sort by name or by when you added it, or
+      press *Dependencies first* to put every mod after the mods it requires. **AI order…**
+      writes the prompt for you to paste into ChatGPT, Gemini or Claude — or asks a service
+      you configured (`AI_ORDER_URL`) in one click. Any answer is checked against your own
+      mod list and previewed before a single mod moves; nothing is ever added or removed
+      by it
 - [x] **Max players follows the scenario** — the wizard seeds the player limit from the
       count the scenario declares on the Workshop (a 12-player co-op scenario no longer
       gets a 64-slot server), and you can override it whenever you like

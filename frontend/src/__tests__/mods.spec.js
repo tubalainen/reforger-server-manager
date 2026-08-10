@@ -1,19 +1,26 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  applyOrderIds,
   clearScenarioMods,
+  dependencyViolations,
   extractModId,
   extractModIds,
   mergeResolved,
+  moveMod,
+  movedMods,
   neededSet,
   normalizeMod,
   orderedMods,
   orphansAfterRemoving,
+  partitionOrder,
   pruneOrphans,
+  reorderMods,
   requiredBy,
   sortModsByAdded,
   sortModsByName,
   stillRequiredWithoutExplicit,
+  topoOrder,
 } from '../mods'
 
 describe('extractModId', () => {
@@ -156,8 +163,29 @@ describe('mergeResolved', () => {
 })
 
 describe('orderedMods', () => {
-  it('puts explicit mods first — config.json mod order is load order', () => {
-    expect(orderedMods(graph()).map((m) => m.modId)).toEqual(['A', 'D', 'B', 'C'])
+  it('is the list itself — since #164 the order you see is the order exported', () => {
+    expect(orderedMods(graph()).map((m) => m.modId)).toEqual(['A', 'B', 'C', 'D'])
+  })
+
+  it('does not alias the input, so exporting cannot mutate the template', () => {
+    const mods = graph()
+    expect(orderedMods(mods)).not.toBe(mods)
+  })
+})
+
+describe('partitionOrder (#164 migration)', () => {
+  it('reproduces the pre-#164 render order: picks first, dependencies after', () => {
+    expect(partitionOrder(graph()).map((m) => m.modId)).toEqual(['A', 'D', 'B', 'C'])
+  })
+
+  it('is what keeps an untouched old template rendering the same config.json', () => {
+    // Whatever order the array was stored in, the list used to render (and
+    // export) partitioned — so loading through partitionOrder is a no-op change.
+    const stored = [
+      mod('DEP', { explicit: false }),
+      mod('PICK', { explicit: true }),
+    ]
+    expect(partitionOrder(stored).map((m) => m.modId)).toEqual(['PICK', 'DEP'])
   })
 })
 
@@ -214,15 +242,15 @@ describe('added_order (#105)', () => {
   })
 })
 
-describe('sorting (#105)', () => {
+describe('sorting (#105, #164)', () => {
   const list = () => [
     mod('B1', { name: 'bravo', explicit: true, added_order: 2 }),
     mod('A1', { name: 'Alpha', explicit: true, added_order: 3 }),
     mod('C1', { name: 'Charlie', explicit: true, added_order: 1 }),
-    mod('D1', { name: 'zz-dep', explicit: false }),
+    mod('D1', { name: 'zz-dep', explicit: false, added_order: 4 }),
   ]
 
-  it('sortModsByName orders the explicit tier case-insensitively, deps stay after', () => {
+  it('sortModsByName orders the whole list case-insensitively', () => {
     expect(sortModsByName(list()).map((m) => m.modId)).toEqual(['A1', 'B1', 'C1', 'D1'])
   })
 
@@ -239,6 +267,15 @@ describe('sorting (#105)', () => {
     expect(sorted.map((m) => m.modId)).toEqual(['C1', 'B1', 'A1', 'D1'])
   })
 
+  it('sorts dependencies in among the picks — since #164 they are one list', () => {
+    const mods = [
+      mod('PICK', { name: 'zulu', explicit: true, added_order: 2 }),
+      mod('DEP', { name: 'alpha', explicit: false, added_order: 1 }),
+    ]
+    expect(sortModsByName(mods).map((m) => m.modId)).toEqual(['DEP', 'PICK'])
+    expect(sortModsByAdded(mods).map((m) => m.modId)).toEqual(['DEP', 'PICK'])
+  })
+
   it('sortModsByAdded keeps legacy un-numbered mods first, in their current order', () => {
     const mods = [
       mod('N1', { added_order: 5, explicit: true }),
@@ -246,5 +283,204 @@ describe('sorting (#105)', () => {
       mod('L2', { added_order: null, explicit: true }),
     ]
     expect(sortModsByAdded(mods).map((m) => m.modId)).toEqual(['L1', 'L2', 'N1'])
+  })
+})
+
+// ---- #164: the list is the load order --------------------------------------
+
+describe('moveMod / reorderMods', () => {
+  const list = () => [mod('A'), mod('B'), mod('C')]
+
+  it('swaps a mod with its neighbour', () => {
+    expect(moveMod(list(), 'C', -1).map((m) => m.modId)).toEqual(['A', 'C', 'B'])
+    expect(moveMod(list(), 'A', 1).map((m) => m.modId)).toEqual(['B', 'A', 'C'])
+  })
+
+  it('refuses to move off either end, or to move a mod that is not there', () => {
+    expect(moveMod(list(), 'A', -1).map((m) => m.modId)).toEqual(['A', 'B', 'C'])
+    expect(moveMod(list(), 'C', 1).map((m) => m.modId)).toEqual(['A', 'B', 'C'])
+    expect(moveMod(list(), 'ZZ', 1).map((m) => m.modId)).toEqual(['A', 'B', 'C'])
+  })
+
+  it('drops a dragged mod at the index it was dropped on, in both directions', () => {
+    expect(reorderMods(list(), 0, 2).map((m) => m.modId)).toEqual(['B', 'C', 'A'])
+    expect(reorderMods(list(), 2, 0).map((m) => m.modId)).toEqual(['C', 'A', 'B'])
+  })
+
+  it('never loses or duplicates a mod, whatever it is handed', () => {
+    for (const [from, to] of [[0, 0], [1, 9], [-1, 1], [2, -5]]) {
+      const out = reorderMods(list(), from, to)
+      expect([...out.map((m) => m.modId)].sort()).toEqual(['A', 'B', 'C'])
+    }
+  })
+})
+
+describe('dependencyViolations / topoOrder', () => {
+  // A needs B, B needs C, D needs C.
+  const chain = () => [
+    mod('A', { explicit: true, dependencies: ['B'] }),
+    mod('B', { explicit: false, dependencies: ['C'] }),
+    mod('C', { explicit: false }),
+    mod('D', { explicit: true, dependencies: ['C'] }),
+  ]
+
+  it('names every mod listed before something it requires, and only those', () => {
+    // D sits after C, so D is fine; A and B are both above what they need.
+    expect(dependencyViolations(chain())).toEqual([
+      { mod: 'A', dependency: 'B' },
+      { mod: 'B', dependency: 'C' },
+    ])
+  })
+
+  it('says nothing about a dependency that is not in the list', () => {
+    expect(dependencyViolations([mod('A', { dependencies: ['GONE'] })])).toEqual([])
+  })
+
+  it('topoOrder puts every mod after what it requires', () => {
+    const sorted = topoOrder(chain())
+    expect(dependencyViolations(sorted)).toEqual([])
+    expect(sorted.map((m) => m.modId)).toEqual(['C', 'B', 'D', 'A'])
+  })
+
+  it('topoOrder leaves an order that is already correct exactly as it is', () => {
+    const already = topoOrder(chain())
+    expect(topoOrder(already).map((m) => m.modId)).toEqual(already.map((m) => m.modId))
+  })
+
+  it('topoOrder is stable: unrelated mods keep their relative order', () => {
+    const mods = [mod('X'), mod('Y'), mod('Z')]
+    expect(topoOrder(mods).map((m) => m.modId)).toEqual(['X', 'Y', 'Z'])
+  })
+
+  it('topoOrder returns the whole list even when the graph has a cycle', () => {
+    const cyclic = [
+      mod('A', { dependencies: ['B'] }),
+      mod('B', { dependencies: ['A'] }),
+      mod('C'),
+    ]
+    expect(topoOrder(cyclic).map((m) => m.modId).sort()).toEqual(['A', 'B', 'C'])
+  })
+})
+
+describe('applyOrderIds (an order proposed by an AI or pasted in)', () => {
+  const list = () => [mod('A1'), mod('B1'), mod('C1')]
+
+  it('reorders to match the ids given', () => {
+    const out = applyOrderIds(list(), ['C1', 'A1', 'B1'])
+    expect(out.mods.map((m) => m.modId)).toEqual(['C1', 'A1', 'B1'])
+    expect(out.missing).toEqual([])
+    expect(out.unknown).toEqual([])
+  })
+
+  it('accepts lower-case ids, because a model will happily re-type them', () => {
+    expect(applyOrderIds(list(), ['c1', 'a1', 'b1']).mods.map((m) => m.modId)).toEqual(
+      ['C1', 'A1', 'B1'],
+    )
+  })
+
+  it('ignores an id that is not in the template and reports it', () => {
+    const out = applyOrderIds(list(), ['C1', 'DEADBEEFDEADBEEF', 'A1', 'B1'])
+    expect(out.mods.map((m) => m.modId)).toEqual(['C1', 'A1', 'B1'])
+    expect(out.unknown).toEqual(['DEADBEEFDEADBEEF'])
+  })
+
+  it('keeps a mod the answer forgot, near where it already was', () => {
+    const out = applyOrderIds(list(), ['C1', 'A1']) // B1 (index 1) never mentioned
+    expect(out.mods.map((m) => m.modId)).toEqual(['C1', 'B1', 'A1'])
+    expect(out.missing).toEqual(['B1'])
+  })
+
+  it('treats a repeated id as one mod rather than duplicating it', () => {
+    const out = applyOrderIds(list(), ['C1', 'A1', 'C1', 'B1'])
+    expect(out.mods.map((m) => m.modId)).toEqual(['C1', 'A1', 'B1'])
+  })
+
+  it('never changes which mods are in the list', () => {
+    const before = list()
+    for (const ids of [[], ['ZZZZZZZZZZZZZZZZ'], ['B1'], ['C1', 'B1', 'A1']]) {
+      const out = applyOrderIds(before, ids)
+      expect([...out.mods.map((m) => m.modId)].sort()).toEqual(['A1', 'B1', 'C1'])
+    }
+  })
+})
+
+describe('reading a mod order out of a real AI reply', () => {
+  // The parser is extractModIds: whatever shape the answer arrives in, the ids
+  // in it, in order, are the answer. These are the shapes models actually emit.
+  const ids = ['595F2BF2F44836FB', '1337C0DE5DABBEEF', 'BADC0DEDABBEDA5E']
+  const mods = ids.map((id) => mod(id))
+  const expectOrder = (text, want) =>
+    expect(applyOrderIds(mods, extractModIds(text)).mods.map((m) => m.modId)).toEqual(want)
+
+  it('reads the format the prompt asks for', () => {
+    expectOrder(
+      `BADC0DEDABBEDA5E | Core Lib | framework, everything builds on it
+1337C0DE5DABBEEF | Weapons | content pack
+595F2BF2F44836FB | Tweaks | patches the others, goes last`,
+      ['BADC0DEDABBEDA5E', '1337C0DE5DABBEEF', '595F2BF2F44836FB'],
+    )
+  })
+
+  it('reads a numbered list with a preamble the model was told not to write', () => {
+    expectOrder(
+      `Sure! Here is the recommended load order:
+
+1. BADC0DEDABBEDA5E (Core Lib)
+2. 595F2BF2F44836FB (Tweaks)
+3. 1337C0DE5DABBEEF (Weapons)`,
+      ['BADC0DEDABBEDA5E', '595F2BF2F44836FB', '1337C0DE5DABBEEF'],
+    )
+  })
+
+  it('reads a fenced JSON array', () => {
+    expectOrder(
+      '```json\n["1337c0de5dabbeef", "badc0dedabbeda5e", "595f2bf2f44836fb"]\n```',
+      ['1337C0DE5DABBEEF', 'BADC0DEDABBEDA5E', '595F2BF2F44836FB'],
+    )
+  })
+
+  it('reads a markdown table', () => {
+    expectOrder(
+      `| # | Mod | Id |
+|---|-----|----|
+| 1 | Core Lib | BADC0DEDABBEDA5E |
+| 2 | Weapons | 1337C0DE5DABBEEF |
+| 3 | Tweaks | 595F2BF2F44836FB |`,
+      ['BADC0DEDABBEDA5E', '1337C0DE5DABBEEF', '595F2BF2F44836FB'],
+    )
+  })
+
+  it('ignores trailing remarks that mention a mod again', () => {
+    // The first mention wins, so a closing "note that BADC… is the framework"
+    // cannot promote a mod that was listed last.
+    expectOrder(
+      `1337C0DE5DABBEEF
+BADC0DEDABBEDA5E
+595F2BF2F44836FB
+
+Note: 595F2BF2F44836FB patches 1337C0DE5DABBEEF, which is why it is last.`,
+      ['1337C0DE5DABBEEF', 'BADC0DEDABBEDA5E', '595F2BF2F44836FB'],
+    )
+  })
+
+  it('finds nothing to do in an answer with no ids at all', () => {
+    expect(extractModIds('I cannot help with that.')).toEqual([])
+  })
+})
+
+describe('movedMods', () => {
+  it('reports only the mods whose position changed', () => {
+    const before = [mod('A'), mod('B'), mod('C')]
+    const after = [mod('C'), mod('A'), mod('B')]
+    expect(movedMods(before, after).map((r) => [r.mod.modId, r.from, r.to])).toEqual([
+      ['C', 2, 0],
+      ['A', 0, 1],
+      ['B', 1, 2],
+    ])
+  })
+
+  it('reports nothing when the order is unchanged', () => {
+    const mods = [mod('A'), mod('B')]
+    expect(movedMods(mods, [...mods])).toEqual([])
   })
 })

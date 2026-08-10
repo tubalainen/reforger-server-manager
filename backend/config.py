@@ -5,7 +5,7 @@ import secrets
 from dataclasses import dataclass, field
 
 APP_NAME = "Reforger Server Manager"
-APP_VERSION = "0.49.0"
+APP_VERSION = "0.50.0"
 
 # The password shipped in .env.example. Refusing to start with it (when exposed)
 # is what stops a "just ran docker compose up" box from facing the internet on
@@ -130,6 +130,14 @@ class Settings:
     #            cannot offer real host networking, so bridge is the only option
     #            there.
     instance_network_mode: str = "auto"
+    # Optional one-click mod ordering (#164). An OpenAI-compatible chat
+    # completions URL — a free Gemini or OpenRouter key, or a local Ollama.
+    # EMPTY BY DEFAULT, which means the manager makes no AI request at all and
+    # the wizard offers only the copy-the-prompt route, where the mod list
+    # leaves through the user's own browser and nothing is configured here.
+    ai_order_url: str = ""
+    ai_order_model: str = ""
+    ai_order_key: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -179,6 +187,9 @@ class Settings:
             game_port_range=_port_range(os.environ.get("GAME_PORT_RANGE"), (2001, 2020)),
             a2s_port_range=_port_range(os.environ.get("A2S_PORT_RANGE"), (17777, 17796)),
             rcon_port_range=_port_range(os.environ.get("RCON_PORT_RANGE"), (19999, 20018)),
+            ai_order_url=os.environ.get("AI_ORDER_URL", "").strip(),
+            ai_order_model=os.environ.get("AI_ORDER_MODEL", "").strip(),
+            ai_order_key=os.environ.get("AI_ORDER_KEY", "").strip(),
         )
 
 

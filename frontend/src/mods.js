@@ -9,7 +9,11 @@
 // These live only in the manager; the server's config.json gets the flat
 // modId/name list, plus version only where the user locked one.
 
-export const MODS_FILE_FORMAT = 'reforger-server-manager/mods@1'
+// @2 (#164) differs from @1 in one way: the array order IS the load order. In an
+// @1 file the order was only ever "picks, then dependencies", so an @1 file is
+// re-partitioned on import to land exactly where it left off.
+export const MODS_FILE_FORMAT = 'reforger-server-manager/mods@2'
+export const MODS_FILE_FORMAT_V1 = 'reforger-server-manager/mods@1'
 
 // Workshop asset ids are 16 hex digits. Pull one out of a bare id, "{id}-slug",
 // or a full workshop URL — mirrors the backend's normalize_asset_id. Returns the
@@ -157,29 +161,146 @@ function nextAddedOrder(mods) {
   return Math.max(0, ...mods.map((m) => m.added_order ?? 0)) + 1
 }
 
-// ---- Sorting (#105) --------------------------------------------------------
-// Both sorts reorder the explicit tier only — dependencies always render (and
-// export) after it, per orderedMods — and both are real reorders: what you see
-// is the order config.json gets.
+// ---- Sorting (#105, #164) --------------------------------------------------
+// Every sort here reorders the WHOLE list — since #164 a dependency may sit
+// anywhere, including above the mod that pulled it in — and all of them are
+// real reorders: what you see is the order config.json gets.
 
 export function sortModsByName(mods) {
-  const explicit = mods.filter((m) => m.explicit)
-  explicit.sort((a, b) =>
+  return [...mods].sort((a, b) =>
     (a.name || a.modId).localeCompare(b.name || b.modId, undefined, { sensitivity: 'base' }),
   )
-  return [...explicit, ...mods.filter((m) => !m.explicit)]
 }
 
 export function sortModsByAdded(mods) {
-  const explicit = mods.filter((m) => m.explicit)
   // Mods from before the counter existed have no number: treat them as oldest
   // and keep their relative order (sort is stable).
-  explicit.sort((a, b) => (a.added_order ?? 0) - (b.added_order ?? 0))
-  return [...explicit, ...mods.filter((m) => !m.explicit)]
+  return [...mods].sort((a, b) => (a.added_order ?? 0) - (b.added_order ?? 0))
 }
 
-// Keep explicit mods in their chosen order, dependencies after them — this is
-// the order rendered into config.json's mods[].
+// The order rendered into config.json's mods[] — since #164 simply the order of
+// the list, because the list is now fully reorderable (drag, AI, sorts).
 export function orderedMods(mods) {
+  return [...mods]
+}
+
+// Explicit picks first, dependencies after: how the list was ALWAYS rendered
+// before #164, whatever order the array happened to be stored in. Applied once
+// when an existing template or a mods file is loaded, so opening a template in
+// the new list shows exactly the order it has been running with — and saving it
+// untouched writes back the same config.json.
+export function partitionOrder(mods) {
   return [...mods.filter((m) => m.explicit), ...mods.filter((m) => !m.explicit)]
+}
+
+// ---- Manual reordering (#164) ----------------------------------------------
+
+// Move one mod one step (dir -1 up, +1 down). Returns a new array; out-of-range
+// moves return the list unchanged.
+export function moveMod(mods, id, dir) {
+  const i = mods.findIndex((m) => m.modId === id)
+  const j = i + dir
+  if (i < 0 || j < 0 || j >= mods.length) return mods
+  const out = [...mods]
+  ;[out[i], out[j]] = [out[j], out[i]]
+  return out
+}
+
+// Drag and drop: lift the mod at `from` and drop it at index `to`. `to` is the
+// index the mod ends up at in the resulting list.
+export function reorderMods(mods, from, to) {
+  if (from === to || from < 0 || from >= mods.length) return mods
+  const out = [...mods]
+  const [moved] = out.splice(from, 1)
+  out.splice(Math.max(0, Math.min(to, out.length)), 0, moved)
+  return out
+}
+
+// ---- Dependency-aware ordering (#164) --------------------------------------
+// Community guidance for Reforger is that a mod should be listed after what it
+// requires, with mods that patch other mods last. Whether the engine honours
+// the array order at all is not something we can verify (see the release notes),
+// so this is offered as a choice, never applied on its own.
+
+// Pairs where a mod is listed BEFORE something it depends on.
+export function dependencyViolations(mods) {
+  const pos = new Map(mods.map((m, i) => [m.modId, i]))
+  const out = []
+  for (const m of mods) {
+    for (const d of m.dependencies) {
+      if (!pos.has(d)) continue // dependency isn't in this list at all
+      if (pos.get(d) > pos.get(m.modId)) out.push({ mod: m.modId, dependency: d })
+    }
+  }
+  return out
+}
+
+// Stable topological order: every mod after the mods it requires, and otherwise
+// as close to the current order as that allows. A dependency cycle cannot be
+// resolved, so the mods in it keep their current relative order rather than
+// being dropped — the list must always come back whole.
+export function topoOrder(mods) {
+  const index = new Map(mods.map((m, i) => [m.modId, i]))
+  const remaining = new Set(mods.map((m) => m.modId))
+  const placed = new Set()
+  const out = []
+  while (remaining.size) {
+    // Ready = everything whose dependencies are already placed, taken in the
+    // list's current order so an unforced choice never shuffles anything.
+    const ready = mods.filter(
+      (m) =>
+        remaining.has(m.modId) &&
+        m.dependencies.every((d) => !index.has(d) || placed.has(d)),
+    )
+    // Nothing ready means a cycle: break it on the earliest mod still left.
+    const batch = ready.length ? ready : [mods.find((m) => remaining.has(m.modId))]
+    for (const m of batch) {
+      out.push(m)
+      placed.add(m.modId)
+      remaining.delete(m.modId)
+    }
+  }
+  return out
+}
+
+// ---- Applying an order that came from outside (#164) ------------------------
+
+// Reorder `mods` to follow `ids` (an order proposed by an AI, or read off a
+// pasted list). Nothing is ever added or removed by this:
+//   * ids that aren't in the list are reported as `unknown` and ignored;
+//   * mods the order never mentions are reported as `missing` and slotted back
+//     in at the position they hold today, rather than being swept to the end.
+export function applyOrderIds(mods, ids) {
+  const byId = new Map(mods.map((m) => [m.modId, m]))
+  const seen = new Set()
+  const unknown = []
+  const ordered = []
+  for (const raw of ids) {
+    const id = (raw || '').toUpperCase()
+    if (seen.has(id)) continue // a repeat later in the reply is not a second mod
+    seen.add(id)
+    if (!byId.has(id)) {
+      unknown.push(id)
+      continue
+    }
+    ordered.push(byId.get(id))
+  }
+  const missing = mods.filter((m) => !seen.has(m.modId))
+  for (const m of missing) {
+    const at = mods.indexOf(m)
+    ordered.splice(Math.min(at, ordered.length), 0, m)
+  }
+  return {
+    mods: ordered,
+    missing: missing.map((m) => m.modId),
+    unknown,
+  }
+}
+
+// The mods whose position changed between two orders, for the preview.
+export function movedMods(before, after) {
+  const was = new Map(before.map((m, i) => [m.modId, i]))
+  return after
+    .map((m, i) => ({ mod: m, from: was.get(m.modId) ?? -1, to: i }))
+    .filter((r) => r.from !== r.to)
 }

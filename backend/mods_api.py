@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 
 import auth
 from models import ModRegistryEntry, Template, get_engine
-from services import edit_locks, mod_registry
+from services import edit_locks, mod_order, mod_registry
 
 router = APIRouter(prefix="/api/mods", tags=["mods"])
 
@@ -115,3 +115,51 @@ async def add_to_template(
     return await asyncio.to_thread(
         _add_to_template, template_id, [str(m) for m in mod_ids], _client_id(request)
     )
+
+
+def _prompt_for(payload: dict) -> tuple[list[dict], str]:
+    try:
+        mods = mod_order.normalize_mods(payload.get("mods"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return mods, mod_order.build_prompt(mods)
+
+
+@router.post("/order/prompt")
+async def order_prompt(
+    payload: dict = Body(...), _user: str = Depends(auth.require_session)
+):
+    """The mod-order question, to hand to any AI the user likes (#164).
+
+    Built server-side from a validated mod list so the wizard and the one-click
+    call always ask the very same thing. `ai_available` tells the wizard whether
+    to offer the one-click button at all.
+    """
+    _, prompt = _prompt_for(payload)
+    return {"prompt": prompt, "ai_available": mod_order.configured()}
+
+
+@router.post("/order/ai")
+async def order_ai(payload: dict = Body(...), _user: str = Depends(auth.require_session)):
+    """Ask the configured AI service to order the mods (#164).
+
+    Returns the raw reply; the browser parses it, exactly as it parses one
+    pasted in by hand, and shows it for approval before anything moves.
+    """
+    if not mod_order.configured():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "No AI service is configured on this manager. Set AI_ORDER_URL "
+                "(and AI_ORDER_KEY) in .env for one-click ordering — or use "
+                "'Copy the prompt' and paste it into ChatGPT, Gemini or Claude."
+            ),
+        )
+    _, prompt = _prompt_for(payload)
+    try:
+        result = await asyncio.to_thread(mod_order.ask, prompt)
+    except RuntimeError as exc:
+        # 502: the manager is fine, the service it called is not — and the
+        # wizard offers the copy-and-paste route instead.
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"prompt": prompt, **result}
