@@ -5,6 +5,14 @@ workflow publishes that file as the GitHub release body, and re-publishes it
 whenever the file and the release drift apart — so fixing a notes file after the
 fact does reach readers.
 
+**That sync only covers the version currently in `backend/config.py`.** To
+correct an *older* release's notes, edit its file and publish it by hand, or
+nobody ever sees the correction:
+
+```bash
+gh release edit v0.50.0 --notes-file docs/release-notes/v0.50.0.md
+```
+
 ## The one rule that is enforced
 
 **Users never clone this repository.** They downloaded `docker-compose.yaml`
