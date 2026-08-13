@@ -519,6 +519,50 @@ tempting, but its NAT only forwards TCP: the published **UDP** game/A2S ports ne
 reach the Windows host, and `netsh portproxy` cannot help (it is TCP-only). Players
 would never see or join your server. Use Docker Desktop.
 
+## Updating your setup files
+
+Updating the manager pulls a new **image**. It does **not** touch the two files that
+live on your disk and belong to you:
+
+| File | Who owns it | How it gets updated |
+|---|---|---|
+| `.env` | You (it holds your password) | **Never automatically.** New settings appear in [`.env.example`](.env.example); copy the lines you want into your `.env`. |
+| `docker-compose.yaml` (or `.vps.` / `.windows.` variant) | The project | Only when you re-download it or re-run the installer. |
+
+So when a release adds an `.env` setting or rewires the compose file, you have to apply
+that yourself. **Every release that needs it says so, under a heading called “Updating
+your setup files”** — the release build fails if a release changes those files and its
+notes leave it out ([#167](https://github.com/tubalainen/reforger-server-manager/issues/167)).
+Read the [release notes](https://github.com/tubalainen/reforger-server-manager/releases)
+when you update; if that section is not there, there is nothing to do.
+
+How to apply it, per install type:
+
+```bash
+# Linux installed with install-local.sh / install-vps.sh
+rsm update          # checks your .env and compose file against this release and says
+                    # exactly what differs, then offers to refresh the compose file
+```
+
+```bash
+# Linux installed by hand
+cd /path/to/your/install
+curl -fsSLO https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/docker-compose.yaml
+curl -fsSL  https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/.env.example -o .env.example
+diff .env .env.example      # add the new keys you want to your .env by hand
+docker compose pull && docker compose up -d --remove-orphans
+```
+
+```powershell
+# Windows: the start script reports new .env settings on launch. To refresh the
+# compose file and the scripts, re-run the installer — it keeps your .env.
+$installer = "$env:TEMP\reforger-install.ps1"
+Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/scripts/windows/install.ps1 -OutFile $installer
+powershell -ExecutionPolicy Bypass -File $installer
+```
+
+Your `.env` is never overwritten by any of these — the manager only ever *reads* it.
+
 ## First run
 
 Under **Server Instances → Server files** (at the bottom of the Instances page), do both

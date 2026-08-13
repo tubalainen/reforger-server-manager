@@ -158,6 +158,48 @@ function Test-ManagerHealth {
     }
 }
 
+function Get-NewEnvSettings {
+    <#
+    Settings this release ships in .env.example that the local .env does not set
+    at all (#167).
+
+    Pulling a new manager image never touches .env — it holds the user's password
+    and is deliberately never overwritten — so a release that adds a setting
+    reached nobody who did not read the notes closely. This reports them; it
+    never writes anything. Returns an array of "KEY=example-value" lines, empty
+    when the file is current, or $null when the check could not run (offline, no
+    .env yet), in which case the caller says nothing at all.
+    #>
+    param(
+        [Parameter(Mandatory)][string] $EnvFile,
+        [string] $Ref = 'main'
+    )
+    if (-not (Test-Path $EnvFile)) { return $null }
+    $url = "https://raw.githubusercontent.com/tubalainen/reforger-server-manager/$Ref/.env.example"
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) 'rsm-env-example.txt'
+    try {
+        Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing -TimeoutSec 20
+    } catch {
+        return $null
+    }
+    try {
+        $keyOf = { param($line) if ($line -match '^([A-Z][A-Z0-9_]*)=') { $Matches[1] } }
+        $mine = @{}
+        foreach ($line in Get-Content $EnvFile) {
+            $k = & $keyOf $line
+            if ($k) { $mine[$k] = $true }
+        }
+        $new = @()
+        foreach ($line in Get-Content $tmp) {
+            $k = & $keyOf $line
+            if ($k -and -not $mine.ContainsKey($k)) { $new += $line.Trim() }
+        }
+        return ,$new
+    } finally {
+        Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Update-ManagerScripts {
     <#
     Refresh the local copy of the manager's PowerShell scripts from GitHub, so a
