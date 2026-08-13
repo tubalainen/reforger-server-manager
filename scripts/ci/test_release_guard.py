@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from release_guard import MARKER, env_keys, guidance, problems, watched_changes  # noqa: E402
+from release_guard import MARKER, env_keys, guidance, problems, watched_changes
 
 NOTES_PATH = "docs/release-notes/v0.52.0.md"
 

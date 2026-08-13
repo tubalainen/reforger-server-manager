@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Guard: a release that changes the user's own setup files must say so (#167).
 
 Users do not clone this repository. They download `docker-compose.yaml` and copy

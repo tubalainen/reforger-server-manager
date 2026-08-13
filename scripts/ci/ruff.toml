@@ -1,0 +1,15 @@
+# Same small, explicit rule set as backend/ruff.toml — see the reasoning there.
+#
+# Explicit on purpose: without a config, these files fall back to ruff's DEFAULT
+# selection, which changes between ruff releases (requirements-dev pins `~=0.15`,
+# so CI happily installed 0.16 and started failing on rules the project never
+# opted into). Stating the set here means a ruff upgrade cannot move the goalposts.
+line-length = 100
+target-version = "py312"
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]
+
+[lint.per-file-ignores]
+"test_*.py" = ["E402"]  # the guard is imported after a sys.path insert, by design
