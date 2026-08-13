@@ -96,6 +96,24 @@ if (-not $NoUpdate -and -not $NoSelfUpdate) {
     } else {
         Write-Info 'Scripts are up to date.'
     }
+
+    # The scripts refresh themselves, but .env cannot: it is yours and is never
+    # overwritten. Say when a release has settings it does not have (#167).
+    $newSettings = Get-NewEnvSettings -EnvFile $EnvFile -Ref $ScriptsRef
+    if ($newSettings -and $newSettings.Count -gt 0) {
+        Write-Warn2 "This release has $($newSettings.Count) setting(s) your .env does not have:"
+        foreach ($line in ($newSettings | Select-Object -First 12)) {
+            Write-Host "        $line" -ForegroundColor Yellow
+        }
+        if ($newSettings.Count -gt 12) {
+            Write-Host "        ... and $($newSettings.Count - 12) more" -ForegroundColor Yellow
+        }
+        Write-Host ('        They are optional unless the release notes say otherwise. To add them, ' +
+                    'edit') -ForegroundColor Gray
+        Write-Host "        $EnvFile" -ForegroundColor Gray
+        Write-Host ('        against https://github.com/tubalainen/reforger-server-manager/blob/main/.env.example' +
+                    ' and restart.') -ForegroundColor Gray
+    }
 }
 
 $docker = Get-DockerCli -Quiet

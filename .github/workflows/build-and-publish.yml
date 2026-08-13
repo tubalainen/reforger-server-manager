@@ -16,6 +16,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history AND tags: the release guard below diffs against the last
+          # released tag, which a shallow clone does not have.
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -25,7 +29,7 @@ jobs:
         run: pip install -r backend/requirements-dev.txt
 
       - name: Lint backend (ruff)
-        run: python -m ruff check backend/
+        run: python -m ruff check backend/ scripts/ci/
 
       # The version lives in two files that no build stage can see at once, so it
       # cannot have a single source — but it can refuse to drift (#86).
@@ -41,8 +45,14 @@ jobs:
           print(f"version {backend} — consistent")
           EOF
 
+      # Users own their .env and compose file: an image pull never updates those,
+      # so a release that changes them has to say so in its notes, or the change
+      # silently never reaches anyone (#167).
+      - name: Check the release notes tell users what to update
+        run: python scripts/ci/release_guard.py
+
       - name: Run backend tests
-        run: python -m pytest backend/tests -q
+        run: python -m pytest backend/tests scripts/ci -q
 
       - uses: actions/setup-node@v4
         with:

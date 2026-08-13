@@ -216,11 +216,23 @@ const faq = [
   },
   {
     q: 'How do I update this manager itself?',
-    a: `From the folder with your docker-compose.yaml run: docker compose pull, then
-       docker compose up -d. On Windows run .\\start.ps1 -Update from the install folder
-       instead. Templates, instances and downloaded server files survive updates — they
-       live in ./data and ./serverfiles next to the compose file (Docker named volumes on
-       Windows).`,
+    a: `If you used a Linux installer, run: rsm update. Installed by hand, from the folder
+       with your docker-compose.yaml: docker compose pull, then docker compose up -d. On
+       Windows just launch it from the Desktop shortcut — start.ps1 pulls the newest image
+       on every start unless you pinned MANAGER_VERSION in .env. Templates, instances and
+       downloaded server files survive updates — they live in ./data and ./serverfiles next
+       to the compose file (Docker named volumes on Windows).`,
+  },
+  {
+    q: 'Do I ever have to update my .env or docker-compose.yaml by hand?',
+    a: `Sometimes, and the release notes will say so under a heading called "Updating your
+       setup files". An update pulls a new IMAGE; it cannot change the two files on your
+       own disk — .env is yours (it holds your password) and is never overwritten, and the
+       compose file was downloaded once by the installer. So a release that adds a setting
+       or rewires the stack needs you to apply that part. rsm update checks both against
+       the release and tells you exactly what differs; the Windows start script reports new
+       settings on launch; by-hand installs should diff their .env against .env.example in
+       the repository. When the notes have no such section, there is nothing to do.`,
   },
   {
     q: 'Why is the web GUI only reachable on localhost?',
