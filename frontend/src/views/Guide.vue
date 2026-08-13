@@ -256,6 +256,7 @@ const faq = [
     <div class="d-flex flex-wrap gap-2 mb-4">
       <a class="btn btn-sm btn-outline-secondary" href="#getting-started">Getting started</a>
       <a class="btn btn-sm btn-outline-secondary" href="#templates">Server Templates</a>
+      <a class="btn btn-sm btn-outline-secondary" href="#mod-templates">Mod Templates</a>
       <a class="btn btn-sm btn-outline-secondary" href="#instances">Server Instances</a>
       <a class="btn btn-sm btn-outline-secondary" href="#faq">FAQ</a>
       <a class="btn btn-sm btn-outline-secondary" href="#links">External references</a>
@@ -331,8 +332,9 @@ const faq = [
             to <code>config.json</code> — and you can drag any row to change it, sort by
             name or by when you added them, put every mod after what it requires with
             <em>Dependencies first</em>, or ask an AI for an order with
-            <em>AI order…</em> (see below). It exports/imports as JSON to share between
-            templates or friends. Badges show each mod's role:
+            <em>AI order…</em> (see below). <em>🧰 Mod template…</em> loads a saved mod
+            list (see <a href="#mod-templates">Mod Templates</a>). It exports/imports as
+            JSON to share between templates or friends. Badges show each mod's role:
             <em>scenario</em> (provides the scenario), <em>scenario dependency</em>
             (needed for the scenario to work), <em>addon</em> (an extra you chose),
             <em>dependency</em> (pulled in by an addon) and <em>scenario mod</em> (an addon
@@ -377,6 +379,46 @@ const faq = [
             (old&nbsp;→&nbsp;new) — opened from the <strong>Change log</strong> button on the
             templates list, newest first. It is read-only (it can't be edited or deleted) and
             is removed only when the template is; times are shown in the server's timezone.
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- MOD TEMPLATES -->
+    <div id="mod-templates" class="card mb-4">
+      <div class="card-body">
+        <h2 class="h5">Mod Templates</h2>
+        <p class="text-secondary small mb-3">
+          A mod template is a saved list of mods and nothing else — no scenario, no server
+          settings. Build a set once ("our milsim pack", "training night"), then load it
+          into the Mods step of any server template.
+        </p>
+        <ul class="mb-0">
+          <li class="mb-2">
+            <strong>Build it:</strong> on
+            <router-link to="/mod-templates">Mod Templates</router-link>, create one and add
+            mods the same way as in the wizard — search the Workshop, or paste ids/URLs,
+            several at once, comma-separated. Lock a version per mod, or leave it on
+            <em>latest</em>. Drag the rows (or use ↑ ↓) to set the order.
+          </li>
+          <li class="mb-2">
+            <strong>Load it into a server template:</strong> open a template's
+            <strong>Mods</strong> step and press <em>🧰 Mod template…</em>. Choose
+            <em>Add</em> to keep the mods already there and append the rest in the mod
+            template's order, or <em>Replace</em> to end up with exactly that list (the
+            scenario's own mods always stay). You see how many mods would be added, removed
+            or re-locked before anything moves, and nothing is written until you save the
+            template.
+          </li>
+          <li class="mb-2">
+            <strong>It is a copy, not a link:</strong> a server template keeps its own mods.
+            Editing or deleting a mod template later never changes a server you already
+            built — load it again when you want the newer set.
+          </li>
+          <li>
+            <strong>Change log:</strong> like server templates, each mod template keeps a
+            searchable, read-only history — mods added and removed, version locks, renames
+            and reorderings — from the <strong>Change log</strong> button on the list.
           </li>
         </ul>
       </div>

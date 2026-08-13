@@ -191,8 +191,8 @@ onMounted(load)
     </div>
 
     <p class="text-secondary small">
-      Every mod ever baked into a server template, kept here even after the template is
-      gone. Each entry is tagged with its Workshop type — <strong>Scenario</strong>,
+      Every mod ever baked into a server template or put on a mod template, kept here even
+      after that template is gone. Each entry is tagged with its Workshop type — <strong>Scenario</strong>,
       <strong>Terrain</strong> or <strong>Mod</strong> — and its category tags. Tick mods
       at any level and add them to a template in one click. Green badges show where a mod
       is baked &amp; downloaded to a server, with its version. Pin a mod as

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  applyModTemplate,
   applyOrderIds,
   clearScenarioMods,
   dependencyViolations,
@@ -482,5 +483,62 @@ describe('movedMods', () => {
   it('reports nothing when the order is unchanged', () => {
     const mods = [mod('A'), mod('B')]
     expect(movedMods(mods, [...mods])).toEqual([])
+  })
+})
+
+describe('applyModTemplate (#166)', () => {
+  // A template mid-edit: the scenario's own mod S with its dependency SD, plus
+  // an addon A the user picked themselves.
+  const current = () => [
+    mod('S', { explicit: true, from_scenario: true, dependencies: ['SD'] }),
+    mod('SD', { explicit: false }),
+    mod('A', { explicit: true, version: '1.0' }),
+  ]
+  // A mod template, in the order the user arranged it.
+  const shelf = () => [mod('X'), mod('A', { version: '2.0' }), mod('Y')]
+
+  it('adds the missing mods in the mod template\'s order, keeping the list', () => {
+    const out = applyModTemplate(current(), shelf())
+    expect(out.mods.map((m) => m.modId)).toEqual(['S', 'SD', 'A', 'X', 'Y'])
+    expect(out.added).toEqual(['X', 'Y'])
+    expect(out.removed).toEqual([])
+  })
+
+  it('never duplicates a mod that is already there, but re-locks its version', () => {
+    const out = applyModTemplate(current(), shelf())
+    const a = out.mods.find((m) => m.modId === 'A')
+    expect(a.version).toBe('2.0')
+    expect(out.relocked).toEqual([{ modId: 'A', from: '1.0', to: '2.0' }])
+  })
+
+  it('marks a mod that was only a dependency as an explicit pick when loaded', () => {
+    const out = applyModTemplate(current(), [mod('SD')])
+    expect(out.mods.find((m) => m.modId === 'SD').explicit).toBe(true)
+    expect(out.added).toEqual([])
+  })
+
+  it('replaces the list with the mod template order, keeping the scenario mods', () => {
+    const out = applyModTemplate(current(), shelf(), { replace: true })
+    expect(out.mods.map((m) => m.modId)).toEqual(['S', 'SD', 'X', 'A', 'Y'])
+    expect(out.removed).toEqual(['A'])
+  })
+
+  it('replaces everything when no scenario is picked yet', () => {
+    const noScenario = [mod('A'), mod('B')]
+    const out = applyModTemplate(noScenario, shelf(), { replace: true })
+    expect(out.mods.map((m) => m.modId)).toEqual(['X', 'A', 'Y'])
+    expect(out.removed).toEqual(['A', 'B'])
+  })
+
+  it('leaves the caller\'s list untouched', () => {
+    const before = current()
+    applyModTemplate(before, shelf(), { replace: true })
+    expect(before.map((m) => m.modId)).toEqual(['S', 'SD', 'A'])
+    expect(before.find((m) => m.modId === 'A').version).toBe('1.0')
+  })
+
+  it('numbers newly added mods after everything already added', () => {
+    const out = applyModTemplate([mod('A', { added_order: 7 })], [mod('X'), mod('Y')])
+    expect(out.mods.map((m) => m.added_order)).toEqual([7, 8, 9])
   })
 })

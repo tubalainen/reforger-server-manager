@@ -297,6 +297,63 @@ export function applyOrderIds(mods, ids) {
   }
 }
 
+// ---- Loading a mod template into a template's mod list (#166) ---------------
+
+// The mods that must survive a "replace": the mod backing the selected scenario
+// and whatever it transitively requires. A server runs its scenario — loading a
+// mod list can add, drop and reorder everything else, but it may not quietly
+// take the scenario's own mod away (the wizard refuses that by hand too).
+function scenarioKeepSet(mods) {
+  const asRoots = mods.map((m) => ({ ...m, explicit: !!m.from_scenario }))
+  return mods.some((m) => m.from_scenario) ? neededSet(asRoots) : new Set()
+}
+
+// Load a mod template's list into the mods of a server template.
+//
+//   replace=false ("Add")     — existing mods stay exactly where they are and
+//                               the new ones are appended in the mod template's
+//                               order.
+//   replace=true  ("Replace") — everything except the scenario's mods goes, and
+//                               the mod template's order becomes the list.
+//
+// A mod already on the list is never duplicated: it is marked as an explicit
+// pick and takes the mod template's version lock, since that lock is part of the
+// set the user chose to load. Returns the new list plus what happened, so the
+// wizard can show it before anything is saved.
+export function applyModTemplate(current, incoming, { replace = false } = {}) {
+  const mods = normalizeMods(current)
+  const list = normalizeMods(incoming).map((m) => ({ ...m, explicit: true }))
+  const keep = replace ? scenarioKeepSet(mods) : new Set(mods.map((m) => m.modId))
+  const base = mods.filter((m) => keep.has(m.modId))
+  const removed = mods.filter((m) => !keep.has(m.modId)).map((m) => m.modId)
+
+  const byId = new Map(base.map((m) => [m.modId, { ...m }]))
+  const out = base.map((m) => byId.get(m.modId))
+  const added = []
+  const relocked = []
+  let nextOrder = nextAddedOrder(mods)
+
+  for (const inc of list) {
+    const existing = byId.get(inc.modId)
+    if (existing) {
+      if (existing.version !== inc.version) {
+        relocked.push({ modId: inc.modId, from: existing.version, to: inc.version })
+      }
+      existing.explicit = true
+      existing.version = inc.version
+      if (inc.name) existing.name = inc.name
+      if (inc.versions.length) existing.versions = inc.versions
+      continue
+    }
+    const entry = { ...inc, added_order: nextOrder++ }
+    byId.set(entry.modId, entry)
+    out.push(entry)
+    added.push(entry.modId)
+  }
+
+  return { mods: out, added, removed, relocked }
+}
+
 // The mods whose position changed between two orders, for the preview.
 export function movedMods(before, after) {
   const was = new Map(before.map((m, i) => [m.modId, i]))

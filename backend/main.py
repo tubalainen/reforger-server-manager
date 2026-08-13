@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 import auth
 import config
 import instances_api
+import mod_templates_api
 import models
 import mods_api
 import serverfiles_api
@@ -176,6 +177,7 @@ app.include_router(serverfiles_api.router)
 app.include_router(workshop_api.router)
 app.include_router(templates_api.router)
 app.include_router(mods_api.router)
+app.include_router(mod_templates_api.router)
 app.include_router(instances_api.router)
 app.include_router(system_api.router)
 

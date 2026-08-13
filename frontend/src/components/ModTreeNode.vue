@@ -101,8 +101,16 @@ const tags = computed(() => {
       <span
         v-if="node.registered && node.orphaned"
         class="badge text-bg-secondary"
-        title="No template lists this any more (kept by the overview)"
+        title="No template or mod template lists this any more (kept by the overview)"
       >unused</span>
+
+      <!-- On a mod template's shelf (#166): in use, even with no server template -->
+      <span
+        v-for="mt in node.modTemplates"
+        :key="'mt' + mt.id"
+        class="badge text-bg-light border text-secondary"
+        :title="`On the mod template ${mt.name}`"
+      >🧰 {{ mt.name }}</span>
 
       <!-- Where this mod is baked & downloaded, with the configured version (#131) -->
       <span

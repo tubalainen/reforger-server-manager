@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlmodel import Session, select
 
-from models import Template, TemplateChange
+from models import ModTemplate, ModTemplateChange, Template, TemplateChange
 
 # config paths handled on their own, so they're skipped by the generic settings
 # diff (mods as add/remove lines, the scenario as its own line, the player
@@ -268,6 +268,11 @@ def entries(session: Session, template_id: int, query: str | None = None) -> lis
     rows = list(session.exec(
         select(TemplateChange).where(TemplateChange.template_id == template_id)
     ).all())
+    return _as_entries(rows, query)
+
+
+def _as_entries(rows: list, query: str | None) -> list[dict]:
+    """Shared rendering for both logs: newest event first, then optional filter."""
     # Stable: order within a save event (ascending id), then newest event first.
     rows.sort(key=lambda r: r.id or 0)
     rows.sort(key=lambda r: r.changed_at, reverse=True)
@@ -292,5 +297,105 @@ def delete_for_template(session: Session, template_id: int) -> None:
     """Remove a template's whole log — only ever called when the template goes."""
     for row in session.exec(
         select(TemplateChange).where(TemplateChange.template_id == template_id)
+    ).all():
+        session.delete(row)
+
+
+# --------------------------------------------------------------------------- #
+# Mod templates (#166) — same contract, a much smaller thing to diff
+# --------------------------------------------------------------------------- #
+
+def mod_template_snapshot(mt: ModTemplate) -> dict:
+    """The diffable picture of a mod template row: its name, note and mod list."""
+    import json
+
+    try:
+        mods = json.loads(mt.mods_json or "[]")
+    except (ValueError, TypeError):
+        mods = []
+    return {
+        "name": mt.name,
+        "description": mt.description or "",
+        "mods": [m for m in mods if isinstance(m, dict)],
+    }
+
+
+def _order_change(old_mods: list, new_mods: list) -> list[tuple[str, str]]:
+    """One line when the load order of the mods present in both lists changed.
+
+    Only mods on both sides are compared: an added or removed mod shifts
+    everything after it, and reporting that as "12 mods moved" on top of the
+    add/remove lines would be noise, not history (#166/#164).
+    """
+    old_ids = [m.get("modId") for m in old_mods if m.get("modId")]
+    new_ids = [m.get("modId") for m in new_mods if m.get("modId")]
+    common = set(old_ids) & set(new_ids)
+    before = [i for i in old_ids if i in common]
+    after = [i for i in new_ids if i in common]
+    if before == after:
+        return []
+    was = {mid: i for i, mid in enumerate(before)}
+    by_id = {m.get("modId"): m for m in new_mods if m.get("modId")}
+    moved = [mid for i, mid in enumerate(after) if was.get(mid) != i]
+    named = ", ".join(_mod_label(by_id[mid]) for mid in moved[:3])
+    more = f" and {len(moved) - 3} more" if len(moved) > 3 else ""
+    return [("mod", f"Load order changed — {len(moved)} mod(s) moved: {named}{more}")]
+
+
+def mod_template_diff(old: dict, new: dict) -> list[tuple[str, str]]:
+    """Human-readable (category, summary) lines turning `old` into `new`."""
+    items: list[tuple[str, str]] = []
+    if old.get("name") and new.get("name") and old["name"] != new["name"]:
+        items.append(("meta", f"Renamed from '{old['name']}' to '{new['name']}'"))
+    if (old.get("description") or "") != (new.get("description") or ""):
+        items.append(("meta", "Description updated"))
+    items += _mod_changes(old.get("mods", []), new.get("mods", []))
+    items += _order_change(old.get("mods", []), new.get("mods", []))
+    return items
+
+
+def _append_mod_template(session: Session, mod_template_id: int, items, when) -> None:
+    for category, summary in items:
+        session.add(ModTemplateChange(
+            mod_template_id=mod_template_id, changed_at=when,
+            category=category, summary=summary,
+        ))
+
+
+def record_mod_template_creation(session: Session, mt: ModTemplate) -> None:
+    """Seed the log: the create event plus whatever mods it was created with."""
+    snap = mod_template_snapshot(mt)
+    items: list[tuple[str, str]] = [("meta", "Mod template created")]
+    items += _mod_changes([], snap["mods"])
+    _append_mod_template(session, mt.id, items, mt.created_at)
+
+
+def record_mod_template_update(
+    session: Session, mod_template_id: int, old: dict, new: dict, when
+) -> list:
+    """Record what an edit changed. Nothing is written when nothing changed."""
+    items = mod_template_diff(old, new)
+    _append_mod_template(session, mod_template_id, items, when)
+    return items
+
+
+def mod_template_entries(
+    session: Session, mod_template_id: int, query: str | None = None
+) -> list[dict]:
+    """A mod template's log lines, newest event first, optionally filtered."""
+    rows = list(session.exec(
+        select(ModTemplateChange).where(
+            ModTemplateChange.mod_template_id == mod_template_id
+        )
+    ).all())
+    return _as_entries(rows, query)
+
+
+def delete_for_mod_template(session: Session, mod_template_id: int) -> None:
+    """Remove a mod template's whole log — only when the mod template goes."""
+    for row in session.exec(
+        select(ModTemplateChange).where(
+            ModTemplateChange.mod_template_id == mod_template_id
+        )
     ).all():
         session.delete(row)
