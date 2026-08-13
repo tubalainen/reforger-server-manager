@@ -10,8 +10,8 @@
 // nodes (flagged `registered: false`), named from the resolver when possible.
 
 // Build the forest from the registry list and the resolved dependency edges.
-//   mods: [{ mod_id, name, persist, orphaned, templates, instances,
-//            provides_scenarios }]
+//   mods: [{ mod_id, name, persist, orphaned, templates, mod_templates,
+//            instances, provides_scenarios }]
 //   tree: { edges: { modId: [depId] }, names: { modId: name },
 //           types: { modId: { kind, tags } } }  (may be empty / offline)
 // Each node carries a `kind` (scenario|terrain|addon, from the Workshop) and
@@ -40,6 +40,9 @@ export function buildForest(mods, tree) {
       persist: reg ? !!reg.persist : false,
       orphaned: reg ? !!reg.orphaned : false,
       templates: (reg && reg.templates) || [],
+      // The mod templates (#166) that carry this mod — a mod can live on a shelf
+      // without being in any server template yet.
+      modTemplates: (reg && reg.mod_templates) || [],
       instances: (reg && reg.instances) || [],
       kind: type.kind || null,
       tags: Array.isArray(type.tags) ? type.tags : [],

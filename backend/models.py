@@ -65,6 +65,29 @@ class ModRegistryEntry(SQLModel, table=True):
     last_seen_at: datetime = Field(default_factory=_utcnow)
 
 
+class ModTemplate(SQLModel, table=True):
+    """A reusable, named mod list that can be loaded into a server template (#166).
+
+    Deliberately *only* mods: no scenario, no settings, nothing a server needs to
+    run. It is a shelf you keep a set of mods on ("our milsim pack") and load into
+    the Mods step of any server template, and it carries its own change log so the
+    history of that set is as auditable as a server template's.
+
+    mods_json holds the same enriched entries as Template.mods_json (modId, name,
+    version lock, published versions, …) in the same meaning: the array order IS
+    the load order (#164), and it is preserved when the list is loaded into a
+    template. Every entry is an explicit addon — a mod template resolves no
+    dependency trees, exactly like adding one mod in the wizard (#97).
+    """
+
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(index=True, unique=True)
+    description: str = ""
+    mods_json: str = "[]"
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
 class Instance(SQLModel, table=True):
     """A concrete server: a template bound to a branch, ports and a container."""
 
@@ -105,6 +128,23 @@ class TemplateChange(SQLModel, table=True):
     template_id: int = Field(index=True, foreign_key="template.id")
     changed_at: datetime = Field(default_factory=_utcnow, index=True)
     category: str = "setting"  # meta | scenario | mod | setting
+    summary: str = ""
+
+
+class ModTemplateChange(SQLModel, table=True):
+    """One immutable audit line in a mod template's change log (#166).
+
+    The same append-only contract as TemplateChange: written by the mod-template
+    create/update handlers, read by the change-log view, and removed only when the
+    mod template itself is deleted. Kept as its own table rather than reusing
+    TemplateChange because that one's template_id is a foreign key to a server
+    template — a mod template is a different thing.
+    """
+
+    id: int | None = Field(default=None, primary_key=True)
+    mod_template_id: int = Field(index=True, foreign_key="modtemplate.id")
+    changed_at: datetime = Field(default_factory=_utcnow, index=True)
+    category: str = "mod"  # meta | mod
     summary: str = ""
 
 

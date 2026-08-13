@@ -10,6 +10,7 @@ import { formatBytes } from '../format'
 const JsonEditor = defineAsyncComponent(() => import('../components/JsonEditor.vue'))
 import {
   MODS_FILE_FORMAT,
+  applyModTemplate,
   extractModIds,
   normalizeMods,
   requiredBy,
@@ -1049,6 +1050,75 @@ function applyAiOrder() {
     : 'That order matches the list you already have — nothing moved.'
 }
 
+// ---- Load a saved mod template into this list (#166) ------------------------
+// A mod template is a named mod list kept on the Mod Templates page. Loading one
+// only changes the list you are editing here — nothing is saved until you press
+// Save, and the preview below the picker says exactly what would change first.
+const modTemplateLoad = reactive({
+  open: false,
+  loading: false,
+  applying: false,
+  error: '',
+  list: [],
+  selectedId: '',
+  mods: [],       // the selected mod template's mods, fetched on selection
+  replace: false, // false = add to the list, true = replace it
+})
+
+async function openModTemplates() {
+  modTemplateLoad.open = true
+  modTemplateLoad.error = ''
+  modTemplateLoad.selectedId = ''
+  modTemplateLoad.mods = []
+  modTemplateLoad.loading = true
+  try {
+    modTemplateLoad.list = await api('/api/mod-templates')
+  } catch (e) {
+    modTemplateLoad.error = e.message
+  } finally {
+    modTemplateLoad.loading = false
+  }
+}
+
+async function selectModTemplate(id) {
+  modTemplateLoad.selectedId = id
+  modTemplateLoad.mods = []
+  modTemplateLoad.error = ''
+  if (!id) return
+  modTemplateLoad.loading = true
+  try {
+    modTemplateLoad.mods = (await api(`/api/mod-templates/${id}`)).mods
+  } catch (e) {
+    modTemplateLoad.error = e.message
+  } finally {
+    modTemplateLoad.loading = false
+  }
+}
+
+// What loading it would do, computed against the live list — so switching
+// between "add" and "replace" updates the numbers before anything moves.
+const modTemplatePreview = computed(() => {
+  if (!modTemplateLoad.selectedId || !modTemplateLoad.mods.length) return null
+  return applyModTemplate(spec.mods, modTemplateLoad.mods, {
+    replace: modTemplateLoad.replace,
+  })
+})
+
+function applyModTemplateToSpec() {
+  const result = modTemplatePreview.value
+  if (!result) return
+  const chosen = modTemplateLoad.list.find((t) => t.id === modTemplateLoad.selectedId)
+  spec.mods = result.mods
+  modTemplateLoad.open = false
+  const parts = [`Loaded "${chosen?.name}".`]
+  if (result.added.length) parts.push(`${result.added.length} mod(s) added.`)
+  if (result.removed.length) parts.push(`${result.removed.length} removed.`)
+  if (result.relocked.length) parts.push(`${result.relocked.length} version lock(s) changed.`)
+  if (parts.length === 1) parts.push('Every mod on it was already enabled — nothing changed.')
+  modNotice.value = parts.join(' ')
+  hydrateVersionHistories()
+}
+
 // ---- Export / import the enabled mod list as JSON (issue #55) ---------------
 function exportMods() {
   const payload = { format: MODS_FILE_FORMAT, mods: orderedMods(spec.mods) }
@@ -1632,6 +1702,11 @@ onBeforeUnmount(() => {
             <div class="btn-group btn-group-sm">
               <button
                 class="btn btn-outline-secondary"
+                title="Load a saved mod template — a named mod list from the Mod Templates page"
+                @click="openModTemplates"
+              >🧰 Mod template…</button>
+              <button
+                class="btn btn-outline-secondary"
                 :disabled="spec.mods.length < 2"
                 title="Order the mods with an AI — copy the prompt into ChatGPT, Gemini or Claude, or ask a service you have configured"
                 @click="openAiOrder"
@@ -1766,6 +1841,135 @@ onBeforeUnmount(() => {
               </div>
             </li>
           </ul>
+        </div>
+
+        <!-- Load a saved mod template (#166) -->
+        <div
+          v-if="modTemplateLoad.open"
+          class="modal d-block"
+          tabindex="-1"
+          style="background: rgba(0,0,0,.5)"
+        >
+          <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+              <div class="modal-header">
+                <h5 class="modal-title">Load a mod template</h5>
+                <button class="btn-close" @click="modTemplateLoad.open = false"></button>
+              </div>
+              <div class="modal-body">
+                <p class="small text-secondary">
+                  A mod template is a saved mod list, in the order you arranged it. Loading
+                  one changes only the mods of this server template, and only after you press
+                  <em>Load</em> — and it is still not saved until you save the template.
+                </p>
+
+                <div v-if="modTemplateLoad.error" class="alert alert-warning py-2 small">
+                  {{ modTemplateLoad.error }}
+                </div>
+                <div v-if="modTemplateLoad.loading" class="text-secondary small">
+                  <span class="spinner-border spinner-border-sm me-1"></span>Loading…
+                </div>
+
+                <div
+                  v-else-if="!modTemplateLoad.list.length"
+                  class="text-secondary small"
+                >
+                  No mod templates yet. Create one on the
+                  <router-link :to="{ name: 'mod-templates' }">Mod Templates</router-link>
+                  page — it is a mod list you can reuse in every server template.
+                </div>
+
+                <template v-else>
+                  <div class="list-group mb-3">
+                    <label
+                      v-for="mt in modTemplateLoad.list"
+                      :key="mt.id"
+                      class="list-group-item d-flex align-items-center gap-2"
+                    >
+                      <input
+                        class="form-check-input mt-0 flex-shrink-0"
+                        type="radio"
+                        :value="mt.id"
+                        :checked="modTemplateLoad.selectedId === mt.id"
+                        @change="selectModTemplate(mt.id)"
+                      />
+                      <span class="text-truncate">
+                        <span class="fw-semibold">{{ mt.name }}</span>
+                        <span class="badge text-bg-secondary ms-1">{{ mt.mod_count }} mods</span>
+                        <small class="text-secondary d-block">{{ mt.description }}</small>
+                      </span>
+                    </label>
+                  </div>
+
+                  <div class="form-check small">
+                    <input
+                      id="mt-add"
+                      v-model="modTemplateLoad.replace"
+                      class="form-check-input"
+                      type="radio"
+                      :value="false"
+                    />
+                    <label class="form-check-label" for="mt-add">
+                      <strong>Add to this template</strong> — keep the mods that are already
+                      here, append the rest in the mod template's order
+                    </label>
+                  </div>
+                  <div class="form-check small mb-3">
+                    <input
+                      id="mt-replace"
+                      v-model="modTemplateLoad.replace"
+                      class="form-check-input"
+                      type="radio"
+                      :value="true"
+                    />
+                    <label class="form-check-label" for="mt-replace">
+                      <strong>Replace the mod list</strong> — this template ends up with
+                      exactly this mod list, in its order (the scenario's own mods stay)
+                    </label>
+                  </div>
+
+                  <template v-if="modTemplatePreview">
+                    <hr />
+                    <h6 class="mb-2">What this would do</h6>
+                    <ul class="small mb-2">
+                      <li>
+                        <strong>{{ modTemplatePreview.added.length }}</strong> mod(s) added.
+                      </li>
+                      <li v-if="modTemplatePreview.removed.length" class="text-warning-emphasis">
+                        <strong>{{ modTemplatePreview.removed.length }}</strong> mod(s) removed
+                        from this template.
+                      </li>
+                      <li v-if="modTemplatePreview.relocked.length">
+                        {{ modTemplatePreview.relocked.length }} mod(s) take the mod template's
+                        version lock.
+                      </li>
+                    </ul>
+                    <ol class="list-group list-group-numbered" style="max-height: 18rem; overflow-y: auto">
+                      <li
+                        v-for="row in modTemplatePreview.mods"
+                        :key="row.modId"
+                        class="list-group-item py-1 small d-flex justify-content-between"
+                        :class="{ 'list-group-item-warning': modTemplatePreview.added.includes(row.modId) }"
+                      >
+                        <span class="text-truncate">{{ row.name || row.modId }}</span>
+                        <small class="text-secondary flex-shrink-0 ms-2">{{ row.modId }}</small>
+                      </li>
+                    </ol>
+                  </template>
+                </template>
+              </div>
+              <div class="modal-footer">
+                <button class="btn btn-outline-secondary" @click="modTemplateLoad.open = false">
+                  Cancel
+                </button>
+                <button
+                  class="btn btn-primary"
+                  :disabled="!modTemplatePreview"
+                  @click="applyModTemplateToSpec"
+                >Load these mods</button>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- Order the mods with an AI (#164) -->

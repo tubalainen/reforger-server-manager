@@ -104,12 +104,18 @@ done once than read it step by step — the two cover the same ground.
       knows flow back into the wizard's fields; **any key it doesn't know — including
       scenario-specific `gameProperties` — is kept and re-applied on every future save**.
       Validation blocks broken JSON and out-of-range values, but never blocks a custom key
+- [x] **Mod templates** — save a set of mods as a named, reusable list (a milsim pack, a
+      training set) with its own version locks and load order, then load it into the Mods
+      step of any server template: *Add* keeps what is already there, *Replace* gives you
+      exactly that list, and you see what would change before anything moves. Each one keeps
+      its own searchable change log, and a server template built from it keeps its own copy —
+      editing or deleting the mod template never touches a server you already built
 - [x] **Mods Overview** — one persistent list of every mod ever baked into a template, shown
       as a tree with its live-resolved dependencies. Each mod is highlighted where it's baked
-      &amp; downloaded to a server (with version); a mod stays on the list even after its
-      template is gone. Tick mods at any level and **add them to a template in one click**;
-      pin mods as **persist** so a prune never removes them, and **Clear &amp; rescan** to
-      drop the ones no template uses any more
+      &amp; downloaded to a server (with version) and where it sits on a mod template; a mod
+      stays on the list even after its template is gone. Tick mods at any level and **add them
+      to a template in one click**; pin mods as **persist** so a prune never removes them, and
+      **Clear &amp; rescan** to drop the ones nothing uses any more
 - [x] **Admins, whitelist and ban list** — name the server's admins (Steam64 or Bohemia
       identity id; they `#login` without the admin password and skip the join queue), and
       keep a whitelist and a ban list of identity ids. The wizard checks each id as you

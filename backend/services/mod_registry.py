@@ -1,10 +1,10 @@
 """The persistent "Mods Overview" registry (#131).
 
 A single, template-independent list of every mod that has ever been baked into a
-server template, plus everything the overview needs to reason about it: which
-templates and instances currently carry each mod (and at what version), a
-persist flag that shields a mod from pruning, and — on demand — the live
-dependency tree scraped from the Workshop.
+server template — or put on a mod template (#166) — plus everything the overview
+needs to reason about it: which templates, mod templates and instances currently
+carry each mod (and at what version), a persist flag that shields a mod from
+pruning, and — on demand — the live dependency tree scraped from the Workshop.
 
 Two ideas keep this simple:
 
@@ -23,7 +23,14 @@ from datetime import UTC, datetime
 
 from sqlmodel import Session, select
 
-from models import Instance, ModRegistryEntry, Template, _utcnow, get_engine
+from models import (
+    Instance,
+    ModRegistryEntry,
+    ModTemplate,
+    Template,
+    _utcnow,
+    get_engine,
+)
 from services import change_log, template_service
 from services.template_service import TemplateSpec
 from services.workshop_service import WorkshopError, normalize_asset_id, workshop
@@ -55,6 +62,17 @@ def _enriched_mods(t: Template) -> list[dict]:
         return [m for m in mods if isinstance(m, dict) and m.get("modId")]
     except (ValueError, TypeError, AttributeError):
         return []
+
+
+def _mod_template_mods(mt: ModTemplate) -> list[dict]:
+    """A mod template's mod list (#166). Same entry shape as a template's."""
+    try:
+        mods = json.loads(mt.mods_json or "[]")
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(mods, list):
+        return []
+    return [m for m in mods if isinstance(m, dict) and m.get("modId")]
 
 
 def _norm(mod_id: str | None) -> str | None:
@@ -94,7 +112,7 @@ def register_mods(session: Session, mods: list[dict]) -> int:
 
 
 def backfill_from_templates(session: Session | None = None) -> int:
-    """Seed the registry from every existing template's mods (idempotent).
+    """Seed the registry from every template's and mod template's mods (idempotent).
 
     Run once at startup so templates that predate the registry still show their
     mods without the user having to re-save each one. Safe to run repeatedly:
@@ -106,10 +124,15 @@ def backfill_from_templates(session: Session | None = None) -> int:
         inserted = 0
         for t in session.exec(select(Template)).all():
             inserted += register_mods(session, _enriched_mods(t))
+        for mt in session.exec(select(ModTemplate)).all():
+            inserted += register_mods(session, _mod_template_mods(mt))
         if own:
             session.commit()
         if inserted:
-            logger.info("Mod registry: backfilled %d mod(s) from templates", inserted)
+            logger.info(
+                "Mod registry: backfilled %d mod(s) from templates and mod templates",
+                inserted,
+            )
         return inserted
     finally:
         if own:
@@ -123,14 +146,18 @@ def backfill_from_templates(session: Session | None = None) -> int:
 def overview(session: Session) -> list[dict]:
     """Every registry mod, enriched with its current template/instance usage.
 
-    For each mod: the templates that list it now, and the instances that carry it
-    (an instance carries a mod when its template lists it — instances re-bake from
-    their template's config), each with the version that template configures
-    (a locked version, or null for "latest"). Mods no template references any
-    more still appear — that is the whole point of the registry.
+    For each mod: the templates that list it now, the mod templates that carry it
+    (#166), and the instances that have it baked in (an instance carries a mod
+    when its template lists it — instances re-bake from their template's config),
+    each with the version that template configures (a locked version, or null for
+    "latest"). Mods nothing references any more still appear — that is the whole
+    point of the registry.
     """
     templates = list(session.exec(select(Template)).all())
     instances = list(session.exec(select(Instance)).all())
+    # Named `shelves` deliberately: `mod_templates` below is already taken, by the
+    # modId -> server templates index.
+    shelves = list(session.exec(select(ModTemplate)).all())
 
     # modId -> [{id, name}]  and  (template_id, modId) -> version
     mod_templates: dict[str, list[dict]] = {}
@@ -150,6 +177,14 @@ def overview(session: Session) -> list[dict]:
             tmpl_mod_version[(t.id, mid)] = m.get("version")
             if m.get("provides_scenarios"):
                 mod_provides[mid] = True
+
+    # modId -> [{id, name}] for the mod templates that list it (#166)
+    mod_shelves: dict[str, list[dict]] = {}
+    for mt in shelves:
+        for m in _mod_template_mods(mt):
+            mid = _norm(m.get("modId"))
+            if mid:
+                mod_shelves.setdefault(mid, []).append({"id": mt.id, "name": mt.name})
 
     # modId -> [{id, name, template, version}] via each instance's template
     mod_instances: dict[str, list[dict]] = {}
@@ -172,6 +207,7 @@ def overview(session: Session) -> list[dict]:
     out = []
     for r in rows:
         used_by = mod_templates.get(r.mod_id, [])
+        shelves = mod_shelves.get(r.mod_id, [])
         # A template name is a friendlier fallback than the bare id when the
         # registry row's own name is still empty (e.g. a manual/legacy add).
         name = r.name or (used_by[0]["name"] if used_by else "") or r.mod_id
@@ -181,8 +217,11 @@ def overview(session: Session) -> list[dict]:
             "persist": r.persist,
             "first_added_at": r.first_added_at.isoformat(),
             "templates": used_by,
+            "mod_templates": shelves,
             "instances": mod_instances.get(r.mod_id, []),
-            "orphaned": not used_by,  # in no template any more, kept by the rule
+            # Nothing lists it any more — not a server template, not a mod
+            # template — and it is kept anyway, by the rule.
+            "orphaned": not used_by and not shelves,
             "provides_scenarios": mod_provides.get(r.mod_id, False),
         })
     # Name-sort is case-insensitive; SQL's ORDER BY name isn't, so redo it here.
@@ -191,10 +230,19 @@ def overview(session: Session) -> list[dict]:
 
 
 def current_mod_ids(session: Session) -> set[str]:
-    """Every modId listed by some template right now."""
+    """Every modId listed by some template or mod template right now.
+
+    Mod templates count as use (#166): a mod you have put on a shelf for later is
+    not stale, so a rescan must not prune it out of the overview.
+    """
     ids: set[str] = set()
     for t in session.exec(select(Template)).all():
         for m in _enriched_mods(t):
+            mid = _norm(m.get("modId"))
+            if mid:
+                ids.add(mid)
+    for mt in session.exec(select(ModTemplate)).all():
+        for m in _mod_template_mods(mt):
             mid = _norm(m.get("modId"))
             if mid:
                 ids.add(mid)
@@ -208,9 +256,10 @@ def current_mod_ids(session: Session) -> set[str]:
 def rescan(session: Session) -> dict:
     """Clear stale mods and re-sync the registry to the templates (#131).
 
-    Removes every non-persisted mod that no template lists any more, then
-    re-registers all current template mods (picking up anything new and
-    refreshing names). Persisted mods are never removed. Returns a summary.
+    Removes every non-persisted mod that no template and no mod template (#166)
+    lists any more, then re-registers everything still in use (picking up
+    anything new and refreshing names). Persisted mods are never removed.
+    Returns a summary.
     """
     current = current_mod_ids(session)
     pruned = 0
