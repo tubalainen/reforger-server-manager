@@ -5,7 +5,7 @@ import secrets
 from dataclasses import dataclass, field
 
 APP_NAME = "Reforger Server Manager"
-APP_VERSION = "0.51.1"
+APP_VERSION = "0.51.2"
 
 # The password shipped in .env.example. Refusing to start with it (when exposed)
 # is what stops a "just ran docker compose up" box from facing the internet on
