@@ -1053,11 +1053,12 @@ function applyAiOrder() {
 // ---- Load a saved mod template into this list (#166) ------------------------
 // A mod template is a named mod list kept on the Mod Templates page. Loading one
 // only changes the list you are editing here — nothing is saved until you press
-// Save, and the preview below the picker says exactly what would change first.
+// Save. The picker sits with the other ways of adding mods: choose a list, press
+// "Add mod template". "Preview / replace…" opens the same choice with the full
+// preview and the option to replace the list instead of adding to it.
 const modTemplateLoad = reactive({
   open: false,
   loading: false,
-  applying: false,
   error: '',
   list: [],
   selectedId: '',
@@ -1065,14 +1066,13 @@ const modTemplateLoad = reactive({
   replace: false, // false = add to the list, true = replace it
 })
 
-async function openModTemplates() {
-  modTemplateLoad.open = true
-  modTemplateLoad.error = ''
-  modTemplateLoad.selectedId = ''
-  modTemplateLoad.mods = []
+// Fetched on mount so the picker is populated — the whole point is that you can
+// see the saved lists without hunting for them first.
+async function loadModTemplates() {
   modTemplateLoad.loading = true
   try {
     modTemplateLoad.list = await api('/api/mod-templates')
+    modTemplateLoad.error = ''
   } catch (e) {
     modTemplateLoad.error = e.message
   } finally {
@@ -1080,8 +1080,16 @@ async function openModTemplates() {
   }
 }
 
+async function openModTemplates() {
+  modTemplateLoad.open = true
+  await loadModTemplates() // refresh, but keep whatever is already picked
+}
+
 async function selectModTemplate(id) {
-  modTemplateLoad.selectedId = id
+  // A <select> hands back its value as a string; the ids from the API are
+  // numbers, and the picked template is looked up by identity — so keep the id
+  // in the shape the list has it in.
+  modTemplateLoad.selectedId = id === '' || id === null ? '' : Number(id)
   modTemplateLoad.mods = []
   modTemplateLoad.error = ''
   if (!id) return
@@ -1097,20 +1105,30 @@ async function selectModTemplate(id) {
 
 // What loading it would do, computed against the live list — so switching
 // between "add" and "replace" updates the numbers before anything moves.
-const modTemplatePreview = computed(() => {
+function previewModTemplate(replace) {
   if (!modTemplateLoad.selectedId || !modTemplateLoad.mods.length) return null
-  return applyModTemplate(spec.mods, modTemplateLoad.mods, {
-    replace: modTemplateLoad.replace,
-  })
-})
+  return applyModTemplate(spec.mods, modTemplateLoad.mods, { replace })
+}
+
+// The inline button always adds; only the modal offers "replace", so a replace
+// chosen there and cancelled cannot change what the button does.
+const modTemplateAddPreview = computed(() => previewModTemplate(false))
+const modTemplatePreview = computed(() => previewModTemplate(modTemplateLoad.replace))
+
+function addModTemplate() {
+  applyModTemplateResult(modTemplateAddPreview.value)
+}
 
 function applyModTemplateToSpec() {
-  const result = modTemplatePreview.value
+  applyModTemplateResult(modTemplatePreview.value)
+}
+
+function applyModTemplateResult(result) {
   if (!result) return
   const chosen = modTemplateLoad.list.find((t) => t.id === modTemplateLoad.selectedId)
   spec.mods = result.mods
   modTemplateLoad.open = false
-  const parts = [`Loaded "${chosen?.name}".`]
+  const parts = [chosen ? `Loaded "${chosen.name}".` : 'Loaded the mod template.']
   if (result.added.length) parts.push(`${result.added.length} mod(s) added.`)
   if (result.removed.length) parts.push(`${result.removed.length} removed.`)
   if (result.relocked.length) parts.push(`${result.relocked.length} version lock(s) changed.`)
@@ -1408,6 +1426,7 @@ onMounted(async () => {
     }
   }
   refreshPreview()
+  loadModTemplates() // deliberately not awaited — fills the picker when it lands
 })
 
 onBeforeUnmount(() => {
@@ -1690,6 +1709,71 @@ onBeforeUnmount(() => {
           <div v-if="modAdd.error" class="alert alert-info py-2 small mb-2">{{ modAdd.error }}</div>
           <div v-if="modNotice" class="alert alert-secondary py-2 small mb-2">{{ modNotice }}</div>
 
+          <!-- Add every mod of a saved mod template (#166). This belongs here,
+               with the other ways of adding mods — the toolbar below is for
+               reordering a list you already have, and it was missed there. -->
+          <div class="mb-2">
+            <div class="input-group">
+              <span class="input-group-text">🧰 Mod template</span>
+              <select
+                class="form-select"
+                :value="modTemplateLoad.selectedId"
+                :disabled="!modTemplateLoad.list.length"
+                @change="selectModTemplate($event.target.value)"
+              >
+                <option value="">
+                  {{
+                    modTemplateLoad.list.length
+                      ? 'Choose a saved mod list…'
+                      : 'No mod templates saved yet'
+                  }}
+                </option>
+                <option v-for="mt in modTemplateLoad.list" :key="mt.id" :value="mt.id">
+                  {{ mt.name }} — {{ mt.mod_count }} mod(s)
+                </option>
+              </select>
+              <button
+                class="btn btn-primary"
+                :disabled="!modTemplateAddPreview"
+                title="Add every mod on the selected mod template to this template's mod list"
+                @click="addModTemplate"
+              >Add mod template</button>
+              <button
+                class="btn btn-outline-secondary"
+                :disabled="!modTemplateLoad.selectedId"
+                title="See exactly what would change first — or replace this mod list with the mod template's, instead of adding to it"
+                @click="openModTemplates"
+              >Preview / replace…</button>
+            </div>
+            <small class="text-secondary">
+              <template v-if="modTemplateLoad.loading">
+                <span
+                  class="spinner-border spinner-border-sm me-1"
+                  style="width: .7rem; height: .7rem"
+                ></span>Loading…
+              </template>
+              <template v-else-if="!modTemplateLoad.list.length">
+                A mod template is a saved mod list you can reuse in every server template —
+                build one on the
+                <router-link :to="{ name: 'mod-templates' }">Mod Templates</router-link> page.
+              </template>
+              <template v-else-if="modTemplateAddPreview">
+                Adds {{ modTemplateAddPreview.added.length }} mod(s) to the
+                {{ spec.mods.length }} already here<template
+                  v-if="modTemplateAddPreview.relocked.length"
+                >, and takes its version lock for
+                  {{ modTemplateAddPreview.relocked.length }} of them</template
+                >. Nothing is removed.
+              </template>
+              <template v-else>
+                Pick a saved mod list and add all of its mods to this template.
+              </template>
+            </small>
+            <div v-if="modTemplateLoad.error" class="alert alert-warning py-2 small mt-2 mb-0">
+              {{ modTemplateLoad.error }}
+            </div>
+          </div>
+
           <!-- Enabled mods overview -->
           <div class="d-flex justify-content-between align-items-center mt-3 mb-2">
             <h2 class="h6 mb-0">
@@ -1700,11 +1784,6 @@ onBeforeUnmount(() => {
               </small>
             </h2>
             <div class="btn-group btn-group-sm">
-              <button
-                class="btn btn-outline-secondary"
-                title="Load a saved mod template — a named mod list from the Mod Templates page"
-                @click="openModTemplates"
-              >🧰 Mod template…</button>
               <button
                 class="btn btn-outline-secondary"
                 :disabled="spec.mods.length < 2"

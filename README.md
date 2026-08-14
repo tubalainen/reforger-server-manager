@@ -105,9 +105,10 @@ done once than read it step by step — the two cover the same ground.
       scenario-specific `gameProperties` — is kept and re-applied on every future save**.
       Validation blocks broken JSON and out-of-range values, but never blocks a custom key
 - [x] **Mod templates** — save a set of mods as a named, reusable list (a milsim pack, a
-      training set) with its own version locks and load order, then load it into the Mods
-      step of any server template: *Add* keeps what is already there, *Replace* gives you
-      exactly that list, and you see what would change before anything moves. Each one keeps
+      training set) with its own version locks and load order, then load it into any server
+      template from the **🧰 Mod template** picker under the Mods step's search box:
+      *Add mod template* keeps what is already there, *Preview / replace…* shows the whole
+      list first and can replace it, and you see what would change before anything moves. Each one keeps
       its own searchable change log, and a server template built from it keeps its own copy —
       editing or deleting the mod template never touches a server you already built
 - [x] **Mods Overview** — one persistent list of every mod ever baked into a template, shown

@@ -344,8 +344,9 @@ const faq = [
             to <code>config.json</code> — and you can drag any row to change it, sort by
             name or by when you added them, put every mod after what it requires with
             <em>Dependencies first</em>, or ask an AI for an order with
-            <em>AI order…</em> (see below). <em>🧰 Mod template…</em> loads a saved mod
-            list (see <a href="#mod-templates">Mod Templates</a>). It exports/imports as
+            <em>AI order…</em> (see below). The <em>🧰 Mod template</em> picker, right under
+            the search box, adds every mod of a saved mod list in one press (see
+            <a href="#mod-templates">Mod Templates</a>). It exports/imports as
             JSON to share between templates or friends. Badges show each mod's role:
             <em>scenario</em> (provides the scenario), <em>scenario dependency</em>
             (needed for the scenario to work), <em>addon</em> (an extra you chose),
@@ -415,12 +416,14 @@ const faq = [
           </li>
           <li class="mb-2">
             <strong>Load it into a server template:</strong> open a template's
-            <strong>Mods</strong> step and press <em>🧰 Mod template…</em>. Choose
-            <em>Add</em> to keep the mods already there and append the rest in the mod
-            template's order, or <em>Replace</em> to end up with exactly that list (the
-            scenario's own mods always stay). You see how many mods would be added, removed
-            or re-locked before anything moves, and nothing is written until you save the
-            template.
+            <strong>Mods</strong> step. Under the mod search box there is a
+            <em>🧰 Mod template</em> picker: choose a list and press
+            <em>Add mod template</em>, and its mods are appended to the ones already there.
+            <em>Preview / replace…</em> beside it shows the full list first, and offers
+            <em>Replace</em> instead — this template then ends up with exactly that mod
+            list (the scenario's own mods always stay). Either way you see how many mods
+            would be added, removed or re-locked before anything moves, and nothing is
+            written until you save the template.
           </li>
           <li class="mb-2">
             <strong>It is a copy, not a link:</strong> a server template keeps its own mods.
