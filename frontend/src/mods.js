@@ -156,6 +156,29 @@ export function mergeResolved(current, resolved, { fromScenario = false } = {}) 
   return [...byId.values()]
 }
 
+// Fold a hand-edited config.json mods[] back into the wizard's list (#171).
+//
+// The edited rows are flat — modId/name/version is all config.json can hold — so
+// adopting them as they arrive left entries with no `dependencies` and no
+// `explicit`, and the first graph walk over the list threw, blanking the page.
+// Every mod that survived the edit keeps what the wizard already knew about it
+// (version history, dependency edges, explicit/scenario flags); a row typed in
+// by hand becomes a complete, explicit pick. The edited order wins — since #164
+// the order of this list IS the load order.
+export function adoptEditedMods(current, edited) {
+  const known = new Map(current.map((m) => [m.modId, m]))
+  let nextOrder = nextAddedOrder(current)
+  return normalizeMods(
+    (edited || []).map((m) => {
+      const prev = known.get(m.modId)
+      if (!prev) return { ...m, added_order: nextOrder++ }
+      // An omitted `version` means "follow the Workshop's latest release", so a
+      // lock deleted by hand must clear the wizard's, not inherit it back.
+      return { ...prev, ...m, version: m.version ?? null }
+    }),
+  )
+}
+
 // The sequence number the next added mod should get (#105).
 function nextAddedOrder(mods) {
   return Math.max(0, ...mods.map((m) => m.added_order ?? 0)) + 1

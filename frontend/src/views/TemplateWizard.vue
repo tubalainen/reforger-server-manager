@@ -10,6 +10,7 @@ import { formatBytes } from '../format'
 const JsonEditor = defineAsyncComponent(() => import('../components/JsonEditor.vue'))
 import {
   MODS_FILE_FORMAT,
+  adoptEditedMods,
   applyModTemplate,
   extractModIds,
   normalizeMods,
@@ -1289,7 +1290,15 @@ async function applyRawEdit() {
       method: 'POST',
       body: { spec, config: parsed },
     })
+    const beforeIds = spec.mods.map((m) => m.modId).join()
+    const mods = adoptEditedMods(spec.mods, res.spec.mods)
     Object.assign(spec, res.spec)
+    // A hand-edited mods[] comes back flat — config.json has nowhere to hold the
+    // wizard's dependency graph — so it is folded in, never adopted raw (#171).
+    spec.mods = mods
+    // Mods typed in by hand carry only an id: fetch their name, version history
+    // and dependency edges, the same way an imported config.json is filled in.
+    if (spec.mods.map((m) => m.modId).join() !== beforeIds) hydrateVersionHistories()
     extrasPaths.value = res.warnings.map((w) => w.path)
     rawMode.value = false
     refreshPreview()
