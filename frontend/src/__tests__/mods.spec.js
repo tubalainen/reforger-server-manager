@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  adoptEditedMods,
   applyModTemplate,
   applyOrderIds,
   clearScenarioMods,
@@ -540,5 +541,78 @@ describe('applyModTemplate (#166)', () => {
   it('numbers newly added mods after everything already added', () => {
     const out = applyModTemplate([mod('A', { added_order: 7 })], [mod('X'), mod('Y')])
     expect(out.mods.map((m) => m.added_order)).toEqual([7, 8, 9])
+  })
+})
+
+describe('adoptEditedMods (a hand-edited config.json, #171)', () => {
+  // What the wizard is holding: the scenario's mod with its dependency edge and
+  // a version-locked addon.
+  const current = () => [
+    mod('S', {
+      explicit: true,
+      from_scenario: true,
+      dependencies: ['SD'],
+      versions: ['1.0', '1.1'],
+      added_order: 1,
+    }),
+    mod('SD', { explicit: false, added_order: 2 }),
+    mod('A', { explicit: true, version: '1.0', versions: ['1.0', '2.0'], added_order: 3 }),
+  ]
+  // What comes back from a raw edit: config.json's flat rows, nothing else.
+  const flat = [
+    { modId: 'S', name: 'Scenario mod' },
+    { modId: 'SD' },
+    { modId: 'A', name: 'Addon', version: '1.0' },
+  ]
+
+  it('gives every row the fields the mod list walks, so nothing throws', () => {
+    for (const m of adoptEditedMods(current(), [...flat, { modId: 'NEW' }])) {
+      expect(Array.isArray(m.dependencies)).toBe(true)
+      expect(Array.isArray(m.versions)).toBe(true)
+      expect(typeof m.explicit).toBe('boolean')
+    }
+  })
+
+  it('keeps the dependency graph and version history of the mods that survived', () => {
+    const out = adoptEditedMods(current(), flat)
+    expect(out.find((m) => m.modId === 'S')).toMatchObject({
+      dependencies: ['SD'],
+      versions: ['1.0', '1.1'],
+      from_scenario: true,
+      explicit: true,
+    })
+    expect(out.find((m) => m.modId === 'SD').explicit).toBe(false)
+  })
+
+  it('takes the edited name over the one the wizard had', () => {
+    const out = adoptEditedMods(current(), [{ modId: 'A', name: 'Renamed by hand' }])
+    expect(out[0].name).toBe('Renamed by hand')
+  })
+
+  it('adds a mod typed in by hand as an explicit pick, numbered last', () => {
+    const out = adoptEditedMods(current(), [...flat, { modId: 'NEW', name: 'Typed in' }])
+    expect(out.map((m) => m.modId)).toEqual(['S', 'SD', 'A', 'NEW'])
+    expect(out[3]).toMatchObject({ explicit: true, added_order: 4, dependencies: [] })
+  })
+
+  it('drops a mod deleted from the JSON, and keeps the edited order', () => {
+    const out = adoptEditedMods(current(), [{ modId: 'A' }, { modId: 'S' }])
+    expect(out.map((m) => m.modId)).toEqual(['A', 'S'])
+  })
+
+  it('clears a version lock deleted by hand instead of inheriting it back', () => {
+    const out = adoptEditedMods(current(), [{ modId: 'A', name: 'Addon' }])
+    expect(out[0].version).toBe(null)
+    expect(out[0].versions).toEqual(['1.0', '2.0']) // the history is still known
+  })
+
+  it('takes a version locked by hand', () => {
+    const out = adoptEditedMods(current(), [{ modId: 'A', version: '2.0' }])
+    expect(out[0].version).toBe('2.0')
+  })
+
+  it('survives a config with no mods at all', () => {
+    expect(adoptEditedMods(current(), undefined)).toEqual([])
+    expect(adoptEditedMods([], [{ modId: 'X' }])[0].modId).toBe('X')
   })
 })
