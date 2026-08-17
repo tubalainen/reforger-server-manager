@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from './api'
 import { setAuthed } from './router'
@@ -15,13 +15,54 @@ async function logout() {
   router.push({ name: 'login' })
 }
 
+// --- The tabs (#175) ---------------------------------------------------------
+// Six destinations, a live status area and the version link share one row, and
+// the full page names ("Server Templates", "Mods Overview", …) stopped fitting
+// once Backup arrived: they broke mid-word and the bar grew to three lines.
+// Short labels here, the full name in the tooltip, and nothing wraps.
+const NAV = [
+  { to: '/', label: 'Templates', full: 'Server templates' },
+  { to: '/mod-templates', label: 'Mod Templates', full: 'Mod templates' },
+  { to: '/mods', label: 'Mods', full: 'Mods overview' },
+  { to: '/instances', label: 'Instances', full: 'Server instances' },
+  { to: '/backup', label: 'Backup', full: 'Backup & restore' },
+  { to: '/guide', label: 'Guide', full: 'User guide' },
+]
+
+// Which tab owns the page you are on. Matched by prefix rather than by
+// router-link's own active class so a sub-page highlights its tab too — the
+// wizard belongs to Templates, an instance's page to Instances.
+function isActive(item) {
+  const path = route.path
+  if (item.to === '/') return path === '/' || path.startsWith('/templates')
+  return path === item.to || path.startsWith(`${item.to}/`)
+}
+
+// The collapsed (hamburger) menu on narrow screens. Bootstrap's own collapse
+// needs its JavaScript bundle, which this app deliberately doesn't ship — the
+// `show` class is all the CSS needs, so Vue toggles it.
+const navOpen = ref(false)
+watch(() => route.fullPath, () => (navOpen.value = false))
+
 // --- Top-banner server status bar (#117) ---
 // A compact live view of every instance so you see at a glance which servers are
-// up and how busy they are from anywhere in the app. Per-server chips while there
-// are a few; collapses to an aggregate once there are many so the navbar still fits.
+// up and how busy they are from anywhere in the app. It is also the first thing
+// to give up room (#175): a chip per server on a wide screen, a one-line summary
+// when the tabs need the space, and nothing at all below the hamburger
+// breakpoint — the Instances page carries its own fuller bar there.
 const summary = ref(null)
 const servers = computed(() => summary.value?.servers || [])
 const CHIP_LIMIT = 4
+
+// Whether chips are worth showing at all is a question of how many servers
+// there are; whether they *fit* is a question of screen width, and that half is
+// left to Bootstrap's own breakpoints rather than a resize listener — so the two
+// blocks below carry the display classes that decide which one you see.
+const chipsFit = computed(() => servers.value.length <= CHIP_LIMIT)
+const chipClass = 'd-none d-xl-flex' // only ever rendered when chipsFit
+const summaryClass = computed(() =>
+  chipsFit.value ? 'd-none d-lg-flex d-xl-none' : 'd-none d-lg-flex',
+)
 
 async function loadSummary() {
   if (route.meta.public) return // no session on the login page
@@ -57,76 +98,147 @@ onUnmounted(() => clearInterval(summaryPoll))
 </script>
 
 <template>
-  <nav v-if="!route.meta.public" class="navbar navbar-expand bg-body-tertiary border-bottom mb-4">
+  <nav
+    v-if="!route.meta.public"
+    class="navbar navbar-expand-lg bg-body-tertiary border-bottom mb-4"
+  >
     <div class="container">
-      <router-link class="navbar-brand fw-semibold" to="/">⬢ Reforger Server Manager</router-link>
-      <ul class="navbar-nav me-auto">
-        <li class="nav-item">
-          <router-link class="nav-link" active-class="active" exact-active-class="active" to="/">Server Templates</router-link>
-        </li>
-        <li class="nav-item">
-          <router-link class="nav-link" active-class="active" to="/mod-templates">Mod Templates</router-link>
-        </li>
-        <li class="nav-item">
-          <router-link class="nav-link" active-class="active" to="/mods">Mods Overview</router-link>
-        </li>
-        <li class="nav-item">
-          <router-link class="nav-link" active-class="active" to="/instances">Server Instances</router-link>
-        </li>
-        <li class="nav-item">
-          <router-link class="nav-link" active-class="active" to="/backup">Backup</router-link>
-        </li>
-        <li class="nav-item">
-          <router-link class="nav-link" active-class="active" to="/guide">User Guide</router-link>
-        </li>
-      </ul>
-      <!-- Live server status bar (#117); hidden on narrow screens, where the
-           Instances page carries its own fuller bar. -->
-      <div
-        v-if="summary && summary.total"
-        class="d-none d-lg-flex align-items-center gap-3 me-3 small"
+      <router-link class="navbar-brand fw-semibold text-nowrap" to="/">
+        ⬢ Reforger Server Manager
+      </router-link>
+
+      <button
+        class="navbar-toggler border-0 px-2"
+        type="button"
+        :aria-expanded="navOpen"
+        aria-label="Toggle navigation"
+        @click="navOpen = !navOpen"
       >
-        <template v-if="servers.length <= CHIP_LIMIT">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+
+      <div class="collapse navbar-collapse" :class="{ show: navOpen }">
+        <!-- nav-pills so the page you are on is a filled pill, in Bootstrap's own
+             active-tab styling rather than a bespoke one (#175) -->
+        <ul class="navbar-nav nav-pills me-auto mb-2 mb-lg-0">
+          <li v-for="item in NAV" :key="item.to" class="nav-item">
+            <router-link
+              class="nav-link"
+              :class="{ active: isActive(item) }"
+              :title="item.full"
+              :to="item.to"
+            >{{ item.label }}</router-link>
+          </li>
+        </ul>
+
+        <!-- Live server status (#117): a chip per server on a wide screen… -->
+        <div
+          v-if="summary && summary.total && chipsFit"
+          class="align-items-center gap-3 me-3 small"
+          :class="chipClass"
+        >
           <router-link
             v-for="s in servers"
             :key="s.id"
             :to="{ name: 'instance-detail', params: { id: s.id } }"
-            class="d-inline-flex align-items-center gap-1 text-decoration-none text-body"
+            class="rsm-chip d-inline-flex align-items-center gap-1 text-decoration-none text-body"
             :title="chipTitle(s)"
           >
-            <span class="d-inline-block rounded-circle" :class="dotClass(s)" style="width: .6rem; height: .6rem"></span>
-            <span class="text-truncate" style="max-width: 9rem">{{ s.name }}</span>
+            <span class="rsm-dot rounded-circle" :class="dotClass(s)"></span>
+            <span class="text-truncate">{{ s.name }}</span>
             <span
               v-if="s.status === 'running' && s.server_state !== 'starting'"
               class="text-secondary"
             >{{ s.players ?? '—' }}👤</span>
           </router-link>
-        </template>
+        </div>
+        <!-- …and one summary line when the tabs need that space back (#175) -->
         <router-link
-          v-else
+          v-if="summary && summary.total"
           :to="{ name: 'instances' }"
-          class="d-inline-flex align-items-center gap-2 text-decoration-none text-body"
-          title="Server instances"
+          class="align-items-center gap-2 me-3 small text-decoration-none text-body text-nowrap"
+          :class="summaryClass"
+          :title="`${summary.running} of ${summary.total} servers online`"
         >
           <span class="fw-semibold">{{ summary.running }}</span>
           <span class="text-secondary">/ {{ summary.total }} online</span>
           <span class="text-secondary">· {{ summary.players_total }}👤</span>
         </router-link>
+
+        <div class="d-flex align-items-center gap-3">
+          <a
+            v-if="version && version.version"
+            :href="version.repo_url"
+            target="_blank"
+            rel="noopener"
+            class="navbar-text small text-secondary text-nowrap text-decoration-none p-0"
+            :title="'Open ' + version.name + ' on GitHub'"
+          >v{{ version.version }} ↗</a>
+          <button
+            v-if="!version || version.auth_enabled"
+            class="btn btn-outline-secondary btn-sm"
+            @click="logout"
+          >Log out</button>
+        </div>
       </div>
-      <a
-        v-if="version && version.version"
-        :href="version.repo_url"
-        target="_blank"
-        rel="noopener"
-        class="navbar-text small text-secondary me-3 text-decoration-none"
-        :title="'Open ' + version.name + ' on GitHub'"
-      >v{{ version.version }} ↗</a>
-      <button
-        v-if="!version || version.auth_enabled"
-        class="btn btn-outline-secondary btn-sm"
-        @click="logout"
-      >Log out</button>
     </div>
   </nav>
   <router-view />
 </template>
+
+<style scoped>
+/* One row, shared by six tabs, the live status and the version link. Every part
+   of it is kept on a single line on purpose: labels breaking mid-word is what
+   made the bar look broken (#175). */
+.navbar .navbar-nav .nav-link {
+  white-space: nowrap;
+  padding: 0.3rem 0.7rem;
+}
+
+/* Only the unselected tabs are dimmed — the selected one keeps the pill's own
+   white-on-primary, which this would otherwise outrank. */
+.navbar .navbar-nav .nav-link:not(.active) {
+  color: var(--bs-secondary-color);
+}
+
+/* The active pill itself comes from .nav-pills; this is the matching hover, so
+   an unselected tab reacts to the pointer instead of sitting inert. */
+.navbar .navbar-nav .nav-link:hover,
+.navbar .navbar-nav .nav-link:focus-visible {
+  background-color: var(--bs-secondary-bg);
+  color: var(--bs-emphasis-color);
+}
+
+/* Chips are the widest optional thing up here, so their names are capped
+   tighter than the tabs need — the full name is in the tooltip. */
+.rsm-chip {
+  max-width: 8rem;
+}
+
+.rsm-dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  flex: 0 0 auto;
+}
+
+/* The tightest band: still one row (the hamburger starts below 992px), but the
+   brand, six tabs, the status summary and the version link together need more
+   than the 960px container gives them — so the brand and the tab padding give a
+   little back rather than the row overflowing. */
+@media (min-width: 992px) and (max-width: 1199.98px) {
+  .navbar .navbar-brand {
+    font-size: 1.05rem;
+  }
+
+  .navbar .navbar-nav .nav-link {
+    padding-inline: 0.5rem;
+  }
+}
+
+/* Stacked in the hamburger menu, the tabs read as a list rather than a row. */
+@media (max-width: 991.98px) {
+  .navbar .navbar-nav .nav-link {
+    padding: 0.4rem 0.75rem;
+  }
+}
+</style>
