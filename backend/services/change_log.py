@@ -236,11 +236,10 @@ def _append(session: Session, template_id: int, items, when) -> None:
         ))
 
 
-def record_creation(session: Session, template: Template) -> None:
-    """Seed the log when a template is created: the create event, its scenario
+def _opening_items(snap: dict, opening: str) -> list[tuple[str, str]]:
+    """The lines a template's log starts with: how it came to be, its scenario
     and its initial mods (default settings are omitted — they'd be pure noise)."""
-    snap = snapshot(template)
-    items: list[tuple[str, str]] = [("meta", "Template created")]
+    items: list[tuple[str, str]] = [("meta", opening)]
     if _game(snap).get("scenarioId"):
         items.append(("scenario", f"Scenario set to {_scenario_label(snap)}"))
     for mod in _game(snap).get("mods", []):
@@ -252,7 +251,33 @@ def record_creation(session: Session, template: Template) -> None:
     items += _admin_changes([], _game(snap).get("admins", []))
     items += _player_list_changes([], _game(snap).get("playerWhitelist"), "Whitelisted", "")
     items += _player_list_changes([], _game(snap).get("playerBanList"), "Banned", "")
-    _append(session, template.id, items, template.created_at)
+    return items
+
+
+def record_creation(session: Session, template: Template) -> None:
+    """Seed the log when a template is created."""
+    _append(
+        session, template.id,
+        _opening_items(snapshot(template), "Template created"),
+        template.created_at,
+    )
+
+
+def record_template_import(
+    session: Session, template: Template, before: dict | None, when
+) -> None:
+    """Log a template arriving from a backup file (#173).
+
+    A restored template is not a mystery in the history: a new one opens its log
+    saying where it came from, and an overwrite is recorded as the edit it
+    actually is — the same diff lines a hand save writes — under a line naming
+    the import, so nobody has to guess why a server's settings moved.
+    """
+    if before is None:
+        items = _opening_items(snapshot(template), "Template imported from a backup file")
+    else:
+        items = [("meta", "Overwritten by a backup import")] + diff(before, snapshot(template))
+    _append(session, template.id, items, when)
 
 
 def record_update(session: Session, template_id: int, old: dict, new: dict, when) -> list:
@@ -320,7 +345,7 @@ def mod_template_snapshot(mt: ModTemplate) -> dict:
     }
 
 
-def _order_change(old_mods: list, new_mods: list) -> list[tuple[str, str]]:
+def order_change(old_mods: list, new_mods: list) -> list[tuple[str, str]]:
     """One line when the load order of the mods present in both lists changed.
 
     Only mods on both sides are compared: an added or removed mod shifts
@@ -350,7 +375,7 @@ def mod_template_diff(old: dict, new: dict) -> list[tuple[str, str]]:
     if (old.get("description") or "") != (new.get("description") or ""):
         items.append(("meta", "Description updated"))
     items += _mod_changes(old.get("mods", []), new.get("mods", []))
-    items += _order_change(old.get("mods", []), new.get("mods", []))
+    items += order_change(old.get("mods", []), new.get("mods", []))
     return items
 
 
@@ -368,6 +393,20 @@ def record_mod_template_creation(session: Session, mt: ModTemplate) -> None:
     items: list[tuple[str, str]] = [("meta", "Mod template created")]
     items += _mod_changes([], snap["mods"])
     _append_mod_template(session, mt.id, items, mt.created_at)
+
+
+def record_mod_template_import(
+    session: Session, mt: ModTemplate, before: dict | None, when
+) -> None:
+    """Log a mod template arriving from a backup file (#173) — see
+    record_template_import for why an import writes history rather than hiding."""
+    snap = mod_template_snapshot(mt)
+    if before is None:
+        items = [("meta", "Mod template imported from a backup file")]
+        items += _mod_changes([], snap["mods"])
+    else:
+        items = [("meta", "Overwritten by a backup import")] + mod_template_diff(before, snap)
+    _append_mod_template(session, mt.id, items, when)
 
 
 def record_mod_template_update(

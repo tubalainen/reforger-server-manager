@@ -44,7 +44,12 @@ def _clean_db():
     from sqlmodel import Session, delete
 
     import models
+    from services import edit_locks
 
+    # Locks live in a module-level dict with a 90s TTL, and template ids start
+    # over at 1 once the tables are emptied — so a lock left behind by one test
+    # silently 423s another test's edit or delete. Start every test unlocked.
+    edit_locks.clear_all()
     models.init_db()
     with Session(models.get_engine()) as session:
         session.exec(delete(models.TemplateChange))

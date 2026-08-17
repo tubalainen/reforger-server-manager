@@ -74,6 +74,9 @@ onUnmounted(() => clearInterval(summaryPoll))
           <router-link class="nav-link" active-class="active" to="/instances">Server Instances</router-link>
         </li>
         <li class="nav-item">
+          <router-link class="nav-link" active-class="active" to="/backup">Backup</router-link>
+        </li>
+        <li class="nav-item">
           <router-link class="nav-link" active-class="active" to="/guide">User Guide</router-link>
         </li>
       </ul>

@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 import auth
+import backup_api
 import config
 import instances_api
 import mod_templates_api
@@ -178,6 +179,7 @@ app.include_router(workshop_api.router)
 app.include_router(templates_api.router)
 app.include_router(mods_api.router)
 app.include_router(mod_templates_api.router)
+app.include_router(backup_api.router)
 app.include_router(instances_api.router)
 app.include_router(system_api.router)
 
