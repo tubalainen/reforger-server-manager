@@ -135,6 +135,13 @@ done once than read it step by step — the two cover the same ground.
       of what changed and when: mods added/removed and version locks, scenario changes, and
       each setting edit (old → new), timestamped in your server's timezone. Read-only — it
       can't be altered or deleted, and is removed only with the template
+- [x] **Backup &amp; restore** — download every server template and mod template as one file,
+      and put them back on this machine or another one. The import shows you what the file
+      would do *before* it does it: each template marked new, already-here or **differs**,
+      with the exact list of differences, and per template you choose to keep what you have,
+      overwrite it, or import it as a copy. All or nothing, recorded in each template's
+      change log. The file holds your server/admin/RCON passwords in clear text — that is
+      what makes it a restore — so keep it somewhere safe
 - [x] Multiple concurrent server instances (stable + experimental side by side), each a
       Docker container spawned and supervised by the manager
 - [x] Live server logs in the browser (with a clear-window button), crash auto-restart

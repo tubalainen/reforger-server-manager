@@ -8,6 +8,7 @@ import TemplateWizard from './views/TemplateWizard.vue'
 import ModsOverview from './views/ModsOverview.vue'
 import ModTemplates from './views/ModTemplates.vue'
 import ModTemplateEditor from './views/ModTemplateEditor.vue'
+import Backup from './views/Backup.vue'
 import Guide from './views/Guide.vue'
 
 const router = createRouter({
@@ -36,6 +37,7 @@ const router = createRouter({
     },
     { path: '/instances', name: 'instances', component: Instances },
     { path: '/instances/:id', name: 'instance-detail', component: InstanceDetail, props: true },
+    { path: '/backup', name: 'backup', component: Backup },
     { path: '/guide', name: 'guide', component: Guide },
     // Downloads moved onto the Instances page; keep the old path working.
     { path: '/downloads', redirect: '/instances' },

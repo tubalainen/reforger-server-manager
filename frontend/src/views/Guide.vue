@@ -270,6 +270,7 @@ const faq = [
       <a class="btn btn-sm btn-outline-secondary" href="#templates">Server Templates</a>
       <a class="btn btn-sm btn-outline-secondary" href="#mod-templates">Mod Templates</a>
       <a class="btn btn-sm btn-outline-secondary" href="#instances">Server Instances</a>
+      <a class="btn btn-sm btn-outline-secondary" href="#backup">Backup &amp; restore</a>
       <a class="btn btn-sm btn-outline-secondary" href="#faq">FAQ</a>
       <a class="btn btn-sm btn-outline-secondary" href="#links">External references</a>
     </div>
@@ -481,6 +482,51 @@ const faq = [
             <strong>Server files:</strong> the shared per-branch install lives at the
             bottom of the Server Instances page — download, check for updates against
             Steam, or delete it there.
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- BACKUP -->
+    <div id="backup" class="card mb-4">
+      <div class="card-body">
+        <h2 class="h5">Backup &amp; restore</h2>
+        <p class="text-secondary small mb-3">
+          <router-link to="/backup">Backup</router-link> saves everything you built — every
+          server template and every mod template — into one file, and puts it back later.
+          Server instances are not included: a running server is a container, a port lease
+          and a folder of saved games belonging to this machine.
+        </p>
+        <ul class="mb-0">
+          <li class="mb-2">
+            <strong>Export:</strong> one click downloads the whole lot as a single
+            <code>.json</code> file, with each template's scenario, mods and load order,
+            all settings, the engine launch parameters and any custom config keys you added
+            by hand. <strong>It holds the server, admin and RCON passwords in clear
+            text</strong> — that is what makes it a restore and not a sketch, so keep the
+            file where you would keep the passwords themselves.
+          </li>
+          <li class="mb-2">
+            <strong>Import:</strong> pick a file and you get a list of everything in it
+            before anything is written — each template marked <em>New</em>,
+            <em>Already here</em>, or <em>Differs</em>, and for a differing one the exact
+            list of what differs, in the same words as the change log.
+          </li>
+          <li class="mb-2">
+            <strong>Same name, different template:</strong> you decide per template —
+            <em>Keep what I have</em>, <em>Overwrite with the file</em>, or
+            <em>Import as a copy</em> (it lands as "name (imported)" so you can compare the
+            two and delete one later). <em>Restore everything</em> and
+            <em>Only what's missing</em> set every row at once, and each row can still be
+            changed afterwards.
+          </li>
+          <li>
+            <strong>What an import does to your servers:</strong> overwriting keeps the
+            template in place, so instances built from it stay pointed at it and pick up
+            the restored settings when they next start — the Instances page flags a running
+            server whose template has changed. An import is all or nothing, is written to
+            each template's change log, and never touches a template someone else has open
+            in the wizard.
           </li>
         </ul>
       </div>
