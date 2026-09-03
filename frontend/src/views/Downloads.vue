@@ -9,6 +9,13 @@ const updateInfo = reactive({})
 const checking = reactive({})
 const sockets = {}
 const logPanes = {}
+// The daily update check and its two toggles (#177).
+const autoUpdate = reactive({
+  auto_download: false, auto_restart: false,
+  last_check_at: null, next_check_at: null, checking: false,
+  branches: [], busy: false,
+})
+let autoPoll = null
 // The reforger runtime image each instance is created from (issue #50).
 const img = reactive({ present: false, job: null, log: [] })
 let imgSocket = null
@@ -22,6 +29,56 @@ async function checkUpdate(branch) {
     state.error = e.message
   } finally {
     checking[branch] = false
+  }
+}
+
+function applyAutoUpdate(data) {
+  Object.assign(autoUpdate, data)
+  // The daily check already knows each branch's latest Steam build, so show it
+  // in the branch cards instead of making the user press "Check for updates".
+  for (const b of autoUpdate.branches) {
+    if (b.latest_build) updateInfo[b.branch] = b
+  }
+}
+
+async function loadAutoUpdate() {
+  try {
+    applyAutoUpdate(await api('/api/serverfiles/auto-update'))
+  } catch (e) {
+    state.error = e.message
+  }
+}
+
+async function saveAutoUpdate(patch) {
+  autoUpdate.busy = true
+  try {
+    applyAutoUpdate(await api('/api/serverfiles/auto-update', { method: 'PUT', body: patch }))
+  } catch (e) {
+    state.error = e.message
+  } finally {
+    autoUpdate.busy = false
+  }
+}
+
+async function checkNow() {
+  autoUpdate.busy = true
+  try {
+    applyAutoUpdate(await api('/api/serverfiles/auto-update/check', { method: 'POST' }))
+    // The check runs in the background (a steamcmd container per branch), so
+    // poll until it reports itself finished.
+    if (!autoPoll) autoPoll = setInterval(pollCheck, 3000)
+  } catch (e) {
+    state.error = e.message
+  } finally {
+    autoUpdate.busy = false
+  }
+}
+
+async function pollCheck() {
+  await loadAutoUpdate()
+  if (!autoUpdate.checking) {
+    clearInterval(autoPoll)
+    autoPoll = null
   }
 }
 
@@ -55,6 +112,7 @@ async function refresh() {
     img.present = data.server_image_present
     img.job = data.server_image_job
     state.error = ''
+    await loadAutoUpdate()
     for (const b of data.branches) {
       if (b.job?.status === 'running') connect(b.branch)
     }
@@ -153,10 +211,14 @@ async function pullImage() {
   }
 }
 
+// Instances.vue embeds this view and starts a download from its update prompt.
+defineExpose({ startDownload })
+
 onMounted(refresh)
 onUnmounted(() => {
   for (const ws of Object.values(sockets)) ws.close()
   if (imgSocket) imgSocket.close()
+  if (autoPoll) clearInterval(autoPoll)
 })
 </script>
 
@@ -231,6 +293,74 @@ onUnmounted(() => {
           class="mt-3 p-2 bg-black text-light rounded small mb-0"
           style="max-height: 16rem; overflow-y: auto; white-space: pre-wrap"
         >{{ img.log.join('\n') }}</pre>
+      </div>
+    </div>
+
+    <!-- Automatic updates: the daily check, and how far it is allowed to go
+         on its own (#177). -->
+    <div class="card mb-3">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start mb-2 flex-wrap gap-2">
+          <div>
+            <h2 class="h5 mb-1">Automatic updates</h2>
+            <p class="text-secondary small mb-0">
+              Once a day the manager asks Steam whether a newer server release exists for
+              the branches you have installed.
+            </p>
+          </div>
+          <button
+            class="btn btn-outline-secondary btn-sm"
+            :disabled="!state.docker || autoUpdate.checking || autoUpdate.busy"
+            @click="checkNow"
+          >
+            <span v-if="autoUpdate.checking" class="spinner-border spinner-border-sm me-1"></span>
+            {{ autoUpdate.checking ? 'Checking…' : 'Check now' }}
+          </button>
+        </div>
+
+        <div class="form-check">
+          <input
+            id="autoDownload"
+            class="form-check-input"
+            type="checkbox"
+            :checked="autoUpdate.auto_download"
+            :disabled="autoUpdate.busy"
+            @change="saveAutoUpdate({ auto_download: $event.target.checked })"
+          />
+          <label for="autoDownload" class="form-check-label">
+            Download new server files automatically
+            <small class="text-secondary d-block">
+              Off: nothing is downloaded on its own — you just get a prompt at the top of
+              this page when an update is waiting.
+            </small>
+          </label>
+        </div>
+        <div class="form-check mt-2">
+          <input
+            id="autoRestartOnUpdate"
+            class="form-check-input"
+            type="checkbox"
+            :checked="autoUpdate.auto_restart"
+            :disabled="autoUpdate.busy || !autoUpdate.auto_download"
+            @change="saveAutoUpdate({ auto_restart: $event.target.checked })"
+          />
+          <label for="autoRestartOnUpdate" class="form-check-label">
+            Restart my servers onto the new build once it is downloaded
+            <small class="text-secondary d-block">
+              Every instance of that branch that should be running is restarted, which
+              disconnects the players on it. Without this the files are updated but each
+              server keeps running the build it started with.
+            </small>
+          </label>
+        </div>
+
+        <p class="text-secondary small mb-0 mt-3">
+          <template v-if="autoUpdate.last_check_at">
+            Last checked {{ fmtDate(autoUpdate.last_check_at) }}<template v-if="autoUpdate.next_check_at">
+              · next {{ fmtDate(autoUpdate.next_check_at) }}</template>.
+          </template>
+          <template v-else>Not checked yet — the first check runs shortly after the manager starts.</template>
+        </p>
       </div>
     </div>
 

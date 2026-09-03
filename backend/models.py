@@ -88,6 +88,20 @@ class ModTemplate(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=_utcnow)
 
 
+class AppSetting(SQLModel, table=True):
+    """A named JSON blob of manager-wide settings, one row per feature (#177).
+
+    Everything else in this database belongs to a template or an instance; this
+    is for the handful of settings that belong to the manager itself — the first
+    of them being the automatic server-files update. Kept as opaque JSON on
+    purpose: a new toggle is a key in the blob, not a migration.
+    """
+
+    key: str = Field(primary_key=True)
+    value: str = ""  # JSON object; readers tolerate anything unparseable
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
 class Instance(SQLModel, table=True):
     """A concrete server: a template bound to a branch, ports and a container."""
 

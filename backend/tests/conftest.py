@@ -58,6 +58,7 @@ def _clean_db():
         session.exec(delete(models.ModRegistryEntry))
         session.exec(delete(models.ModTemplateChange))
         session.exec(delete(models.ModTemplate))
+        session.exec(delete(models.AppSetting))
         session.commit()
     yield
 
