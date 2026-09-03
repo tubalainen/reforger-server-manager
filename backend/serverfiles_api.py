@@ -2,10 +2,11 @@
 import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket
+from pydantic import BaseModel
 
 import auth
 import config
-from services import docker_service, instance_service
+from services import auto_update, docker_service, instance_service
 from services.image_service import image
 from services.jobs import stream_job
 from services.steam_service import steam
@@ -72,6 +73,37 @@ async def image_events(websocket: WebSocket):
         "present": await asyncio.to_thread(image.present),
         "log": list(job.log) if job else [],
     })
+
+
+class AutoUpdateSettings(BaseModel):
+    """The two opt-in toggles of the daily update check (#177)."""
+
+    auto_download: bool | None = None
+    auto_restart: bool | None = None
+
+
+@router.get("/auto-update")
+async def auto_update_status(_user: str = Depends(auth.require_session)):
+    """What the daily check last found, plus the toggles (#177)."""
+    return await asyncio.to_thread(auto_update.status)
+
+
+@router.put("/auto-update")
+async def set_auto_update(
+    body: AutoUpdateSettings, _user: str = Depends(auth.require_session)
+):
+    return await asyncio.to_thread(
+        auto_update.save_settings, body.auto_download, body.auto_restart
+    )
+
+
+@router.post("/auto-update/check", status_code=202)
+async def run_auto_update_check(_user: str = Depends(auth.require_session)):
+    """Run the daily check now instead of waiting for it to come due."""
+    if not await asyncio.to_thread(docker_service.ping):
+        raise HTTPException(status_code=409, detail="Docker daemon is not reachable")
+    auto_update.start_check()
+    return await asyncio.to_thread(auto_update.status)
 
 
 @router.delete("/{branch}", status_code=204)

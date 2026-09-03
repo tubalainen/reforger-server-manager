@@ -78,6 +78,11 @@ done once than read it step by step — the two cover the same ground.
       automatic HTTPS, and one command signs every session out if a cookie leaks
 - [x] One-click SteamCMD download of server files — **Stable** (app `1874900`) or
       **Experimental** (app `1890870`) — with live progress bars and streaming logs
+- [x] **Automatic update checks** — once a day the manager asks Steam whether a newer
+      server release exists for the branches you have installed and prompts you on the
+      Instances page. Two opt-in checkboxes take it further: download the new files by
+      itself, and restart that branch's servers onto the new build once the download
+      finishes
 - [x] Server templates: pick a scenario straight from the
       [Workshop](https://reforger.armaplatform.com/workshop), auto-resolve all mod
       dependencies, add extra mods, tune settings, save — and download the resulting

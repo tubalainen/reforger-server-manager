@@ -1638,6 +1638,35 @@ def restart_instance(instance_id: int) -> None:
     start_instance(instance_id)
 
 
+def restart_instances_for_branch(branch: str) -> list[str]:
+    """Restart every instance of a branch that should be running (#177).
+
+    Called after the automatic updater downloaded new server files: the files on
+    disk are shared, but a server that is already up keeps running the build it
+    started with, so a restart is what actually puts it on the new version.
+    Failures are logged per instance — one server that refuses to come back must
+    not leave the rest on the old build. Returns the names restarted.
+    """
+    if not docker_service.ping():
+        return []
+    with Session(get_engine()) as session:
+        instances = [i for i in _all_instances(session) if i.branch == branch]
+    restarted = []
+    for inst in instances:
+        if inst.desired_state != "running":
+            continue
+        try:
+            restart_instance(inst.id)
+        except InstanceError as exc:
+            logger.warning(
+                "Restart of %s after the %s server-files update failed: %s",
+                inst.name, branch, exc,
+            )
+            continue
+        restarted.append(inst.name)
+    return restarted
+
+
 def apply_scheduled_restarts() -> None:
     """Restart instances whose daily schedule has come due. Non-fatal.
 

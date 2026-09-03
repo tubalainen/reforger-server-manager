@@ -210,9 +210,13 @@ const faq = [
   },
   {
     q: 'How do I update the server files when the game updates?',
-    a: `Open Server Instances and scroll to the Server files section. Use "Check for
-       update" to compare your install against Steam, then re-run the download for that
-       branch. Restart instances afterwards so they pick up the new build.`,
+    a: `The manager checks Steam once a day by itself and puts a prompt at the top of the
+       Server Instances page when a new release is out; one click there downloads it. You
+       can still do it by hand in the Server files section at the bottom of that page, and
+       under Automatic updates you can let the manager download new server files on its own
+       — and, if you want, restart that branch's servers onto the new build once the
+       download finishes. Until a server restarts it keeps running the build it started
+       with.`,
   },
   {
     q: 'How do I update this manager itself?',
@@ -478,10 +482,18 @@ const faq = [
             Swapping an instance to a different template warns you if the persistent-save
             target (hive id) would change.
           </li>
-          <li>
+          <li class="mb-2">
             <strong>Server files:</strong> the shared per-branch install lives at the
             bottom of the Server Instances page — download, check for updates against
             Steam, or delete it there.
+          </li>
+          <li>
+            <strong>Automatic updates:</strong> once a day the manager asks Steam whether
+            a newer server release exists for the branches you have installed, and says so
+            at the top of the Server Instances page. Nothing is downloaded unless you tick
+            <em>Download new server files automatically</em>, and no server is restarted
+            unless you also tick <em>Restart my servers onto the new build</em> — which
+            disconnects whoever is playing, so it is off by default.
           </li>
         </ul>
       </div>

@@ -8,6 +8,11 @@ import { serverStatus } from '../status'
 
 const instances = ref([])
 const summary = ref(null)
+// New Arma server releases the daily check found, and the embedded Server files
+// view we hand a download to (#177).
+const updates = ref([])
+const autoDownload = ref(false)
+const downloads = ref(null)
 const templates = ref([])
 const error = ref('')
 const showCreate = ref(false)
@@ -30,6 +35,21 @@ async function load() {
   } catch {
     /* keep last */
   }
+  try {
+    const auto = await api('/api/serverfiles/auto-update')
+    autoDownload.value = auto.auto_download
+    updates.value = auto.branches.filter((b) => b.update_available)
+  } catch {
+    /* keep last */
+  }
+}
+
+// Start the branch's download in the Server files view below, so its progress
+// and log show up where they always do, then take the user to it.
+async function updateNow(branch) {
+  await downloads.value?.startDownload(branch)
+  document.getElementById('server-files')?.scrollIntoView({ behavior: 'smooth' })
+  await load()
 }
 
 // The summary carries whether each running server is still loading or actually
@@ -149,6 +169,30 @@ onUnmounted(() => clearInterval(poll))
     </div>
 
     <div v-if="error" class="alert alert-warning py-2">{{ error }}</div>
+
+    <!-- A new base server release is out. Shown here, above the servers it
+         affects, because that is where you notice it (#177). -->
+    <div
+      v-for="u in updates"
+      :key="u.branch"
+      class="alert alert-info d-flex flex-wrap align-items-center gap-2 py-2"
+    >
+      <span>
+        ⬆️ <strong>New {{ u.label }} server release</strong> — build
+        {{ u.installed_build }} → {{ u.latest_build }}.
+        <template v-if="u.downloading">Downloading it now.</template>
+        <template v-else-if="autoDownload">It downloads automatically.</template>
+        <template v-else>
+          Your servers keep running the installed build until the server files are updated.
+        </template>
+      </span>
+      <button
+        v-if="!u.downloading"
+        class="btn btn-sm btn-primary ms-auto"
+        @click="updateNow(u.branch)"
+      >Update server files</button>
+      <a class="btn btn-sm btn-outline-secondary" href="#server-files">Server files</a>
+    </div>
 
     <!-- Summary status bar (issue #12) -->
     <div v-if="summary && summary.total" class="card mb-3 bg-body-tertiary">
@@ -394,5 +438,5 @@ onUnmounted(() => clearInterval(poll))
   </div>
 
   <!-- Server files (formerly the Downloads tab) live at the bottom here now -->
-  <Downloads id="server-files" class="border-top pt-4 mt-4" />
+  <Downloads id="server-files" ref="downloads" class="border-top pt-4 mt-4" />
 </template>
