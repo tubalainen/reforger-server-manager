@@ -170,6 +170,16 @@ done once than read it step by step — the two cover the same ground.
 
 ## Architecture
 
+### Visual architecture overview
+
+[![Reforger Server Manager architecture overview](docs/architecture/reforger-server-manager-overview.png)](docs/architecture/reforger-server-manager-overview.html)
+
+Click the diagram to open the interactive, source-linked overview. The editable
+[Archify specification](docs/architecture/reforger-server-manager-overview.architecture.json)
+is stored alongside it.
+
+### Runtime layout
+
 ```
  Browser ──► manager container (FastAPI + Vue)
                 │
