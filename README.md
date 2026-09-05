@@ -57,17 +57,17 @@ The default instance runtime is the [ACE Mod-compatible image](https://github.co
 
 ## Architecture
 
-[![Architectural overview](docs/architecture/reforger-server-manager-overview.png)](docs/architecture/reforger-server-manager-overview.html)
+[![Architectural overview](docs/architecture/reforger-server-manager-overview.png)](https://tubalainen.github.io/reforger-server-manager/architecture/reforger-server-manager-overview.html)
 
 The browser talks to a FastAPI manager backed by SQLite. The manager delegates narrowly scoped container operations to a Docker socket proxy, while SteamCMD downloads and each Arma server run in separate containers. Persistent data, server files, profiles, and Workshop content live in shared volumes or bind mounts.
 
-Click the image for the interactive overview, or edit the [Archify specification](docs/architecture/reforger-server-manager-overview.architecture.json).
+Click the image for the interactive, animated overview, or edit the [Archify specification](docs/architecture/reforger-server-manager-overview.architecture.json).
 
 ## Documentation
 
 - [Installation, security, networking, and updates](docs/installation.md)
 - [Features and screenshots](docs/features.md)
-- [Architecture overview](docs/architecture/reforger-server-manager-overview.html)
+- [Interactive architecture overview](https://tubalainen.github.io/reforger-server-manager/architecture/reforger-server-manager-overview.html)
 - [Release notes](https://github.com/tubalainen/reforger-server-manager/releases)
 
 ## Development

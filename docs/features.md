@@ -2,7 +2,7 @@
 
 Reforger Server Manager brings the common setup and day-to-day operations for Arma Reforger Dedicated Servers into one browser interface.
 
-[Back to README](../README.md) · [Installation guide](installation.md) · [Architecture overview](architecture/reforger-server-manager-overview.html)
+[Back to README](../README.md) · [Installation guide](installation.md) · [Interactive architecture overview](https://tubalainen.github.io/reforger-server-manager/architecture/reforger-server-manager-overview.html)
 
 ## Server templates
 
