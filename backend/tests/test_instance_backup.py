@@ -448,3 +448,118 @@ def test_the_safety_copy_cannot_prune_the_backup_being_restored(tmp_path, monkey
 
     assert out["restored"]["id"] == oldest
     assert oldest in [b["id"] for b in instance_backup.list_backups(instance_id)]
+
+# --------------------------------------------------------------------------- #
+# Forcing a world where the rules say it does not belong (#184)
+# --------------------------------------------------------------------------- #
+
+def test_a_restore_that_would_not_load_is_refused_and_says_why(tmp_path, monkeypatch):
+    """The fit rules used to be advice the GUI drew; now the service enforces them."""
+    instance_id, idir = _seed(tmp_path, monkeypatch)
+    made = instance_backup.create_backup(instance_id)
+    _repoint(instance_id, _add_template("Freedom Fighters", "{FFFF}Missions/FF.conf", hive=1))
+
+    _fake_container_run(monkeypatch, idir)
+    monkeypatch.setattr(instance_service.docker_service, "ping", lambda: True)
+    with pytest.raises(instance_service.InstanceError, match="does not read another scenario"):
+        instance_backup.restore_backup(instance_id, made["id"])
+
+
+def test_a_hive_mismatch_is_refused_in_its_own_words(tmp_path, monkeypatch):
+    instance_id, idir = _seed(tmp_path, monkeypatch)
+    made = instance_backup.create_backup(instance_id)
+    scenario = "{59AD59368755F41A}Missions/21_GM_Eden.conf"
+    _repoint(instance_id, _add_template("Same scenario, hive 7", scenario, hive=7))
+
+    _fake_container_run(monkeypatch, idir)
+    monkeypatch.setattr(instance_service.docker_service, "ping", lambda: True)
+    with pytest.raises(instance_service.InstanceError, match="hive id 7"):
+        instance_backup.restore_backup(instance_id, made["id"])
+
+
+def test_force_puts_the_world_where_the_operator_says(tmp_path, monkeypatch):
+    """The rule is right almost always; the operator is right the rest of the time."""
+    instance_id, idir = _seed(tmp_path, monkeypatch)
+    made = instance_backup.create_backup(instance_id)
+    other = _add_template("Freedom Fighters", "{FFFF}Missions/FF.conf", hive=1)
+    _repoint(instance_id, other)
+    (idir / "profile" / "profile" / "FFShopPricing" / "prices.json").write_text('{"ak": 999}')
+
+    _fake_container_run(monkeypatch, idir)
+    monkeypatch.setattr(instance_service.docker_service, "ping", lambda: True)
+    out = instance_backup.restore_backup(instance_id, made["id"], force=True)
+
+    assert out["forced"] is True and out["fit"] == "other-scenario"
+    prices = idir / "profile" / "profile" / "FFShopPricing" / "prices.json"
+    assert json.loads(prices.read_text())["ak"] == 100  # the backup's world is in place
+    with Session(get_engine()) as session:  # ...and the template was left alone
+        assert session.get(Instance, instance_id).template_id == other
+
+
+def test_a_forced_restore_always_keeps_the_world_it_replaces(tmp_path, monkeypatch):
+    """backup_first is not the operator's call on the path most likely to be wrong."""
+    instance_id, idir = _seed(tmp_path, monkeypatch)
+    made = instance_backup.create_backup(instance_id)
+    _repoint(instance_id, _add_template("Freedom Fighters", "{FFFF}Missions/FF.conf", hive=1))
+
+    _fake_container_run(monkeypatch, idir)
+    monkeypatch.setattr(instance_service.docker_service, "ping", lambda: True)
+    out = instance_backup.restore_backup(
+        instance_id, made["id"], force=True, backup_first=False
+    )
+
+    assert out["safety_backup"] is not None
+    assert out["safety_backup"]["source"] == "pre-restore"
+
+
+def test_force_can_pair_a_world_with_any_template_at_all(tmp_path, monkeypatch):
+    """Not just the one that matches: a scenario id can move, a mod can relocate
+    its data, and the operator may be transplanting a world on purpose."""
+    instance_id, idir = _seed(tmp_path, monkeypatch)
+    made = instance_backup.create_backup(instance_id)
+    unrelated = _add_template("Nothing to do with it", "{ZZZZ}Missions/Z.conf", hive=3)
+
+    _fake_container_run(monkeypatch, idir)
+    monkeypatch.setattr(instance_service.docker_service, "ping", lambda: True)
+    monkeypatch.setattr(instance_service.docker_service, "find_instance_container", lambda _id: None)
+    out = instance_backup.restore_backup(
+        instance_id, made["id"], switch_template_id=unrelated, force=True
+    )
+
+    assert out["forced"] is True
+    assert out["switched_to"]["template_name"] == "Nothing to do with it"
+    with Session(get_engine()) as session:
+        assert session.get(Instance, instance_id).template_id == unrelated
+
+
+def test_an_archive_that_never_said_what_wrote_it_needs_force(tmp_path, monkeypatch):
+    instance_id, idir = _seed(tmp_path, monkeypatch)
+    made = instance_backup.create_backup(instance_id)
+    meta_file = idir / "backups" / f"{made['id']}.json"
+    meta_file.write_text(json.dumps({"id": made["id"]}))  # an upload with no origin
+
+    _fake_container_run(monkeypatch, idir)
+    monkeypatch.setattr(instance_service.docker_service, "ping", lambda: True)
+    with pytest.raises(instance_service.InstanceError, match="does not record which scenario"):
+        instance_backup.restore_backup(instance_id, made["id"])
+    assert instance_backup.restore_backup(instance_id, made["id"], force=True)["fit"] == "unknown"
+
+
+def test_choosing_the_template_already_attached_does_not_rebuild_the_container(tmp_path, monkeypatch):
+    """set_instance_template tears the container down; asking for the template the
+    instance already has must not pay that price."""
+    instance_id, idir = _seed(tmp_path, monkeypatch)
+    made = instance_backup.create_backup(instance_id)
+    repointed = []
+    monkeypatch.setattr(
+        instance_service, "set_instance_template",
+        lambda *a: repointed.append(a),
+    )
+    _fake_container_run(monkeypatch, idir)
+    monkeypatch.setattr(instance_service.docker_service, "ping", lambda: True)
+
+    out = instance_backup.restore_backup(
+        instance_id, made["id"], switch_template_id=made["template_id"]
+    )
+
+    assert repointed == [] and out["switched_to"] is None and out["forced"] is False

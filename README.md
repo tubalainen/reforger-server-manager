@@ -19,7 +19,7 @@ It runs on Linux, a public VPS, or Windows 10/11 through Docker Desktop. The pro
 - Start, stop, restart, monitor, and inspect live logs from the browser.
 - Schedule restarts and optionally update or restart servers when new builds are detected.
 - Back up and restore every server template and mod template as one file.
-- Back up, download and restore each server's saved world, including one written under a template the server no longer runs.
+- Back up, download and restore each server's saved world, including one written under a template the server no longer runs — or force a combination the manager would refuse.
 - Import or export `config.json` while preserving settings the UI does not know about.
 - Keep Docker access behind a least-privilege socket proxy; managed containers run with `no-new-privileges`.
 

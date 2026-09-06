@@ -187,6 +187,19 @@ const faq = [
        template: swapping a template never moves, copies or deletes one.`,
   },
   {
+    q: 'The manager says a backup will not load, but I know better. Can I restore it anyway?',
+    a: `Yes. The restore dialog lets you pick the template the world is restored under —
+       every template is offered, each labelled with how it fits that backup — and picking
+       one that does not fit turns the button into "Force restore": you get the reason in
+       red, tick "I know why this combination is right", and it goes ahead. Use it when the
+       rule is wrong rather than you: a scenario id that changed upstream, a mod that moved
+       its data, or a world you are deliberately transplanting onto a new template. Two
+       things are not negotiable on that path — the world being replaced is always backed
+       up first, and the forced restore is written to the manager log with the reason it
+       did not fit. Afterwards, start the server and check the world actually loaded: the
+       manager can put the files in place, but only the game can tell you it read them.`,
+  },
+  {
     q: 'What is NOT in a backup?',
     a: `Logs and crash reports, the downloaded and baked mods (they are re-fetched from the
        template on the next start), and the server's own ownerToken.bin — that is the
