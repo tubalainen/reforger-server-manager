@@ -261,18 +261,25 @@ def test_status_absent_when_no_container(logged_in):
 
 # --- saved game backups (#179) ------------------------------------------------
 
-def _instance_with_state(logged_in, tmp_path, monkeypatch):
+def _use_data_dir(tmp_path, monkeypatch):
+    """Point DATA_DIR at a scratch dir without logging the test client out.
+
+    The session signing salt lives in DATA_DIR (auth._salt_path), so moving
+    DATA_DIR out from under a logged-in client invalidates its cookie and every
+    call afterwards comes back 401. Carry the salt over with it.
+    """
     import shutil
 
     import config
 
-    # The session signing salt lives in DATA_DIR (auth._salt_path), so moving
-    # DATA_DIR out from under a logged-in client invalidates its cookie and every
-    # call here comes back 401. Carry the salt over with it.
     salt = Path(config.settings.data_dir) / "session_salt"
     if salt.is_file():
         shutil.copy(salt, tmp_path / "session_salt")
     monkeypatch.setattr(config.settings, "data_dir", str(tmp_path))
+
+
+def _instance_with_state(logged_in, tmp_path, monkeypatch):
+    _use_data_dir(tmp_path, monkeypatch)
     tid = _template(logged_in, "ff-template")
     iid = logged_in.post(
         "/api/instances", json={"name": "ff", "template_id": tid}
@@ -418,3 +425,20 @@ def test_force_carries_the_restore_through_and_says_it_was_forced(logged_in, tmp
     assert body["forced"] is True and body["fit"] == "other-scenario"
     # forcing always keeps a copy of what it replaced, whatever the request said
     assert body["safety_backup"] is not None
+
+
+def test_create_reports_data_left_behind_by_a_deleted_instance(logged_in, tmp_path, monkeypatch):
+    _use_data_dir(tmp_path, monkeypatch)
+    tid = _template(logged_in, "reuse")
+    first = logged_in.post("/api/instances", json={"name": "one", "template_id": tid}).json()
+    assert first["orphaned_data"] is None
+
+    idir = tmp_path / "instances" / str(first["id"])
+    (idir / "profile").mkdir(parents=True)
+    (idir / "profile" / "world.bin").write_bytes(b"kept")
+    logged_in.delete(f"/api/instances/{first['id']}")  # no purge: data stays
+
+    second = logged_in.post("/api/instances", json={"name": "two", "template_id": tid}).json()
+    assert second["id"] == first["id"]
+    assert "orphaned-instances" in second["orphaned_data"]
+    assert not (idir / "profile").exists()

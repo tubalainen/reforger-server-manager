@@ -299,11 +299,34 @@ def list_backups(instance_id: int) -> list[dict]:
     return out
 
 
+def _sweep_stray_sidecars(instance_id: int) -> None:
+    """Drop metadata files whose archive is gone (#187).
+
+    The archive is always written before its sidecar and both go together on
+    delete, so a lone sidecar means something was interrupted or moved by hand.
+    It is invisible to the listing, which is driven by archives, and would sit
+    there for ever otherwise — so opening the card tidies up after it.
+    """
+    directory = backups_dir(instance_id)
+    if not directory.is_dir():
+        return
+    for meta_file in directory.glob(f"*{META_SUFFIX}"):
+        archive = directory / f"{meta_file.name[: -len(META_SUFFIX)]}{ARCHIVE_SUFFIX}"
+        if archive.exists():
+            continue
+        try:
+            meta_file.unlink()
+            logger.info("Removed stray backup metadata %s", meta_file.name)
+        except OSError:
+            continue
+
+
 def overview(instance_id: int) -> dict:
     """Everything the backups card needs in one call."""
     with Session(get_engine()) as session:
         if not session.get(Instance, instance_id):
             raise InstanceError("Instance not found")
+    _sweep_stray_sidecars(instance_id)
     running = (
         instance_service.container_status(instance_id) == "running"
         if docker_service.ping()

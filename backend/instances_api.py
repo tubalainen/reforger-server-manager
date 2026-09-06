@@ -103,14 +103,17 @@ async def summary(_user: str = Depends(auth.require_session)):
 @router.post("", status_code=201)
 async def create_instance(body: CreateInstance, _user: str = Depends(auth.require_session)):
     try:
-        inst = await asyncio.to_thread(
+        inst, parked = await asyncio.to_thread(
             instance_service.create_instance,
             body.name, body.template_id, body.branch,
             body.game_port, body.a2s_port, body.rcon_port,
         )
     except InstanceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return await asyncio.to_thread(_view, inst.id)
+    view = await asyncio.to_thread(_view, inst.id)
+    # Say it out loud when this id came with someone else's data attached (#187):
+    # the files are safe, but they are no longer where their owner would look.
+    return {**view, "orphaned_data": parked}
 
 
 def _view(instance_id: int) -> dict:

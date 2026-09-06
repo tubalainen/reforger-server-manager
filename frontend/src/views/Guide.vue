@@ -115,6 +115,15 @@ const faq = [
        container by itself on the next start.`,
   },
   {
+    q: 'Why is my new template called "Arma Reforger Server Hidden Ridge"?',
+    a: `Because every template used to be called "Arma Reforger Server", and the in-game
+       browser filled up with identical entries — one prefilled field nobody edited,
+       multiplied by everyone. A new template now starts with the same searchable prefix
+       plus two words of its own. Type over it with whatever you like, or press 🎲 for
+       another suggestion; it is only a starting value. Editing an existing template never
+       changes its name.`,
+  },
+  {
     q: 'Do mods update automatically?',
     a: `Yes, by default. Mods follow the latest Workshop release: the server checks and
        downloads mod updates when it starts. If an update breaks things, edit the
@@ -304,8 +313,11 @@ const faq = [
        downloaded game server per branch. A server's persistent save lives with its profile,
        under ./data/instances/<id>/profile — on the host, never inside a container image, so
        it survives rebuilds and updates; the backups you make from the instance page sit
-       beside it in ./data/instances/<id>/backups. Back up the data folder to keep your
-       setup. On
+       beside it in ./data/instances/<id>/backups. Deleting an instance without ticking
+       "also delete stored data" leaves that folder behind, and if a later instance is
+       given the same id the folder is moved to ./data/orphaned-instances/<id>-<date>/
+       rather than handed to the new server — so nothing is lost and nothing is inherited.
+       Back up the data folder to keep your setup. On
        Windows the same content lives in Docker named volumes (reforger-data,
        reforger-serverfiles-*) — browse them in Docker Desktop → Volumes — because the
        Linux-owned server files are far faster and permission-clean there than in an

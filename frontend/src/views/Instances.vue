@@ -16,6 +16,7 @@ const downloads = ref(null)
 const templates = ref([])
 const error = ref('')
 const showCreate = ref(false)
+const orphanedData = ref('')
 const create = reactive({
   name: '', template_id: null, branch: 'stable',
   customPorts: false, game_port: null, a2s_port: null, rcon_port: null,
@@ -89,7 +90,11 @@ async function submitCreate() {
       body.a2s_port = create.a2s_port
       body.rcon_port = create.rcon_port
     }
-    await api('/api/instances', { method: 'POST', body })
+    const made = await api('/api/instances', { method: 'POST', body })
+    // The id this server was given may have belonged to a deleted one whose data
+    // was kept. It has been moved out of the way rather than adopted — say where
+    // it went, or its owner would never find it again (#187).
+    orphanedData.value = made.orphaned_data || ''
     showCreate.value = false
     await load()
   } catch (e) {
@@ -169,6 +174,16 @@ onUnmounted(() => clearInterval(poll))
     </div>
 
     <div v-if="error" class="alert alert-warning py-2">{{ error }}</div>
+
+    <div v-if="orphanedData" class="alert alert-info py-2 small d-flex gap-2 align-items-start">
+      <span>
+        This server was given an id that a deleted server had used, and that server's
+        stored data — its world and its backups — was still on disk. It has been moved
+        to <code class="text-break">{{ orphanedData }}</code> rather than handed to the
+        new server, which starts empty. Nothing was deleted.
+      </span>
+      <button class="btn-close ms-auto" @click="orphanedData = ''"></button>
+    </div>
 
     <!-- A new base server release is out. Shown here, above the servers it
          affects, because that is where you notice it (#177). -->

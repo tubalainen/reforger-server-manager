@@ -249,6 +249,47 @@ def used_ports(session: Session, exclude_id: int | None = None) -> tuple[set, se
 # Lifecycle
 # --------------------------------------------------------------------------- #
 
+# Where a leftover instance directory is parked when its id comes back around.
+# Deliberately outside `instances/`, so nothing that walks the live instances
+# (the log-retention sweep, for one) keeps working on a dead server's files.
+ORPHANED_DIRNAME = "orphaned-instances"
+
+
+def _set_aside_stale_dir(instance_id: int) -> str | None:
+    """Move a leftover data directory out of a new instance's way (#187).
+
+    Instance ids are SQLite rowids, and SQLite hands the highest one straight
+    back out after a delete. Deleting an instance *without* "also delete stored
+    data" leaves data/instances/<id>/ on disk, so the next instance created can
+    be given that id — and with it the dead server's profile, the world in it and
+    its whole backup shelf, silently, under a new name.
+
+    Nothing is deleted here: the directory is renamed aside, keeping its contents
+    for whoever wants them. A rename only needs write permission on the parent,
+    which the manager owns, so root-owned files inside are not an obstacle.
+    """
+    root = Path(config.settings.data_dir)
+    idir = root / "instances" / str(instance_id)
+    try:
+        if not idir.is_dir() or not any(idir.iterdir()):
+            return None
+    except OSError:
+        pass  # unreadable: assume it holds something rather than adopt it blind
+
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    parked = root / ORPHANED_DIRNAME / f"{instance_id}-{stamp}"
+    n = 1
+    while parked.exists():
+        n += 1
+        parked = root / ORPHANED_DIRNAME / f"{instance_id}-{stamp}-{n}"
+    parked.parent.mkdir(parents=True, exist_ok=True)
+    idir.rename(parked)
+    logger.warning(
+        "Instance id %s was reused; its leftover data was moved to %s", instance_id, parked
+    )
+    return str(parked)
+
+
 def create_instance(
     name: str,
     template_id: int,
@@ -256,11 +297,14 @@ def create_instance(
     game_port: int | None = None,
     a2s_port: int | None = None,
     rcon_port: int | None = None,
-) -> Instance:
+) -> tuple[Instance, str | None]:
     """Create an instance. Ports are auto-leased unless explicitly given.
 
     Explicit ports are validated against the other instances so two servers
     never collide on a host port; auto-leased ports come from the .env ranges.
+
+    Returns the instance and, when the id it was given had data left behind by a
+    deleted instance, where that data was moved to (#187).
     """
     if branch not in config.BRANCHES:
         raise InstanceError(f"Unknown branch '{branch}'")
@@ -282,8 +326,26 @@ def create_instance(
         session.add(inst)
         session.commit()
         session.refresh(inst)
-        logger.info("Created instance %s (ports g=%s a2s=%s rcon=%s)", name, game, a2s, rcon)
-        return inst
+
+    try:
+        parked = _set_aside_stale_dir(inst.id)
+    except OSError as exc:
+        # Refuse rather than adopt: an instance silently holding a deleted
+        # server's world is the whole failure this guards against. The row goes
+        # again so the next attempt is not handed a different id for nothing.
+        with Session(get_engine()) as session:
+            stale = session.get(Instance, inst.id)
+            if stale:
+                session.delete(stale)
+                session.commit()
+        raise InstanceError(
+            f"This id has data left over from a deleted instance at "
+            f"data/instances/{inst.id}, and it could not be moved aside ({exc}). "
+            "Move or delete that folder, then create the instance again."
+        ) from exc
+
+    logger.info("Created instance %s (ports g=%s a2s=%s rcon=%s)", name, game, a2s, rcon)
+    return inst, parked
 
 
 def _resolve_port(kind: str, requested: int | None, used: set[int], rng: tuple[int, int]) -> int:
