@@ -34,12 +34,6 @@ Each instance gets its own ports, configuration, profile, Workshop content, and 
 
 From the instance view you can:
 
-- Back up and restore the saved game data — the world, plus the databases the scenario
-  and its mods keep beside it — download a backup or upload one back, and have the
-  manager take one automatically before you switch the instance to another template.
-- Restore a world from a template the server no longer runs: each backup is matched
-  against the current scenario and hive id, and the template that reads it can be put
-  back in the same action.
 - Start, stop, restart, and delete a server.
 - Follow live logs and copy useful diagnostic output.
 - View player count, process state, resource use, and server metadata.
@@ -47,6 +41,12 @@ From the instance view you can:
 - Configure auto-start and scheduled restarts.
 - Apply template changes to existing instances.
 - See assigned game, A2S, and RCON ports without managing leases manually.
+- Back up and restore the saved game data — the world, plus the databases the scenario
+  and its mods keep beside it — download a backup or upload one back, and have the
+  manager take one automatically before you switch the instance to another template.
+- Restore a world from a template the server no longer runs: each backup is matched
+  against the current scenario and hive id, and the template that reads it can be put
+  back in the same action.
 
 ## Downloads and updates
 
@@ -61,7 +61,7 @@ From the instance view you can:
 - Edit known settings with forms or use the inline JSON editor.
 - Preserve valid unknown top-level keys and custom `game` or `operating` properties during form edits.
 - Validate the generated configuration before saving it.
-- Back up and restore templates, instances, profiles, and Workshop data.
+- Back up and restore every server template and mod template as one file.
 - Inspect Workshop storage and remove content that is no longer required.
 
 Port values are assigned per instance by the manager. Imported port settings therefore do not override an instance's port lease.
