@@ -167,9 +167,24 @@ const faq = [
        databases are all in there, not just .save). Each backup lists what it holds, which
        template and scenario wrote it, and offers Restore, Download and Delete. Restore
        needs the server stopped: it deletes the current world and unpacks the backup in its
-       place. Download gives you a file to keep off the box, and "Upload a backup file"
-       puts one back on the shelf — on a rebuilt host, or on another instance. The newest
-       ten are kept per instance; older ones are removed as new ones are made.`,
+       place, and offers to back up the world it is about to replace first. Download gives
+       you a file to keep off the box, and "Upload a backup file" puts one back on the
+       shelf — on a rebuilt host, or on another instance. The newest ten are kept per
+       instance; older ones are removed as new ones are made.`,
+  },
+  {
+    q: 'One server, several templates over time — which backups can I actually restore?',
+    a: `Every row says so. A world is read by the scenario that wrote it, out of the hive id
+       its template names, so each backup is badged against what the server is set to right
+       now: "matches this server", "different scenario", or "different save (hive id)" —
+       the last one catches two templates running the same scenario on different hive ids,
+       where the files look right and the server still starts an empty world. When a backup
+       does not match, the row names the template that does ("loads under template X") and
+       the restore dialog offers "Switch template & restore", which repoints the instance
+       and puts the world back in one action. If no template on this manager targets that
+       save, it says that instead of pretending — restore the files anyway if you like,
+       then build a template with that scenario. Backups belong to the instance, not to a
+       template: swapping a template never moves, copies or deletes one.`,
   },
   {
     q: 'What is NOT in a backup?',

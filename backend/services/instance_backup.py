@@ -33,7 +33,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 from docker.errors import DockerException
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 import config
 from models import Instance, Template, get_engine
@@ -67,7 +67,15 @@ _ID_RE = re.compile(r"^\d{8}-\d{6}(-\d+)?$")
 
 SOURCE_MANUAL = "manual"
 SOURCE_TEMPLATE_SWITCH = "template-switch"
+SOURCE_PRE_RESTORE = "pre-restore"
 SOURCE_UPLOAD = "upload"
+
+# How a backup relates to what the instance is configured for right now (#181).
+# "match" is the only one the engine will actually load.
+FIT_MATCH = "match"
+FIT_OTHER_HIVE = "other-hive"
+FIT_OTHER_SCENARIO = "other-scenario"
+FIT_UNKNOWN = "unknown"
 
 
 def backups_dir(instance_id: int) -> Path:
@@ -133,6 +141,69 @@ def _instance_context(instance_id: int) -> dict:
             "persistence": bool(persistence.get("persistence")),
             "hive_id": persistence.get("hive_id"),
         }
+
+
+def _template_targets(session: Session) -> list[dict]:
+    """Every template's save target: (scenario, hive id) — what a world needs to load."""
+    out = []
+    for template in session.exec(select(Template)).all():
+        persistence = template_service.persistence_summary(template.config_json)
+        try:
+            scenario_id = (
+                (json.loads(template.config_json).get("game") or {}).get("scenarioId", "")
+            )
+        except (ValueError, AttributeError):
+            scenario_id = ""
+        out.append({
+            "id": template.id,
+            "name": template.name,
+            "scenario_id": scenario_id,
+            "hive_id": persistence.get("hive_id"),
+        })
+    return out
+
+
+def fit_of(meta: dict, current: dict) -> str:
+    """How a backup relates to the instance's current setup (#181).
+
+    A world is loaded by the scenario that wrote it, out of the hive its
+    template names — so those two fields, not the template's identity, decide
+    whether a restore will be visible in-game. A backup whose template was since
+    renamed, edited or deleted still fits if the pair still matches.
+    """
+    written_for = (meta.get("scenario_id") or "").strip()
+    if not written_for:
+        return FIT_UNKNOWN  # an uploaded archive that never said
+    if written_for != (current.get("scenario_id") or "").strip():
+        return FIT_OTHER_SCENARIO
+    if meta.get("hive_id") != current.get("hive_id"):
+        return FIT_OTHER_HIVE
+    return FIT_MATCH
+
+
+def _switch_candidate(meta: dict, templates: list[dict]) -> dict | None:
+    """A template that would make this backup load, or None if none would.
+
+    Preference order: the template recorded on the backup if it still writes to
+    the same save; then any template matching both scenario and hive id; then
+    one matching the scenario alone, flagged so the GUI can say the hive id
+    still differs.
+    """
+    written_for = (meta.get("scenario_id") or "").strip()
+    if not written_for:
+        return None
+    same_scenario = [t for t in templates if (t["scenario_id"] or "").strip() == written_for]
+    if not same_scenario:
+        return None
+    exact = [t for t in same_scenario if t["hive_id"] == meta.get("hive_id")]
+    recorded = [t for t in exact if t["id"] == meta.get("template_id")]
+    chosen = (recorded or exact or same_scenario)[0]
+    return {
+        "id": chosen["id"],
+        "name": chosen["name"],
+        "hive_id": chosen["hive_id"],
+        "exact": chosen in exact,
+    }
 
 
 def state_summary(instance_id: int) -> dict:
@@ -216,15 +287,28 @@ def overview(instance_id: int) -> dict:
         if docker_service.ping()
         else False
     )
+    current = _instance_context(instance_id)
+    with Session(get_engine()) as session:
+        templates = _template_targets(session)
+    backups = []
+    for backup in list_backups(instance_id):
+        fit = fit_of(backup, current)
+        backups.append({
+            **backup,
+            "fit": fit,
+            # What to switch this instance to so the world is actually read. Null
+            # when it already fits, or when no template here targets that save.
+            "switch_to": None if fit == FIT_MATCH else _switch_candidate(backup, templates),
+        })
     return {
         "running": running,
         "keep": KEEP,
         # What the instance is configured for *now*, so the GUI can say when a
         # backup was written under a different scenario — restoring one of those
         # gives the new scenario a world it cannot read (#179).
-        "current": _instance_context(instance_id),
+        "current": current,
         "state": state_summary(instance_id),
-        "backups": list_backups(instance_id),
+        "backups": backups,
     }
 
 
@@ -290,7 +374,12 @@ def _write_archive(archive: Path, idir: Path, paths: list[Path], base: dict) -> 
     return meta
 
 
-def create_backup(instance_id: int, label: str = "", source: str = SOURCE_MANUAL) -> dict:
+def create_backup(
+    instance_id: int,
+    label: str = "",
+    source: str = SOURCE_MANUAL,
+    protect: str | None = None,
+) -> dict:
     """Archive this instance's saved game data. Allowed while the server runs."""
     idir = _instance_dir(instance_id)
     context = _instance_context(instance_id)
@@ -333,7 +422,7 @@ def create_backup(instance_id: int, label: str = "", source: str = SOURCE_MANUAL
         json.dumps(meta, indent=2), encoding="utf-8"
     )
     meta["archive_bytes"] = archive.stat().st_size
-    meta["pruned"] = prune(instance_id)
+    meta["pruned"] = prune(instance_id, protect=protect)
     logger.info(
         "Backed up instance %s as %s (%s files, %s bytes)",
         instance_id, backup_id, meta["files"], meta["size_bytes"],
@@ -341,11 +430,18 @@ def create_backup(instance_id: int, label: str = "", source: str = SOURCE_MANUAL
     return meta
 
 
-def prune(instance_id: int) -> list[str]:
-    """Drop everything past the newest KEEP backups; returns what was removed."""
+def prune(instance_id: int, protect: str | None = None) -> list[str]:
+    """Drop everything past the newest KEEP backups; returns what was removed.
+
+    ``protect`` is never dropped, however old it is: the safety copy taken just
+    before a restore would otherwise be able to prune the very archive that
+    restore is about to unpack (#181).
+    """
     backups = list_backups(instance_id)
     dropped = []
     for backup in backups[KEEP:]:
+        if backup["id"] == protect:
+            continue
         delete_backup(instance_id, backup["id"])
         dropped.append(backup["id"])
     if dropped:
@@ -505,13 +601,27 @@ def store_upload(instance_id: int, filename: str, temp_path: Path) -> dict:
 # Restoring
 # --------------------------------------------------------------------------- #
 
-def restore_backup(instance_id: int, backup_id: str) -> dict:
+def restore_backup(
+    instance_id: int,
+    backup_id: str,
+    switch_template_id: int | None = None,
+    backup_first: bool = False,
+) -> dict:
     """Put a backup back: clear the current game state, then unpack the archive.
 
     Stopped servers only, and the clear is not optional. Unpacking over a live
     world would leave the newer save points that the archive does not contain
     sitting next to the ones it does, and the engine would load whichever it
     likes — a mix of two worlds is not a restore.
+
+    ``switch_template_id`` repoints the instance in the same step (#181). An
+    instance outlives its templates, so most of the shelf is usually worlds from
+    setups the server no longer runs; restoring one of those without also putting
+    the matching template back writes files the running scenario will never read.
+    Doing both here is what makes the shelf usable rather than merely honest.
+
+    ``backup_first`` copies the world being replaced onto the shelf beforehand —
+    a restore is the one destructive action here that had no undo.
     """
     archive = archive_path(instance_id, backup_id)
     with Session(get_engine()) as session:
@@ -527,6 +637,19 @@ def restore_backup(instance_id: int, backup_id: str) -> dict:
             "Docker is not reachable, and restoring needs a helper container to "
             "replace files the server wrote as root. Start Docker and try again."
         )
+
+    safety = None
+    if backup_first and instance_service._state_paths(_profile_dir(instance_id)):
+        # protect=: this copy must not be able to prune the archive being restored.
+        safety = create_backup(
+            instance_id, "Replaced by a restore", SOURCE_PRE_RESTORE, protect=backup_id
+        )
+    switched = None
+    if switch_template_id is not None:
+        # Before the files, so a failure here leaves the instance untouched
+        # rather than holding a world its template cannot read.
+        instance_service.set_instance_template(instance_id, switch_template_id)
+        switched = _instance_context(instance_id)
 
     idir = _instance_dir(instance_id)
     profile = _profile_dir(instance_id)
@@ -566,4 +689,6 @@ def restore_backup(instance_id: int, backup_id: str) -> dict:
     return {
         "restored": {**meta, "id": backup_id},
         "replaced": {"size_bytes": size, "files": files, "paths": rel},
+        "switched_to": switched,
+        "safety_backup": safety,
     }

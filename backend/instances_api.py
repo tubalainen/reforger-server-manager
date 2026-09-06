@@ -64,6 +64,18 @@ class CreateBackup(BaseModel):
     label: str = Field(default="", max_length=120)
 
 
+class RestoreBackup(BaseModel):
+    """Restore, plus the two things that make it usable across templates (#181).
+
+    ``template_id`` repoints the instance in the same step, so a world from an
+    older setup lands on a server configured to read it. ``backup_first`` keeps a
+    copy of what the restore is about to delete.
+    """
+
+    template_id: int | None = None
+    backup_first: bool = False
+
+
 class EditInstance(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     branch: str | None = None
@@ -333,12 +345,16 @@ async def download_backup(
 
 @router.post("/{instance_id}/backups/{backup_id}/restore")
 async def restore_backup(
-    instance_id: int, backup_id: str, _user: str = Depends(auth.require_session)
+    instance_id: int,
+    backup_id: str,
+    body: RestoreBackup = RestoreBackup(),
+    _user: str = Depends(auth.require_session),
 ):
     """Replace the current saved game data with this backup's (stopped only)."""
     try:
         return await asyncio.to_thread(
-            instance_backup.restore_backup, instance_id, backup_id
+            instance_backup.restore_backup,
+            instance_id, backup_id, body.template_id, body.backup_first,
         )
     except InstanceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

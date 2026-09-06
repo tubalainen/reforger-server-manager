@@ -187,6 +187,13 @@ const hiveWarning = computed(() => {
     return `the new template enables persistence (hiveId ${next.hive_id}) — a new save will be created.`
   return ''
 })
+// A restore can repoint the instance (#181), so refresh the header too — the
+// template it names is otherwise stale until the next poll.
+async function onBackupChanged() {
+  await loadInstance()
+  await loadData()
+}
+
 // Ticked by default whenever there is a world to lose: the save the old scenario
 // built is exactly what a template swap orphans (#179).
 const backupBeforeSwap = ref(true)
@@ -742,7 +749,7 @@ onUnmounted(() => {
         ref="backupsCard"
         :id="props.id"
         :running="inst.status === 'running'"
-        @changed="loadData"
+        @changed="onBackupChanged"
       />
 
       <!-- Stored data: baked mods, saves, logs (issue #79). Always rendered — a failed

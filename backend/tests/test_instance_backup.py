@@ -302,3 +302,149 @@ def test_an_archive_that_unpacks_to_more_than_the_cap_is_refused(tmp_path, monke
     bad = _tar_with(tmp_path, [(big, b"x" * 500)])
     with pytest.raises(instance_service.InstanceError, match="more than"):
         instance_backup.inspect_upload(bad)
+
+# --------------------------------------------------------------------------- #
+# Backups from another template (#181)
+# --------------------------------------------------------------------------- #
+
+def _add_template(name, scenario, hive=0):
+    with Session(get_engine()) as session:
+        template = Template(
+            name=name,
+            config_json=json.dumps({
+                "game": {
+                    "scenarioId": scenario,
+                    "gameProperties": {"persistence": {"hiveId": hive}},
+                }
+            }),
+        )
+        session.add(template)
+        session.commit()
+        session.refresh(template)
+        return template.id
+
+
+def _repoint(instance_id, template_id):
+    with Session(get_engine()) as session:
+        inst = session.get(Instance, instance_id)
+        inst.template_id = template_id
+        session.add(inst)
+        session.commit()
+
+
+def test_a_backup_from_the_current_setup_is_marked_as_fitting(tmp_path, monkeypatch):
+    instance_id, _ = _seed(tmp_path, monkeypatch)
+    instance_backup.create_backup(instance_id)
+    row = instance_backup.overview(instance_id)["backups"][0]
+    assert row["fit"] == "match"
+    assert row["switch_to"] is None  # nothing to change; it already loads
+
+
+def test_a_backup_from_another_scenario_names_the_template_to_switch_back_to(tmp_path, monkeypatch):
+    """The whole point of #181: the warning has to carry the way out."""
+    instance_id, _ = _seed(tmp_path, monkeypatch)
+    made = instance_backup.create_backup(instance_id)
+    other = _add_template("Freedom Fighters", "{FFFF}Missions/FF.conf", hive=1)
+    _repoint(instance_id, other)
+
+    row = next(
+        b for b in instance_backup.overview(instance_id)["backups"] if b["id"] == made["id"]
+    )
+    assert row["fit"] == "other-scenario"
+    assert row["switch_to"]["name"] == "Antons Testserver"  # the one that wrote it
+    assert row["switch_to"]["exact"] is True
+
+
+def test_the_same_scenario_on_a_different_hive_is_a_different_save(tmp_path, monkeypatch):
+    """Two templates, one scenario, two hive ids — the engine loads neither's world
+    into the other, and before #181 nothing said so."""
+    instance_id, _ = _seed(tmp_path, monkeypatch)
+    made = instance_backup.create_backup(instance_id)
+    scenario = "{59AD59368755F41A}Missions/21_GM_Eden.conf"
+    _repoint(instance_id, _add_template("Same scenario, hive 7", scenario, hive=7))
+
+    row = next(
+        b for b in instance_backup.overview(instance_id)["backups"] if b["id"] == made["id"]
+    )
+    assert row["fit"] == "other-hive"
+    assert row["switch_to"]["name"] == "Antons Testserver"
+
+
+def test_no_template_here_writes_that_save_so_none_is_offered(tmp_path, monkeypatch):
+    instance_id, _ = _seed(tmp_path, monkeypatch)
+    made = instance_backup.create_backup(instance_id)
+    with Session(get_engine()) as session:  # the template that wrote it is gone
+        session.delete(session.get(Template, 1))
+        session.commit()
+    _repoint(instance_id, _add_template("Something else", "{ZZZZ}Missions/Z.conf"))
+
+    row = next(
+        b for b in instance_backup.overview(instance_id)["backups"] if b["id"] == made["id"]
+    )
+    assert row["fit"] == "other-scenario"
+    assert row["switch_to"] is None  # say so rather than offering a wrong swap
+
+
+def test_an_uploaded_archive_that_never_said_is_unknown_not_wrong(tmp_path, monkeypatch):
+    instance_id, _ = _seed(tmp_path, monkeypatch)
+    assert instance_backup.fit_of({}, {"scenario_id": "{A}x.conf"}) == "unknown"
+    assert instance_backup._switch_candidate({}, [{"id": 1, "name": "t", "scenario_id": "{A}x.conf", "hive_id": 0}]) is None
+
+
+def test_restoring_can_put_the_matching_template_back_in_the_same_step(tmp_path, monkeypatch):
+    instance_id, idir = _seed(tmp_path, monkeypatch)
+    made = instance_backup.create_backup(instance_id)
+    other = _add_template("Freedom Fighters", "{FFFF}Missions/FF.conf", hive=1)
+    _repoint(instance_id, other)
+    (idir / "profile" / "profile" / "FFShopPricing" / "prices.json").write_text('{"ak": 999}')
+
+    _fake_container_run(monkeypatch, idir)
+    monkeypatch.setattr(instance_service.docker_service, "ping", lambda: True)
+    monkeypatch.setattr(instance_service.docker_service, "find_instance_container", lambda _id: None)
+    out = instance_backup.restore_backup(
+        instance_id, made["id"], switch_template_id=made["template_id"]
+    )
+
+    assert out["switched_to"]["template_name"] == "Antons Testserver"
+    with Session(get_engine()) as session:
+        assert session.get(Instance, instance_id).template_id == made["template_id"]
+    # ...and the world is the one the backup held, not the one played since
+    prices = idir / "profile" / "profile" / "FFShopPricing" / "prices.json"
+    assert json.loads(prices.read_text())["ak"] == 100
+    assert instance_backup.overview(instance_id)["backups"][0]["fit"] == "match"
+
+
+def test_a_restore_can_keep_a_copy_of_the_world_it_replaces(tmp_path, monkeypatch):
+    instance_id, idir = _seed(tmp_path, monkeypatch)
+    made = instance_backup.create_backup(instance_id)
+    (idir / "profile" / "profile" / "FFShopPricing" / "prices.json").write_text('{"ak": 999}')
+
+    _fake_container_run(monkeypatch, idir)
+    monkeypatch.setattr(instance_service.docker_service, "ping", lambda: True)
+    out = instance_backup.restore_backup(instance_id, made["id"], backup_first=True)
+
+    assert out["safety_backup"]["source"] == "pre-restore"
+    ids = [b["id"] for b in instance_backup.list_backups(instance_id)]
+    assert made["id"] in ids and out["safety_backup"]["id"] in ids
+
+
+def test_the_safety_copy_cannot_prune_the_backup_being_restored(tmp_path, monkeypatch):
+    """The shelf is capped, so the oldest goes when a new one lands — and the
+    oldest may be exactly the archive about to be unpacked."""
+    instance_id, idir = _seed(tmp_path, monkeypatch)
+    monkeypatch.setattr(instance_backup, "KEEP", 3)
+    made = []
+    for n in range(3):
+        monkeypatch.setattr(
+            instance_backup, "_mint_id", lambda _d, n=n: f"20260101-0000{n:02d}"
+        )
+        made.append(instance_backup.create_backup(instance_id)["id"])
+    oldest = made[0]
+
+    monkeypatch.setattr(instance_backup, "_mint_id", lambda _d: "20260101-000099")
+    _fake_container_run(monkeypatch, idir)
+    monkeypatch.setattr(instance_service.docker_service, "ping", lambda: True)
+    out = instance_backup.restore_backup(instance_id, oldest, backup_first=True)
+
+    assert out["restored"]["id"] == oldest
+    assert oldest in [b["id"] for b in instance_backup.list_backups(instance_id)]

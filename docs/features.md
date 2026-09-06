@@ -37,6 +37,9 @@ From the instance view you can:
 - Back up and restore the saved game data — the world, plus the databases the scenario
   and its mods keep beside it — download a backup or upload one back, and have the
   manager take one automatically before you switch the instance to another template.
+- Restore a world from a template the server no longer runs: each backup is matched
+  against the current scenario and hive id, and the template that reads it can be put
+  back in the same action.
 - Start, stop, restart, and delete a server.
 - Follow live logs and copy useful diagnostic output.
 - View player count, process state, resource use, and server metadata.

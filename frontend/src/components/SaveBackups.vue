@@ -18,6 +18,8 @@ const notice = ref('')
 const busy = ref('')
 const label = ref('')
 const confirmRestore = ref(null)
+const restoreSwitch = ref(true)
+const restoreBackupFirst = ref(true)
 const confirmDelete = ref(null)
 const fileInput = ref(null)
 
@@ -45,7 +47,40 @@ defineExpose({ load })
 const SOURCE_LABEL = {
   manual: 'Made by hand',
   'template-switch': 'Made before a template change',
+  'pre-restore': 'Replaced by a restore',
   upload: 'Uploaded',
+}
+
+// An instance outlives its templates, so most of a long-lived shelf is worlds
+// from setups the server no longer runs. The badge answers the only question
+// that matters when picking one: would this server read it as it stands? (#181)
+const FIT = {
+  match: { badge: 'matches this server', css: 'text-bg-success' },
+  'other-hive': { badge: 'different save (hive id)', css: 'text-bg-warning' },
+  'other-scenario': { badge: 'different scenario', css: 'text-bg-warning' },
+  unknown: { badge: 'origin unknown', css: 'text-bg-secondary' },
+}
+const fitOf = (backup) => FIT[backup.fit] || FIT.unknown
+
+// Why it does not fit, in the words of the thing the user actually chose: the
+// template. Scenario ids are printed too, because two templates can carry the
+// same name in conversation and only the id settles it.
+function fitExplained(backup) {
+  const now = current.value
+  if (!backup) return ''
+  if (backup.fit === 'match') {
+    return `This backup matches what this server is set to now — scenario ${now.scenario_id}${
+      now.hive_id === null || now.hive_id === undefined ? '' : `, hive id ${now.hive_id}`
+    }.`
+  }
+  if (backup.fit === 'unknown') {
+    return 'This file does not say which scenario wrote it, so the manager cannot tell whether this server will read it.'
+  }
+  const wrote = backup.template_name ? `template "${backup.template_name}"` : 'another template'
+  if (backup.fit === 'other-hive') {
+    return `Same scenario, different save: this world was written by ${wrote} for hive id ${backup.hive_id}, and this server is set to hive id ${now.hive_id}. The engine will not load one into the other.`
+  }
+  return `This world was written by ${wrote}, scenario ${backup.scenario_id}. This server is now set to ${now.scenario_id}, and a scenario does not read another scenario's world.`
 }
 
 function describe(backup) {
@@ -53,16 +88,6 @@ function describe(backup) {
   if (backup.template_name) bits.push(`template "${backup.template_name}"`)
   if (backup.server_running) bits.push('server was running')
   return bits.join(' · ')
-}
-
-// A save belongs to the scenario that wrote it. Restoring one made under another
-// scenario is not an error the manager can prevent — the files are real — but it
-// is nearly always a mistake, so it is spelled out before the button is pressed.
-function scenarioMismatch(backup) {
-  const now = current.value?.scenario_id
-  const then = backup?.scenario_id
-  if (!now || !then || now === then) return ''
-  return `This backup was written under scenario ${then}, and this server is now set to ${now}. A world from another scenario usually will not load.`
 }
 
 async function create() {
@@ -89,16 +114,31 @@ async function create() {
   }
 }
 
+function openRestore(backup) {
+  // Both boxes start ticked: the switch is what makes the world readable, and
+  // the copy is the undo a restore otherwise does not have.
+  restoreSwitch.value = !!backup.switch_to
+  restoreBackupFirst.value = !!state.value.files
+  confirmRestore.value = backup
+}
+
 async function restore() {
   const backup = confirmRestore.value
+  const switching = restoreSwitch.value && backup.switch_to ? backup.switch_to : null
   busy.value = 'restore'
   try {
     const out = await api(`/api/instances/${props.id}/backups/${backup.id}/restore`, {
       method: 'POST',
+      body: {
+        template_id: switching ? switching.id : null,
+        backup_first: restoreBackupFirst.value,
+      },
     })
     notice.value =
       `Restored the backup from ${fmtTime(backup)}. ` +
-      `It replaced ${out.replaced.files} file(s) of newer data.`
+      `It replaced ${out.replaced.files} file(s) of newer data.` +
+      (out.switched_to ? ` This server now runs template "${out.switched_to.template_name}".` : '') +
+      (out.safety_backup ? ' The world it replaced is on the shelf as "Replaced by a restore".' : '')
     confirmRestore.value = null
     await load()
     emit('changed')
@@ -191,6 +231,14 @@ onMounted(load)
             Nothing has been written yet — a backup appears once the scenario saves
             something. Not every scenario does (Game Master, for one).
           </small>
+          <small class="d-block text-secondary mt-1">
+            This server is set to
+            <code v-if="current.scenario_id">{{ current.scenario_id }}</code>
+            <span v-else>no scenario yet</span>
+            <span v-if="current.hive_id !== null && current.hive_id !== undefined">
+              · hive id {{ current.hive_id }}</span>
+            <span v-if="current.template_name"> · template "{{ current.template_name }}"</span>
+          </small>
 
           <div class="row g-2 align-items-end mt-2">
             <div class="col-sm">
@@ -238,9 +286,10 @@ onMounted(load)
                 </td>
                 <td>
                   {{ b.files ? `${b.files} file(s)` : '—' }}
+                  <span class="badge ms-1" :class="fitOf(b).css">{{ fitOf(b).badge }}</span>
                   <small class="d-block text-secondary">{{ describe(b) }}</small>
-                  <small v-if="scenarioMismatch(b)" class="d-block text-warning">
-                    ⚠ different scenario
+                  <small v-if="b.fit !== 'match' && b.switch_to" class="d-block text-secondary">
+                    loads under template "{{ b.switch_to.name }}"
                   </small>
                 </td>
                 <td class="text-nowrap">{{ fmtBytes(b.archive_bytes) }}</td>
@@ -249,7 +298,7 @@ onMounted(load)
                     class="btn btn-sm btn-outline-primary me-1"
                     :disabled="running"
                     :title="running ? 'Stop the server to restore a backup' : ''"
-                    @click="confirmRestore = b"
+                    @click="openRestore(b)"
                   >Restore</button>
                   <button class="btn btn-sm btn-outline-secondary me-1" @click="download(b)">
                     Download
@@ -295,12 +344,58 @@ onMounted(load)
             <p class="small text-secondary mb-2">
               The saved game data this server has now — {{ state.files }} file(s),
               {{ fmtBytes(state.size_bytes) }} — is deleted and replaced by this backup's
-              {{ confirmRestore.files || '?' }} file(s). Anything played since it was taken
-              is gone.
+              {{ confirmRestore.files || '?' }} file(s).
             </p>
-            <div v-if="scenarioMismatch(confirmRestore)" class="alert alert-warning py-2 small mb-2">
-              ⚠ {{ scenarioMismatch(confirmRestore) }}
+
+            <div
+              class="alert py-2 small mb-2"
+              :class="confirmRestore.fit === 'match' ? 'alert-secondary' : 'alert-warning'"
+            >
+              {{ fitExplained(confirmRestore) }}
             </div>
+
+            <div v-if="confirmRestore.switch_to" class="form-check small mb-2">
+              <input
+                id="restore-switch"
+                v-model="restoreSwitch"
+                class="form-check-input"
+                type="checkbox"
+              />
+              <label class="form-check-label" for="restore-switch">
+                Also switch this server to template
+                "{{ confirmRestore.switch_to.name }}" — the setup that reads this world
+                <small v-if="!confirmRestore.switch_to.exact" class="d-block text-secondary">
+                  Closest match: it runs the right scenario, but its hive id
+                  ({{ confirmRestore.switch_to.hive_id }}) still differs from this
+                  backup's ({{ confirmRestore.hive_id }}).
+                </small>
+              </label>
+            </div>
+            <p
+              v-else-if="confirmRestore.fit === 'other-scenario' || confirmRestore.fit === 'other-hive'"
+              class="small text-secondary mb-2"
+            >
+              No template on this manager writes to that save, so nothing here will load
+              this world. Restore it anyway to keep the files in place, then create or
+              import a template with that scenario.
+            </p>
+
+            <div v-if="state.files" class="form-check small mb-2">
+              <input
+                id="restore-backup-first"
+                v-model="restoreBackupFirst"
+                class="form-check-input"
+                type="checkbox"
+              />
+              <label class="form-check-label" for="restore-backup-first">
+                Back up the world being replaced first
+                <span class="text-secondary">({{ fmtBytes(state.size_bytes) }})</span>
+              </label>
+            </div>
+            <p v-else class="small text-secondary mb-2">
+              There is nothing to replace — this server has written no saved game data yet.
+            </p>
+
             <p class="small text-secondary mb-0">
               Logs, crash reports and the downloaded mods are left alone, and so is the
               server's own identity token.
@@ -311,7 +406,11 @@ onMounted(load)
               Cancel
             </button>
             <button class="btn btn-primary" :disabled="busy === 'restore'" @click="restore">
-              {{ busy === 'restore' ? 'Restoring…' : 'Restore it' }}
+              <template v-if="busy === 'restore'">Restoring…</template>
+              <template v-else-if="restoreSwitch && confirmRestore.switch_to">
+                Switch template &amp; restore
+              </template>
+              <template v-else>Restore it</template>
             </button>
           </div>
         </div>
