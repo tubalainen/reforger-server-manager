@@ -563,3 +563,15 @@ def test_choosing_the_template_already_attached_does_not_rebuild_the_container(t
     )
 
     assert repointed == [] and out["switched_to"] is None and out["forced"] is False
+
+
+def test_metadata_left_without_its_archive_is_swept_up(tmp_path, monkeypatch):
+    """A lone sidecar is invisible to the listing (which reads archives) and would
+    sit there for ever, so opening the card tidies up after it (#187)."""
+    instance_id, idir = _seed(tmp_path, monkeypatch)
+    instance_backup.create_backup(instance_id)
+    stray = idir / "backups" / "20250101-000000.json"
+    stray.write_text('{"id": "20250101-000000"}')
+
+    assert len(instance_backup.overview(instance_id)["backups"]) == 1
+    assert not stray.exists()

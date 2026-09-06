@@ -3,6 +3,7 @@ import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, reactive, r
 import { useRouter } from 'vue-router'
 import { api, clientId } from '../api'
 import { formatBytes } from '../format'
+import { randomServerName } from '../serverName'
 
 // CodeMirror is ~130 KB gzipped and only needed once someone clicks "Edit JSON",
 // which most users never will — so it gets its own chunk instead of riding along
@@ -98,7 +99,10 @@ const spec = reactive({
   scenario_name: '',
   scenario_player_count: null,
   mods: [],
-  game_name: 'Arma Reforger Server',
+  // A new template starts with a name of its own rather than the one everybody
+  // else's server also has (#186). Editing an existing template loads its saved
+  // name over this, so nothing is ever renamed behind the user's back.
+  game_name: randomServerName(),
   password: '',
   admin_password: '',
   // Player access lists (#154). Declared here so a NEW template carries them
@@ -2201,8 +2205,20 @@ onBeforeUnmount(() => {
           </div>
           <div class="row g-3">
             <div class="col-12">
-              <label class="form-label">Server name (in-game browser)</label>
-              <input v-model="spec.game_name" class="form-control" />
+              <label class="form-label" for="game-name">Server name (in-game browser)</label>
+              <div class="input-group">
+                <input id="game-name" v-model="spec.game_name" class="form-control" />
+                <button
+                  class="btn btn-outline-secondary"
+                  type="button"
+                  title="Suggest another name"
+                  @click="spec.game_name = randomServerName()"
+                >🎲 Randomize</button>
+              </div>
+              <div class="form-text">
+                This is what players see in the in-game server browser. New templates get
+                a name of their own so yours is not one of many identical entries.
+              </div>
             </div>
             <div class="col-md-6">
               <label class="form-label">Join password</label>

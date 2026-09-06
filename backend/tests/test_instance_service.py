@@ -1,5 +1,6 @@
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -1387,3 +1388,93 @@ def test_ports_check_does_not_thrash_under_host_networking(monkeypatch):
     # In bridge mode an empty binding set is still genuine drift.
     monkeypatch.setattr(docker_service, "use_host_network", lambda: False)
     assert instance_service._container_ports_match(hosted, _inst()) is False
+
+# --------------------------------------------------------------------------- #
+# A reused instance id must not come with the last tenant's data (#187)
+# --------------------------------------------------------------------------- #
+
+def _make_template(name="tpl"):
+    import json
+
+    from sqlmodel import Session
+
+    import models
+
+    with Session(models.get_engine()) as session:
+        template = models.Template(name=name, config_json=json.dumps({"game": {}}))
+        session.add(template)
+        session.commit()
+        session.refresh(template)
+        return template.id
+
+
+def test_a_reused_id_does_not_inherit_the_dead_instances_world(tmp_path, monkeypatch):
+    """SQLite hands the highest rowid back out after a delete, and an instance
+    deleted without purging leaves its directory — profile, world and backups."""
+    import config
+
+    monkeypatch.setattr(config.settings, "data_dir", str(tmp_path))
+    tid = _make_template()
+
+    first, parked = instance_service.create_instance("first", tid, "stable")
+    idir = tmp_path / "instances" / str(first.id)
+    (idir / "profile" / "profile" / ".save").mkdir(parents=True)
+    (idir / "profile" / "profile" / ".save" / "world.bin").write_bytes(b"someone else's")
+    (idir / "backups").mkdir()
+    (idir / "backups" / "20260101-000000.tar.gz").write_bytes(b"gz")
+    assert parked is None
+
+    instance_service.delete_instance(first.id)  # no purge: the data stays behind
+    second, parked = instance_service.create_instance("second", tid, "stable")
+
+    assert second.id == first.id, "the id really is handed back out"
+    assert parked is not None
+    # the new server starts empty...
+    assert not (idir / "profile").exists() and not (idir / "backups").exists()
+    # ...and nothing was destroyed to achieve it
+    moved = Path(parked)
+    assert (moved / "profile" / "profile" / ".save" / "world.bin").read_bytes() == b"someone else's"
+    assert (moved / "backups" / "20260101-000000.tar.gz").exists()
+    assert moved.parent.name == instance_service.ORPHANED_DIRNAME
+
+
+def test_an_unused_id_is_left_alone(tmp_path, monkeypatch):
+    import config
+
+    monkeypatch.setattr(config.settings, "data_dir", str(tmp_path))
+    tid = _make_template()
+    _, parked = instance_service.create_instance("fresh", tid, "stable")
+    assert parked is None
+    assert not (tmp_path / instance_service.ORPHANED_DIRNAME).exists()
+
+
+def test_an_empty_leftover_directory_is_not_worth_parking(tmp_path, monkeypatch):
+    import config
+
+    monkeypatch.setattr(config.settings, "data_dir", str(tmp_path))
+    tid = _make_template()
+    (tmp_path / "instances" / "1").mkdir(parents=True)
+    _, parked = instance_service.create_instance("fresh", tid, "stable")
+    assert parked is None
+
+
+def test_the_instance_is_not_created_if_the_leftovers_cannot_be_moved(tmp_path, monkeypatch):
+    """Adopting a dead server's world is the failure this guards against, so a
+    move that cannot happen fails the create rather than proceeding."""
+    from sqlmodel import Session, select
+
+    import config
+    import models
+
+    monkeypatch.setattr(config.settings, "data_dir", str(tmp_path))
+    tid = _make_template()
+    (tmp_path / "instances" / "1" / "profile").mkdir(parents=True)
+    monkeypatch.setattr(
+        instance_service.Path, "rename",
+        lambda *a, **k: (_ for _ in ()).throw(OSError("read-only file system")),
+    )
+
+    with pytest.raises(instance_service.InstanceError, match="could not be moved aside"):
+        instance_service.create_instance("doomed", tid, "stable")
+    with Session(models.get_engine()) as session:
+        assert session.exec(select(models.Instance)).all() == []

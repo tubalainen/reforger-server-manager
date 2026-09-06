@@ -19,6 +19,8 @@ Templates define how instances are created. They cover the scenario, Workshop mo
 Key template capabilities include:
 
 - Search official and community scenarios and set per-scenario player limits.
+- Start each new template with a distinguishable in-game server name instead of one
+  every server shares, re-rollable in the wizard.
 - Search the Workshop, fetch metadata, resolve dependencies, and preserve dependency order.
 - Lock mod versions or follow current releases.
 - Import an existing server `config.json` or export a generated configuration.
