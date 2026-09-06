@@ -417,7 +417,10 @@ def test_a_save_nested_below_the_profile_top_level_is_found(tmp_path, monkeypatc
     monkeypatch.setattr(instance_service.docker_service, "ping", lambda: False)
 
     saves = {i["target"]: i for i in instance_service.instance_data(1)["items"]}["saves"]
-    assert saves["paths"] == ["profile/profile/.save"]
+    # Since #179 the whole nested profile is reported as one node — it holds the
+    # save and nothing that is excluded — so the point stands: the bytes of a save
+    # one level deeper than expected are found, not reported as an empty row.
+    assert saves["paths"] == ["profile/profile"]
     assert saves["size_bytes"] == 256
 
 

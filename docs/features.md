@@ -34,6 +34,9 @@ Each instance gets its own ports, configuration, profile, Workshop content, and 
 
 From the instance view you can:
 
+- Back up and restore the saved game data — the world, plus the databases the scenario
+  and its mods keep beside it — download a backup or upload one back, and have the
+  manager take one automatically before you switch the instance to another template.
 - Start, stop, restart, and delete a server.
 - Follow live logs and copy useful diagnostic output.
 - View player count, process state, resource use, and server metadata.

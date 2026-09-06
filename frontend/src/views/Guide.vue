@@ -109,8 +109,8 @@ const faq = [
     a: `The server downloads and "bakes" its addons once and then reuses that copy. Open the
        instance, stop it, and use the "Stored data" card to clear Downloaded & baked mods:
        the next start fetches and bakes the template's current mod list from scratch (give it
-       a few minutes). The same card clears Persistence (save games) — which resets the
-       persistent world, so only do that when you want a clean slate — and old logs. Changing a
+       a few minutes). The same card clears Saved game data — which resets the world, so
+       take a backup first and only do that when you want a clean slate — and old logs. Changing a
        template's launch parameters no longer needs any of this: the instance rebuilds its
        container by itself on the next start.`,
   },
@@ -155,16 +155,40 @@ const faq = [
     a: `Persistent saves are tied to the template's persistence settings (the hive id).
        When you swap an instance to a template that writes to a different save — or has
        persistence off — the app warns you before applying. Keeping the same hive id
-       keeps the same save.`,
+       keeps the same save. Since 0.54.0 the swap form also offers to back the current
+       world up first, ticked by default whenever there is one, so the old scenario's data
+       is on the shelf before the new template starts writing its own.`,
   },
   {
-    q: 'Where does the save game actually live, and how do I back it up?',
+    q: 'How do I back up my save game, and put it back?',
+    a: `The instance page has a "Saved game backups" card. "Back up now" writes one .tar.gz
+       of this server's world on the host — the save points and everything the scenario and
+       its mods keep beside them (a Freedom Fighters server's shop prices, loot and mod
+       databases are all in there, not just .save). Each backup lists what it holds, which
+       template and scenario wrote it, and offers Restore, Download and Delete. Restore
+       needs the server stopped: it deletes the current world and unpacks the backup in its
+       place. Download gives you a file to keep off the box, and "Upload a backup file"
+       puts one back on the shelf — on a rebuilt host, or on another instance. The newest
+       ten are kept per instance; older ones are removed as new ones are made.`,
+  },
+  {
+    q: 'What is NOT in a backup?',
+    a: `Logs and crash reports, the downloaded and baked mods (they are re-fetched from the
+       template on the next start), and the server's own ownerToken.bin — that is the
+       server's identity with the Reforger backend rather than world state, it is reissued
+       by itself if lost, and copying it onto a second server would give two servers one
+       identity. A restore leaves all three alone. Backups live with the instance on the
+       host, so deleting the instance and its data deletes them too: download the ones you
+       care about.`,
+  },
+  {
+    q: 'Where does the save game actually live?',
     a: `On the host, not in the container: the instance's "Stored data" card prints the exact
-       directory and lists what it found under Persistence (save games) — copy that folder to
-       back the world up while the server is stopped. If it says empty, nothing has been saved
-       yet: a save point appears only once the scenario writes one, and not every scenario does
-       (Game Master, for one, keeps no persistent world). The card names the template whose
-       persistence settings produced it, and its hive id when one is configured.`,
+       directory and lists what it found under Saved game data. If it says empty, nothing has
+       been saved yet: a save point appears only once the scenario writes one, and not every
+       scenario does (Game Master, for one, keeps no persistent world). The card names the
+       template whose persistence settings produced it, and its hive id when one is
+       configured.`,
   },
   {
     q: 'What do the persistence settings do?',
@@ -250,8 +274,10 @@ const faq = [
     a: `Next to your docker-compose.yaml: ./data holds the manager database (templates,
        instances) and per-instance configs, profiles and logs; ./serverfiles holds the
        downloaded game server per branch. A server's persistent save lives with its profile,
-       at ./data/instances/<id>/profile/.save/game — on the host, never inside a container
-       image, so it survives rebuilds and updates. Back up the data folder to keep your setup. On
+       under ./data/instances/<id>/profile — on the host, never inside a container image, so
+       it survives rebuilds and updates; the backups you make from the instance page sit
+       beside it in ./data/instances/<id>/backups. Back up the data folder to keep your
+       setup. On
        Windows the same content lives in Docker named volumes (reforger-data,
        reforger-serverfiles-*) — browse them in Docker Desktop → Volumes — because the
        Linux-owned server files are far faster and permission-clean there than in an
@@ -476,11 +502,19 @@ const faq = [
             fixed times (server local time).
           </li>
           <li class="mb-2">
+            <strong>Saved game backups:</strong> one archive of a server's world — the save
+            points and the data the scenario and its mods keep beside them — made on demand,
+            or automatically before you switch the instance to another template. Restore
+            one (server stopped), download it to keep off the box, or upload one back. The
+            newest ten per instance are kept.
+          </li>
+          <li class="mb-2">
             <strong>Template changes:</strong> editing a template does not touch running
             servers — the instance flags <strong>“Template changed — restart to apply”</strong>
             once its template was edited after the server started, and one click restarts it.
             Swapping an instance to a different template warns you if the persistent-save
-            target (hive id) would change.
+            target (hive id) would change, and offers to back the current world up before
+            it does.
           </li>
           <li class="mb-2">
             <strong>Server files:</strong> the shared per-branch install lives at the

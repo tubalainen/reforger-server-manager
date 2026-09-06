@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, nextTick } from 'vue'
 import { api } from '../api'
+import SaveBackups from '../components/SaveBackups.vue'
 import { isErrorLine } from '../log'
 import { serverStatus } from '../status'
 import { formatBytes, formatUptime, formatTimestamp } from '../format'
@@ -186,13 +187,29 @@ const hiveWarning = computed(() => {
     return `the new template enables persistence (hiveId ${next.hive_id}) — a new save will be created.`
   return ''
 })
+// Ticked by default whenever there is a world to lose: the save the old scenario
+// built is exactly what a template swap orphans (#179).
+const backupBeforeSwap = ref(true)
+const backupsCard = ref(null)
 async function saveTemplate() {
   try {
-    inst.value = await api(`/api/instances/${props.id}/template`, {
+    const res = await api(`/api/instances/${props.id}/template`, {
       method: 'PUT',
-      body: { template_id: templateForm.value },
+      body: {
+        template_id: templateForm.value,
+        backup_first: backupBeforeSwap.value && hasSavedData.value,
+      },
     })
+    const { backup, ...view } = res
+    inst.value = view
     editingTemplate.value = false
+    if (backup) {
+      dataNotice.value =
+        `Saved game data backed up (${fmtBytes(backup.size_bytes)}) before the change` +
+        ' — it is in "Saved game backups".'
+    }
+    await loadData()
+    backupsCard.value?.load()
   } catch (e) {
     error.value = e.message
   }
@@ -210,8 +227,8 @@ const DATA_KINDS = {
     danger: false,
   },
   saves: {
-    label: 'Persistence (save games)',
-    hint: 'The save points the persistence system wrote — the world your players built. Clearing it starts the scenario from scratch — there is no undo.',
+    label: 'Saved game data',
+    hint: 'The world your players built: the save points, and the databases the scenario and its mods keep beside them. Clearing it starts from scratch — there is no undo, so take a backup first.',
     danger: true,
   },
   logs: {
@@ -254,6 +271,12 @@ const dataItems = computed(() =>
   (dataInfo.value?.items || []).map((i) => ({ ...i, ...DATA_KINDS[i.target] })),
 )
 const pickedItems = computed(() => dataItems.value.filter((i) => dataPicked.value.includes(i.target)))
+const savedDataBytes = computed(
+  () => dataItems.value.find((i) => i.target === 'saves')?.size_bytes || 0,
+)
+const hasSavedData = computed(
+  () => !!dataItems.value.find((i) => i.target === 'saves')?.files,
+)
 const clearingSaves = computed(() => dataPicked.value.includes('saves'))
 
 // The save row is the output of the template's persistence settings, so say what
@@ -544,6 +567,18 @@ onUnmounted(() => {
                   <div v-if="hiveWarning" class="alert alert-warning py-1 px-2 small mt-2 mb-0">
                     ⚠ {{ hiveWarning }}
                   </div>
+                  <div v-if="hasSavedData" class="form-check small mt-2">
+                    <input
+                      id="backup-before-swap"
+                      v-model="backupBeforeSwap"
+                      class="form-check-input"
+                      type="checkbox"
+                    />
+                    <label class="form-check-label" for="backup-before-swap">
+                      Back up the saved game data first
+                      <span class="text-secondary">({{ fmtBytes(savedDataBytes) }})</span>
+                    </label>
+                  </div>
                   <div class="d-flex gap-2 mt-2">
                     <button class="btn btn-sm btn-primary" @click="saveTemplate">Save template</button>
                     <button class="btn btn-sm btn-outline-secondary" @click="editingTemplate = false">Cancel</button>
@@ -701,6 +736,15 @@ onUnmounted(() => {
         </div>
       </div>
 
+      <!-- Saved game backups (#179), above Stored data on purpose: the copy comes
+           before the thing that deletes. -->
+      <SaveBackups
+        ref="backupsCard"
+        :id="props.id"
+        :running="inst.status === 'running'"
+        @changed="loadData"
+      />
+
       <!-- Stored data: baked mods, saves, logs (issue #79). Always rendered — a failed
            load shows an error here rather than hiding the whole feature (#85). -->
       <div class="card mt-3">
@@ -723,8 +767,8 @@ onUnmounted(() => {
           <p v-if="dataInfo.host_path" class="text-secondary small">
             None of it lives inside the container image — it is all kept on the host at
             <code class="text-break">{{ dataInfo.host_path }}</code> and mounted in, so it
-            survives container rebuilds and manager updates. Back up the save by copying
-            <code>profile/</code> from there.
+            survives container rebuilds and manager updates. To keep a copy of the world,
+            use <strong>Saved game backups</strong> above rather than copying files by hand.
           </p>
 
           <div v-if="dataNotice" class="alert alert-success py-2 small">{{ dataNotice }}</div>
@@ -760,8 +804,10 @@ onUnmounted(() => {
                   destructive
                 </span>
                 <small class="d-block text-secondary">{{ item.hint }}</small>
-                <small v-if="item.paths.length" class="d-block text-secondary">
-                  <code>{{ item.paths.join(', ') }}</code> · {{ item.files }} file(s)
+                <small v-if="item.paths.length" class="d-block text-secondary text-break">
+                  <code>{{ item.paths.slice(0, 6).join(', ') }}</code>
+                  <span v-if="item.paths.length > 6">+{{ item.paths.length - 6 }} more</span>
+                  · {{ item.files }} file(s)
                 </small>
                 <small
                   v-if="item.target === 'saves' && persistenceNote"
@@ -828,6 +874,10 @@ onUnmounted(() => {
               <li v-for="item in pickedItems" :key="item.target">
                 <strong>{{ item.label }}</strong> — {{ fmtBytes(item.size_bytes) }}
                 ({{ item.files }} file(s))
+                <small v-if="item.paths.length" class="d-block text-secondary text-break">
+                  <code>{{ item.paths.slice(0, 8).join(', ') }}</code>
+                  <span v-if="item.paths.length > 8"> +{{ item.paths.length - 8 }} more</span>
+                </small>
               </li>
             </ul>
             <div v-if="clearingSaves" class="alert alert-danger py-2 small mb-2">

@@ -1,13 +1,24 @@
 """Server instance CRUD + lifecycle + live log streaming (auth-gated)."""
 import asyncio
 import logging
+import tempfile
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 import auth
-from services import docker_service, instance_service
+from services import docker_service, instance_backup, instance_service
 from services.instance_service import InstanceError
 
 logger = logging.getLogger("manager.instances_api")
@@ -43,6 +54,14 @@ class UpdatePorts(BaseModel):
 
 class SetTemplate(BaseModel):
     template_id: int
+    # Archive the saved game data before repointing the instance (#179). The GUI
+    # ticks this by default when there is anything to save, because the save the
+    # old scenario built is exactly what a template swap orphans.
+    backup_first: bool = False
+
+
+class CreateBackup(BaseModel):
+    label: str = Field(default="", max_length=120)
 
 
 class EditInstance(BaseModel):
@@ -154,13 +173,24 @@ async def update_ports(
 async def set_template(
     instance_id: int, body: SetTemplate, _user: str = Depends(auth.require_session)
 ):
+    backup = None
     try:
+        # Before the repoint, not after: once the instance points at the new
+        # template, the backup would be labelled with a template that never
+        # wrote a byte of it.
+        if body.backup_first:
+            backup = await asyncio.to_thread(
+                instance_backup.create_backup,
+                instance_id, "Before template change",
+                instance_backup.SOURCE_TEMPLATE_SWITCH,
+            )
         await asyncio.to_thread(
             instance_service.set_instance_template, instance_id, body.template_id
         )
     except InstanceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return await asyncio.to_thread(_view, instance_id)
+    view = await asyncio.to_thread(_view, instance_id)
+    return {**view, "backup": backup}
 
 
 @router.put("/{instance_id}/restart-settings")
@@ -224,6 +254,104 @@ async def clear_instance_data(
         )
     except InstanceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+# --------------------------------------------------------------------------- #
+# Saved game backups (#179)
+# --------------------------------------------------------------------------- #
+
+@router.get("/{instance_id}/backups")
+async def list_backups(instance_id: int, _user: str = Depends(auth.require_session)):
+    """This instance's backup shelf, plus what a new backup would hold."""
+    try:
+        return await asyncio.to_thread(instance_backup.overview, instance_id)
+    except InstanceError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/{instance_id}/backups", status_code=201)
+async def create_backup(
+    instance_id: int, body: CreateBackup, _user: str = Depends(auth.require_session)
+):
+    """Archive the saved game data as it stands right now."""
+    try:
+        return await asyncio.to_thread(
+            instance_backup.create_backup, instance_id, body.label
+        )
+    except InstanceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/{instance_id}/backups/upload", status_code=201)
+async def upload_backup(
+    instance_id: int,
+    file: UploadFile = File(...),
+    label: str = Form(default=""),
+    _user: str = Depends(auth.require_session),
+):
+    """Put a previously downloaded backup file back on this instance's shelf.
+
+    Streamed to a temp file and validated as a whole before it is adopted: an
+    archive is only ever unpacked as root, so one that holds a symlink, an
+    absolute path or a `..` is refused here rather than sanitised later.
+    """
+    tmp = Path(tempfile.mkdtemp(prefix="rsm-upload-")) / "upload.tar.gz"
+    try:
+        written = 0
+        with tmp.open("wb") as out:
+            while chunk := await file.read(1024 * 1024):
+                written += len(chunk)
+                if written > instance_backup.MAX_UPLOAD_BYTES:
+                    raise HTTPException(status_code=413, detail="That file is too large.")
+                out.write(chunk)
+        try:
+            return await asyncio.to_thread(
+                instance_backup.store_upload, instance_id, label or file.filename, tmp
+            )
+        except InstanceError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        tmp.unlink(missing_ok=True)
+        tmp.parent.rmdir()
+
+
+@router.get("/{instance_id}/backups/{backup_id}/download")
+async def download_backup(
+    instance_id: int, backup_id: str, _user: str = Depends(auth.require_session)
+):
+    try:
+        archive = await asyncio.to_thread(
+            instance_backup.archive_path, instance_id, backup_id
+        )
+        name = await asyncio.to_thread(
+            instance_backup.download_name, instance_id, backup_id
+        )
+    except InstanceError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(archive, filename=name, media_type="application/gzip")
+
+
+@router.post("/{instance_id}/backups/{backup_id}/restore")
+async def restore_backup(
+    instance_id: int, backup_id: str, _user: str = Depends(auth.require_session)
+):
+    """Replace the current saved game data with this backup's (stopped only)."""
+    try:
+        return await asyncio.to_thread(
+            instance_backup.restore_backup, instance_id, backup_id
+        )
+    except InstanceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.delete("/{instance_id}/backups/{backup_id}", status_code=204)
+async def delete_backup(
+    instance_id: int, backup_id: str, _user: str = Depends(auth.require_session)
+):
+    try:
+        await asyncio.to_thread(instance_backup.delete_backup, instance_id, backup_id)
+    except InstanceError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/{instance_id}/logfiles")
