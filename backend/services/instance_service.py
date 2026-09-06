@@ -1174,21 +1174,30 @@ def resolve_log_file(instance_id: int, relpath: str) -> Path:
 # the manager (uid 1000) cannot delete them itself. A short-lived sibling
 # container does the removal, exactly as steam_service.remove_files does.
 
-# Persistence artifacts inside the profile, by name. Reforger has moved these
-# around between builds (save/, .save/, and the .db the Enfusion persistence
-# system writes), so match on any of them rather than one blessed path.
-_SAVE_DIR_NAMES = {"save", "saves", ".save"}
-_SAVE_SUFFIXES = {".db"}
+# What counts as this server's game state, defined by subtraction (#179).
+#
+# It used to be a list of blessed names — save/, .save/, *.db — and that list was
+# wrong on any server running scenario mods. A Freedom Fighters profile keeps the
+# world in .save/ but the economy, the loot and the mod databases in siblings
+# next to it (FFShopPricing/, FFShopOverhaul/, FFLootTransfer/, CRX_EAI/,
+# DarcMods/, .db/, its own ServerConfig.json). All of that is state the scenario
+# built up and a template swap invalidates, and none of it was being counted,
+# cleared or offered for backup.
+#
+# So the rule is inverted: everything under profile/ is game state EXCEPT what
+# provably is not — the logs (their own target), the mod bake (likewise), and the
+# server's own identity token.
+_STATE_SKIP_DIRS = {"logs", "crash", "crashes", "addons", "configs"}
 
-# Directories the save scan must not walk into: the first two are other targets
-# (their bytes are counted there, and descending would double-count them), and
-# `configs` is the rendered config.json, which is never wiped here.
-_SAVE_SCAN_SKIP = {"logs", "crash", "crashes", "addons", "configs"}
+# ownerToken.bin is the server's identity with the Reforger backend, not world
+# state: it is reissued on its own if lost, and copying it into a second server
+# would give two servers one identity. Never backed up, never cleared.
+_STATE_SKIP_FILES = {"ownertoken.bin"}
 
 # The profile is a handful of directories, but `addons` under it can hold a
 # 20 GB mod bake. The scan prunes that by name; this is the backstop for a
 # layout nobody has seen yet, so a pathological tree cannot stall the request.
-_SAVE_SCAN_MAX_DEPTH = 6
+_STATE_SCAN_MAX_DEPTH = 6
 
 DATA_MODS = "mods"
 DATA_SAVES = "saves"
@@ -1217,48 +1226,58 @@ def _dir_usage(paths) -> tuple[int, int]:
     return total, files
 
 
-def _save_paths(profile: Path) -> list[Path]:
-    """Persistence artifacts anywhere under an instance's profile dir (#160).
+def _state_paths(profile: Path) -> list[Path]:
+    """The top-level nodes of an instance's game state, pruned (#160, #179).
 
-    This used to look only at the profile's top level, which is one guess at a
-    layout the engine does not commit to: the save tree is reported as
-    `<profile>/.save/...` in some builds and nested a level deeper in others,
-    and a scenario's own persistence storage can put a .db somewhere else again.
-    A single missed level showed up in the GUI as "empty" on a server with a
-    perfectly good save, which is worse than useless — it is the row people
-    check before wiping something.
+    Walks the profile and returns the biggest nodes that contain state and
+    nothing else, so a clean subtree is reported (and archived, and removed) as
+    one path rather than as its hundreds of children. A directory that holds
+    something excluded — logs, the mod bake, the owner token — is descended into
+    instead, so the excluded child is left behind.
 
-    So walk instead, and stop at the first match: reporting `.save` is what the
-    user wants to see, not each of its hundreds of save points. Directories
-    belonging to the other targets are pruned so nothing is counted twice.
+    Reporting `.save` rather than each save point inside it is what the user
+    wants to see; before this walked at all, a save one level deeper than
+    expected showed up in the GUI as "empty" on a server with a perfectly good
+    world, which is worse than useless on the row people check before wiping.
     """
     if not profile.is_dir():
         return []
-    found: list[Path] = []
 
-    def walk(directory: Path, depth: int) -> None:
+    def collect(directory: Path, depth: int) -> tuple[list[Path], bool]:
+        """(kept nodes, whether the whole directory could be taken as one)."""
+        kept: list[Path] = []
+        whole = True
         try:
             entries = sorted(directory.iterdir())
         except OSError:
-            return
+            return [], False
         for entry in entries:
             name = entry.name.lower()
             try:
                 is_dir = entry.is_dir()
             except OSError:
+                whole = False
                 continue
             if is_dir:
-                if name in _SAVE_DIR_NAMES:
-                    found.append(entry)  # matched: its children are the save
+                if name in _STATE_SKIP_DIRS:
+                    whole = False
                     continue
-                if name in _SAVE_SCAN_SKIP or depth >= _SAVE_SCAN_MAX_DEPTH:
+                if depth >= _STATE_SCAN_MAX_DEPTH:
+                    kept.append(entry)  # too deep to verify; take it as it is
                     continue
-                walk(entry, depth + 1)
-            elif Path(name).suffix in _SAVE_SUFFIXES:
-                found.append(entry)
+                children, child_whole = collect(entry, depth + 1)
+                if child_whole:
+                    kept.append(entry)
+                else:
+                    kept.extend(children)
+                    whole = False
+            elif name in _STATE_SKIP_FILES or Path(name).suffix in _LOG_SUFFIXES:
+                whole = False
+            else:
+                kept.append(entry)
+        return kept, whole
 
-    walk(profile, 0)
-    return found
+    return collect(profile, 0)[0]
 
 
 def _log_paths(profile: Path) -> list[Path]:
@@ -1284,7 +1303,7 @@ def _target_paths(instance_id: int, target: str) -> list[Path]:
         # The addons dir, plus the copy some builds keep inside the profile.
         return [p for p in (idir / "workshop", profile / "addons") if p.exists()]
     if target == DATA_SAVES:
-        return _save_paths(profile)
+        return _state_paths(profile)
     if target == DATA_LOGS:
         return _log_paths(profile)
     raise InstanceError(f"Unknown data target '{target}'")

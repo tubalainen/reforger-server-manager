@@ -403,8 +403,9 @@ onUnmounted(() => clearInterval(poll))
               <label for="purgeData" class="form-check-label">
                 Also delete all stored data from disk
                 <small class="text-secondary d-block">
-                  Baked mods, saved game, logs and configs. Otherwise they are left on
-                  the host and can no longer be reached from the manager.
+                  Baked mods, saved game, logs, configs — and this instance's saved game
+                  backups. Otherwise they are left on the host and can no longer be
+                  reached from the manager.
                 </small>
               </label>
             </div>
@@ -422,7 +423,8 @@ onUnmounted(() => clearInterval(poll))
 
               <div v-if="del.purge && delTotalBytes" class="alert alert-danger py-2 small mb-0">
                 This permanently erases {{ fmtBytes(delTotalBytes) }} of data, including the
-                saved game — the persistent world is gone for good and cannot be recovered.
+                saved game and every backup of it — the persistent world is gone for good
+                and cannot be recovered. Download the backups you want to keep first.
               </div>
             </template>
           </div>

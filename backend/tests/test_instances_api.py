@@ -1,6 +1,7 @@
 """Instance API tests. Docker is mocked (ping()=False in conftest), so these
 cover DB-backed lifecycle, port leasing and validation — not real containers.
 """
+from pathlib import Path
 
 
 def _template(logged_in, name="tpl"):
@@ -256,3 +257,101 @@ def test_status_absent_when_no_container(logged_in):
     iid = logged_in.post("/api/instances", json={"name": "s", "template_id": tid}).json()["id"]
     # docker mocked -> status reported as 'unknown' (ping False path)
     assert logged_in.get(f"/api/instances/{iid}").json()["status"] == "unknown"
+
+
+# --- saved game backups (#179) ------------------------------------------------
+
+def _instance_with_state(logged_in, tmp_path, monkeypatch):
+    import shutil
+
+    import config
+
+    # The session signing salt lives in DATA_DIR (auth._salt_path), so moving
+    # DATA_DIR out from under a logged-in client invalidates its cookie and every
+    # call here comes back 401. Carry the salt over with it.
+    salt = Path(config.settings.data_dir) / "session_salt"
+    if salt.is_file():
+        shutil.copy(salt, tmp_path / "session_salt")
+    monkeypatch.setattr(config.settings, "data_dir", str(tmp_path))
+    tid = _template(logged_in, "ff-template")
+    iid = logged_in.post(
+        "/api/instances", json={"name": "ff", "template_id": tid}
+    ).json()["id"]
+    save = tmp_path / "instances" / str(iid) / "profile" / "profile" / ".save"
+    save.mkdir(parents=True)
+    (save / "game.bin").write_bytes(b"world")
+    return tid, iid
+
+
+def test_backups_require_auth(client):
+    assert client.get("/api/instances/1/backups").status_code == 401
+
+
+def test_backup_create_list_download_and_delete(logged_in, tmp_path, monkeypatch):
+    _, iid = _instance_with_state(logged_in, tmp_path, monkeypatch)
+
+    created = logged_in.post(f"/api/instances/{iid}/backups", json={"label": "pre-swap"})
+    assert created.status_code == 201
+    bid = created.json()["id"]
+
+    listed = logged_in.get(f"/api/instances/{iid}/backups").json()
+    assert [b["id"] for b in listed["backups"]] == [bid]
+    assert listed["state"]["files"] == 1 and listed["keep"] == 10
+
+    dl = logged_in.get(f"/api/instances/{iid}/backups/{bid}/download")
+    assert dl.status_code == 200
+    assert dl.headers["content-disposition"].endswith(f'{bid}.tar.gz"')
+
+    assert logged_in.delete(f"/api/instances/{iid}/backups/{bid}").status_code == 204
+    assert logged_in.get(f"/api/instances/{iid}/backups").json()["backups"] == []
+
+
+def test_backup_of_an_instance_with_nothing_saved_conflicts(logged_in, tmp_path, monkeypatch):
+    _, iid = _instance_with_state(logged_in, tmp_path, monkeypatch)
+    import shutil
+
+    shutil.rmtree(tmp_path / "instances" / str(iid) / "profile")
+    r = logged_in.post(f"/api/instances/{iid}/backups", json={})
+    assert r.status_code == 409
+    assert "no saved game data" in r.json()["detail"]
+
+
+def test_changing_template_can_back_the_old_world_up_first(logged_in, tmp_path, monkeypatch):
+    tid, iid = _instance_with_state(logged_in, tmp_path, monkeypatch)
+    other = _template(logged_in, "next-scenario")
+
+    r = logged_in.put(
+        f"/api/instances/{iid}/template",
+        json={"template_id": other, "backup_first": True},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["template_id"] == other
+    # ...and the backup is labelled with the template that actually wrote it
+    assert body["backup"]["template_name"] == "ff-template"
+    assert body["backup"]["source"] == "template-switch"
+
+
+def test_uploading_a_file_that_is_not_a_backup_is_refused(logged_in, tmp_path, monkeypatch):
+    _, iid = _instance_with_state(logged_in, tmp_path, monkeypatch)
+    r = logged_in.post(
+        f"/api/instances/{iid}/backups/upload",
+        files={"file": ("holiday.tar.gz", b"not gzip at all", "application/gzip")},
+    )
+    assert r.status_code == 400
+    assert "not a readable" in r.json()["detail"]
+
+
+def test_uploading_a_backup_puts_it_on_the_shelf(logged_in, tmp_path, monkeypatch):
+    _, iid = _instance_with_state(logged_in, tmp_path, monkeypatch)
+    bid = logged_in.post(f"/api/instances/{iid}/backups", json={}).json()["id"]
+    blob = logged_in.get(f"/api/instances/{iid}/backups/{bid}/download").content
+    logged_in.delete(f"/api/instances/{iid}/backups/{bid}")
+
+    r = logged_in.post(
+        f"/api/instances/{iid}/backups/upload",
+        files={"file": ("carried.tar.gz", blob, "application/gzip")},
+    )
+    assert r.status_code == 201
+    assert r.json()["source"] == "upload"
+    assert len(logged_in.get(f"/api/instances/{iid}/backups").json()["backups"]) == 1

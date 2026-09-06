@@ -8,6 +8,9 @@ itsdangerous~=2.2.0
 sqlmodel~=0.0.39
 docker~=7.1.0
 httpx~=0.28.1
+# multipart/form-data parsing, which FastAPI needs for the one upload in the app:
+# putting a downloaded save backup back on an instance's shelf (#179).
+python-multipart~=0.0.20
 # IANA timezone database for zoneinfo, so TZ=Europe/Stockholm resolves without
 # relying on OS tz files (the slim image has none) — used to show change-log
 # timestamps in the manager's configured timezone (#112).

@@ -48,16 +48,7 @@ export const clientId = (() => {
   }
 })()
 
-export async function api(path, { method = 'GET', body } = {}) {
-  const res = await fetch(path, {
-    method,
-    credentials: 'same-origin',
-    headers: {
-      'X-Client-Id': clientId,
-      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  })
+async function unwrap(res) {
   if (!res.ok) {
     let detail = ''
     try {
@@ -68,4 +59,30 @@ export async function api(path, { method = 'GET', body } = {}) {
     throw new ApiError(res.status, detail)
   }
   return res.status === 204 ? null : res.json()
+}
+
+export async function api(path, { method = 'GET', body } = {}) {
+  const res = await fetch(path, {
+    method,
+    credentials: 'same-origin',
+    headers: {
+      'X-Client-Id': clientId,
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+    },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  })
+  return unwrap(res)
+}
+
+// Multipart POST for the one thing the app uploads: a save backup file (#179).
+// Deliberately no Content-Type header — the browser has to add the multipart
+// boundary itself, and setting the header by hand strips it.
+export async function upload(path, formData) {
+  const res = await fetch(path, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'X-Client-Id': clientId },
+    body: formData,
+  })
+  return unwrap(res)
 }
