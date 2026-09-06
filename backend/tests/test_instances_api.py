@@ -355,3 +355,66 @@ def test_uploading_a_backup_puts_it_on_the_shelf(logged_in, tmp_path, monkeypatc
     assert r.status_code == 201
     assert r.json()["source"] == "upload"
     assert len(logged_in.get(f"/api/instances/{iid}/backups").json()["backups"]) == 1
+
+
+def _template_with_scenario(logged_in, name, scenario):
+    spec = {"name": name, "scenario_id": scenario, "mods": []}
+    return logged_in.post("/api/templates", json=spec).json()["id"]
+
+
+def test_restoring_a_world_that_cannot_load_is_refused_with_the_reason(logged_in, tmp_path, monkeypatch):
+    _, iid = _instance_with_state(logged_in, tmp_path, monkeypatch)
+    bid = logged_in.post(f"/api/instances/{iid}/backups", json={}).json()["id"]
+    other = _template_with_scenario(logged_in, "elsewhere", "{ZZZ}Missions/z.conf")
+    logged_in.put(f"/api/instances/{iid}/template", json={"template_id": other})
+
+    # A reachable daemon, so the refusal under test is the fit rule and not the
+    # "Docker is down" guard that would otherwise answer first.
+    from services import instance_service
+
+    monkeypatch.setattr(instance_service.docker_service, "ping", lambda: True)
+    monkeypatch.setattr(instance_service.docker_service, "find_instance_container", lambda _id: None)
+
+    r = logged_in.post(f"/api/instances/{iid}/backups/{bid}/restore", json={})
+    assert r.status_code == 409
+    assert "does not read another scenario" in r.json()["detail"]
+
+
+def test_force_carries_the_restore_through_and_says_it_was_forced(logged_in, tmp_path, monkeypatch):
+    _, iid = _instance_with_state(logged_in, tmp_path, monkeypatch)
+    bid = logged_in.post(f"/api/instances/{iid}/backups", json={}).json()["id"]
+    other = _template_with_scenario(logged_in, "elsewhere", "{ZZZ}Missions/z.conf")
+    logged_in.put(f"/api/instances/{iid}/template", json={"template_id": other})
+
+    # The restore itself runs in a helper container; act it out on the real files.
+    import tarfile
+
+    from services import instance_service
+
+    class FakeContainers:
+        def list(self, **kw):  # no container for this instance
+            return []
+
+        def run(self, image, entrypoint=None, command=None, volumes=None, **kw):
+            idir = Path(next(iter(volumes)))
+            for statement in command[1].split(";"):
+                statement = statement.strip()
+                if statement.startswith("tar xzf "):
+                    with tarfile.open(idir / statement.split("'")[1].replace("/idata/", "")) as t:
+                        t.extractall(idir, filter="data")
+
+    monkeypatch.setattr(instance_service.docker_service, "ping", lambda: True)
+    monkeypatch.setattr(instance_service.docker_service, "host_path_for", lambda p: p)
+    monkeypatch.setattr(
+        instance_service.docker_service, "get_client",
+        lambda: type("C", (), {"containers": FakeContainers()})(),
+    )
+
+    r = logged_in.post(
+        f"/api/instances/{iid}/backups/{bid}/restore", json={"force": True}
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["forced"] is True and body["fit"] == "other-scenario"
+    # forcing always keeps a copy of what it replaced, whatever the request said
+    assert body["safety_backup"] is not None

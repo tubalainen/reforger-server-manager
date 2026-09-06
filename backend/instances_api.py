@@ -74,6 +74,10 @@ class RestoreBackup(BaseModel):
 
     template_id: int | None = None
     backup_first: bool = False
+    # Step over the rule that a world only loads under the scenario and hive id
+    # that wrote it (#184). Refused restores come back as 409 with the reason;
+    # this is the one documented way past it, and it forces the safety copy on.
+    force: bool = False
 
 
 class EditInstance(BaseModel):
@@ -354,7 +358,7 @@ async def restore_backup(
     try:
         return await asyncio.to_thread(
             instance_backup.restore_backup,
-            instance_id, backup_id, body.template_id, body.backup_first,
+            instance_id, backup_id, body.template_id, body.backup_first, body.force,
         )
     except InstanceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

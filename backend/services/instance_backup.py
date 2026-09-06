@@ -181,6 +181,28 @@ def fit_of(meta: dict, current: dict) -> str:
     return FIT_MATCH
 
 
+def _misfit_reason(meta: dict, target: dict) -> str:
+    """Why this backup would not load under that template, for the refusal (#184)."""
+    name = target.get("name") or "that template"
+    fit = fit_of(meta, target)
+    if fit == FIT_UNKNOWN:
+        return (
+            "This archive does not record which scenario wrote it, so there is no "
+            "way to tell whether this server would read it."
+        )
+    if fit == FIT_OTHER_SCENARIO:
+        return (
+            f"This world was written under scenario {meta.get('scenario_id')}, and "
+            f"template \"{name}\" runs {target.get('scenario_id')}. A scenario does "
+            "not read another scenario's world."
+        )
+    return (
+        f"This world was written for hive id {meta.get('hive_id')}, and template "
+        f"\"{name}\" saves to hive id {target.get('hive_id')}. The engine will not "
+        "load one into the other."
+    )
+
+
 def _switch_candidate(meta: dict, templates: list[dict]) -> dict | None:
     """A template that would make this backup load, or None if none would.
 
@@ -303,6 +325,10 @@ def overview(instance_id: int) -> dict:
     return {
         "running": running,
         "keep": KEEP,
+        # Every template's save target, so the restore dialog can offer them all
+        # and annotate each with how it fits the chosen backup. The annotation is
+        # a hint; the refusal in restore_backup is the authority (#184).
+        "templates": templates,
         # What the instance is configured for *now*, so the GUI can say when a
         # backup was written under a different scenario — restoring one of those
         # gives the new scenario a world it cannot read (#179).
@@ -606,6 +632,7 @@ def restore_backup(
     backup_id: str,
     switch_template_id: int | None = None,
     backup_first: bool = False,
+    force: bool = False,
 ) -> dict:
     """Put a backup back: clear the current game state, then unpack the archive.
 
@@ -622,6 +649,14 @@ def restore_backup(
 
     ``backup_first`` copies the world being replaced onto the shelf beforehand —
     a restore is the one destructive action here that had no undo.
+
+    A restore whose result would not load — wrong scenario, wrong hive id, or an
+    archive that never recorded either — is refused unless ``force`` (#184). The
+    rule is right almost always and the operator is right the rest of the time:
+    a scenario id that changed upstream, a mod that moved its data, a world being
+    deliberately transplanted. So the rule is enforced rather than merely drawn in
+    the GUI, and there is exactly one documented way past it, which says in the
+    log what it did.
     """
     archive = archive_path(instance_id, backup_id)
     with Session(get_engine()) as session:
@@ -638,6 +673,33 @@ def restore_backup(
             "replace files the server wrote as root. Start Docker and try again."
         )
 
+    # What the instance would be running when the files land, which is what
+    # decides whether they can be read: the template being switched to, or the
+    # one already attached.
+    meta = _read_meta(backups_dir(instance_id) / f"{backup_id}{META_SUFFIX}") or {}
+    with Session(get_engine()) as session:
+        inst = session.get(Instance, instance_id)
+        targets = _template_targets(session)
+        current_template_id = inst.template_id
+        wanted_id = (
+            switch_template_id if switch_template_id is not None else current_template_id
+        )
+    target = next((t for t in targets if t["id"] == wanted_id), None)
+    if target is None:
+        raise InstanceError("Template not found")
+    fit = fit_of(meta, target)
+    if fit != FIT_MATCH and not force:
+        raise InstanceError(_misfit_reason(meta, target))
+    forced = fit != FIT_MATCH
+    if forced:
+        # The forced path is the one most likely to be wrong, so its undo is not
+        # optional (#184).
+        backup_first = True
+        logger.warning(
+            "Forced restore of backup %s onto instance %s under template %s (%s): %s",
+            backup_id, instance_id, target["id"], fit, _misfit_reason(meta, target),
+        )
+
     safety = None
     if backup_first and instance_service._state_paths(_profile_dir(instance_id)):
         # protect=: this copy must not be able to prune the archive being restored.
@@ -645,9 +707,11 @@ def restore_backup(
             instance_id, "Replaced by a restore", SOURCE_PRE_RESTORE, protect=backup_id
         )
     switched = None
-    if switch_template_id is not None:
+    if switch_template_id is not None and switch_template_id != current_template_id:
         # Before the files, so a failure here leaves the instance untouched
-        # rather than holding a world its template cannot read.
+        # rather than holding a world its template cannot read. Repointing an
+        # instance at the template it already has would tear its container down
+        # for nothing, so that case is skipped.
         instance_service.set_instance_template(instance_id, switch_template_id)
         switched = _instance_context(instance_id)
 
@@ -685,10 +749,11 @@ def restore_backup(
     # it belongs to the backup, not to the profile.
     (idir / EMBEDDED_META).unlink(missing_ok=True)
     logger.info("Restored backup %s onto instance %s", backup_id, instance_id)
-    meta = _read_meta(backups_dir(instance_id) / f"{backup_id}{META_SUFFIX}") or {}
     return {
         "restored": {**meta, "id": backup_id},
         "replaced": {"size_bytes": size, "files": files, "paths": rel},
         "switched_to": switched,
         "safety_backup": safety,
+        "forced": forced,
+        "fit": fit,
     }

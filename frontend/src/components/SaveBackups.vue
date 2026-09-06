@@ -18,8 +18,9 @@ const notice = ref('')
 const busy = ref('')
 const label = ref('')
 const confirmRestore = ref(null)
-const restoreSwitch = ref(true)
+const restoreTemplate = ref(null)   // template id the restore will run under
 const restoreBackupFirst = ref(true)
+const restoreAcknowledged = ref(false)
 const confirmDelete = ref(null)
 const fileInput = ref(null)
 
@@ -31,6 +32,7 @@ const fmtTime = (backup) => backup?.created_display || backup?.created_at || ''
 const backups = computed(() => info.value?.backups || [])
 const state = computed(() => info.value?.state || { size_bytes: 0, files: 0, paths: [] })
 const current = computed(() => info.value?.current || {})
+const templates = computed(() => info.value?.templates || [])
 
 async function load() {
   try {
@@ -62,32 +64,32 @@ const FIT = {
 }
 const fitOf = (backup) => FIT[backup.fit] || FIT.unknown
 
-// Why it does not fit, in the words of the thing the user actually chose: the
-// template. Scenario ids are printed too, because two templates can carry the
-// same name in conversation and only the id settles it.
-function fitExplained(backup) {
-  const now = current.value
-  if (!backup) return ''
-  if (backup.fit === 'match') {
-    return `This backup matches what this server is set to now — scenario ${now.scenario_id}${
-      now.hive_id === null || now.hive_id === undefined ? '' : `, hive id ${now.hive_id}`
-    }.`
-  }
-  if (backup.fit === 'unknown') {
-    return 'This file does not say which scenario wrote it, so the manager cannot tell whether this server will read it.'
-  }
-  const wrote = backup.template_name ? `template "${backup.template_name}"` : 'another template'
-  if (backup.fit === 'other-hive') {
-    return `Same scenario, different save: this world was written by ${wrote} for hive id ${backup.hive_id}, and this server is set to hive id ${now.hive_id}. The engine will not load one into the other.`
-  }
-  return `This world was written by ${wrote}, scenario ${backup.scenario_id}. This server is now set to ${now.scenario_id}, and a scenario does not read another scenario's world.`
-}
-
 function describe(backup) {
   const bits = [SOURCE_LABEL[backup.source] || 'Backup']
   if (backup.template_name) bits.push(`template "${backup.template_name}"`)
   if (backup.server_running) bits.push('server was running')
   return bits.join(' · ')
+}
+
+// Why a world would or would not load under a given template, in the words of
+// the thing the user actually picks. It mirrors the backend's refusal text; the
+// backend is what enforces it (#184).
+function fitExplained(backup, target) {
+  if (!backup || !target) return ''
+  const named = target.name ? `template "${target.name}"` : 'this server'
+  const fit = fitAgainst(backup, target)
+  if (fit === 'unknown') {
+    return 'This archive does not record which scenario wrote it, so there is no way to tell whether it will be read.'
+  }
+  if (fit === 'other-scenario') {
+    return `This world was written under scenario ${backup.scenario_id}, and ${named} runs ${target.scenario_id}. A scenario does not read another scenario's world.`
+  }
+  if (fit === 'other-hive') {
+    return `This world was written for hive id ${backup.hive_id}, and ${named} saves to hive id ${target.hive_id}. The engine will not load one into the other.`
+  }
+  return `This world was written under the same scenario ${target.scenario_id}${
+    target.hive_id === null || target.hive_id === undefined ? '' : ` and hive id ${target.hive_id}`
+  } that ${named} runs, so it will load.`
 }
 
 async function create() {
@@ -115,29 +117,66 @@ async function create() {
 }
 
 function openRestore(backup) {
-  // Both boxes start ticked: the switch is what makes the world readable, and
-  // the copy is the undo a restore otherwise does not have.
-  restoreSwitch.value = !!backup.switch_to
+  // Default to the template that reads this world; failing that, leave the
+  // server on the one it has. The copy of what is being replaced starts ticked.
+  restoreTemplate.value = backup.switch_to ? backup.switch_to.id : current.value.template_id
   restoreBackupFirst.value = !!state.value.files
+  restoreAcknowledged.value = false
   confirmRestore.value = backup
 }
 
+// The same comparison the backend enforces, run here only to label the choices
+// as they are made — the refusal in restore_backup is the authority (#184).
+function fitAgainst(backup, template) {
+  if (!backup || !template) return 'unknown'
+  if (!backup.scenario_id) return 'unknown'
+  if (backup.scenario_id !== template.scenario_id) return 'other-scenario'
+  if ((backup.hive_id ?? null) !== (template.hive_id ?? null)) return 'other-hive'
+  return 'match'
+}
+
+const FIT_SHORT = {
+  match: 'matches this backup',
+  'other-hive': 'different save (hive id)',
+  'other-scenario': 'different scenario',
+  unknown: 'cannot be checked',
+}
+
+// Every template is offered, not just the ones that fit: a scenario id can move
+// upstream, a mod can relocate its data, and a world can be transplanted on
+// purpose. The label says what each choice means, and a bad one needs a tick.
+const restoreChoices = computed(() =>
+  templates.value.map((t) => ({
+    ...t,
+    fit: fitAgainst(confirmRestore.value, t),
+    current: t.id === current.value.template_id,
+  })),
+)
+
+const chosenTemplate = computed(() =>
+  restoreChoices.value.find((t) => t.id === restoreTemplate.value) || null,
+)
+const restoreFit = computed(() => chosenTemplate.value?.fit || 'unknown')
+const restoreIsForced = computed(() => restoreFit.value !== 'match')
+const restoreBlocked = computed(() => restoreIsForced.value && !restoreAcknowledged.value)
+
 async function restore() {
   const backup = confirmRestore.value
-  const switching = restoreSwitch.value && backup.switch_to ? backup.switch_to : null
   busy.value = 'restore'
   try {
     const out = await api(`/api/instances/${props.id}/backups/${backup.id}/restore`, {
       method: 'POST',
       body: {
-        template_id: switching ? switching.id : null,
+        template_id: restoreTemplate.value,
         backup_first: restoreBackupFirst.value,
+        force: restoreIsForced.value,
       },
     })
     notice.value =
       `Restored the backup from ${fmtTime(backup)}. ` +
       `It replaced ${out.replaced.files} file(s) of newer data.` +
       (out.switched_to ? ` This server now runs template "${out.switched_to.template_name}".` : '') +
+      (out.forced ? ' It was forced past the scenario check — start the server and confirm the world loaded.' : '') +
       (out.safety_backup ? ' The world it replaced is on the shelf as "Replaced by a restore".' : '')
     confirmRestore.value = null
     await load()
@@ -347,38 +386,38 @@ onMounted(load)
               {{ confirmRestore.files || '?' }} file(s).
             </p>
 
-            <div
-              class="alert py-2 small mb-2"
-              :class="confirmRestore.fit === 'match' ? 'alert-secondary' : 'alert-warning'"
-            >
-              {{ fitExplained(confirmRestore) }}
+            <div v-if="!restoreIsForced" class="alert alert-secondary py-2 small mb-2">
+              {{ fitExplained(confirmRestore, chosenTemplate) }}
             </div>
 
-            <div v-if="confirmRestore.switch_to" class="form-check small mb-2">
-              <input
-                id="restore-switch"
-                v-model="restoreSwitch"
-                class="form-check-input"
-                type="checkbox"
-              />
-              <label class="form-check-label" for="restore-switch">
-                Also switch this server to template
-                "{{ confirmRestore.switch_to.name }}" — the setup that reads this world
-                <small v-if="!confirmRestore.switch_to.exact" class="d-block text-secondary">
-                  Closest match: it runs the right scenario, but its hive id
-                  ({{ confirmRestore.switch_to.hive_id }}) still differs from this
-                  backup's ({{ confirmRestore.hive_id }}).
-                </small>
-              </label>
-            </div>
-            <p
-              v-else-if="confirmRestore.fit === 'other-scenario' || confirmRestore.fit === 'other-hive'"
-              class="small text-secondary mb-2"
+            <label class="form-label small mb-0" for="restore-template">
+              Run it under this template
+            </label>
+            <select
+              id="restore-template"
+              v-model.number="restoreTemplate"
+              class="form-select form-select-sm mb-2"
             >
-              No template on this manager writes to that save, so nothing here will load
-              this world. Restore it anyway to keep the files in place, then create or
-              import a template with that scenario.
-            </p>
+              <option v-for="t in restoreChoices" :key="t.id" :value="t.id">
+                {{ t.name }} — {{ FIT_SHORT[t.fit] }}{{ t.current ? ' (current)' : '' }}
+              </option>
+            </select>
+
+            <div v-if="restoreIsForced" class="alert alert-danger py-2 small mb-2">
+              <strong>This will not load as it stands.</strong>
+              {{ fitExplained(confirmRestore, chosenTemplate) }}
+              <div class="form-check mt-2">
+                <input
+                  id="restore-ack"
+                  v-model="restoreAcknowledged"
+                  class="form-check-input"
+                  type="checkbox"
+                />
+                <label class="form-check-label" for="restore-ack">
+                  Restore it anyway — I know why this combination is right.
+                </label>
+              </div>
+            </div>
 
             <div v-if="state.files" class="form-check small mb-2">
               <input
@@ -386,10 +425,15 @@ onMounted(load)
                 v-model="restoreBackupFirst"
                 class="form-check-input"
                 type="checkbox"
+                :disabled="restoreIsForced"
               />
               <label class="form-check-label" for="restore-backup-first">
                 Back up the world being replaced first
                 <span class="text-secondary">({{ fmtBytes(state.size_bytes) }})</span>
+                <small v-if="restoreIsForced" class="d-block text-secondary">
+                  Kept whatever you choose here: a forced restore is the one most likely
+                  to be wrong, so its undo is not optional.
+                </small>
               </label>
             </div>
             <p v-else class="small text-secondary mb-2">
@@ -405,9 +449,15 @@ onMounted(load)
             <button class="btn btn-outline-secondary" @click="confirmRestore = null">
               Cancel
             </button>
-            <button class="btn btn-primary" :disabled="busy === 'restore'" @click="restore">
+            <button
+              class="btn"
+              :class="restoreIsForced ? 'btn-danger' : 'btn-primary'"
+              :disabled="busy === 'restore' || restoreBlocked"
+              @click="restore"
+            >
               <template v-if="busy === 'restore'">Restoring…</template>
-              <template v-else-if="restoreSwitch && confirmRestore.switch_to">
+              <template v-else-if="restoreIsForced">Force restore</template>
+              <template v-else-if="chosenTemplate && !chosenTemplate.current">
                 Switch template &amp; restore
               </template>
               <template v-else>Restore it</template>

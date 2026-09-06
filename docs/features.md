@@ -47,6 +47,9 @@ From the instance view you can:
 - Restore a world from a template the server no longer runs: each backup is matched
   against the current scenario and hive id, and the template that reads it can be put
   back in the same action.
+- Choose the template a world is restored under, and force a combination the manager
+  would refuse — with the reason shown, the world it replaces always kept, and the
+  forced restore recorded in the log.
 
 ## Downloads and updates
 
