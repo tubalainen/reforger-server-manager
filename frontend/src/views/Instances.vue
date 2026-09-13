@@ -441,7 +441,7 @@ onUnmounted(() => clearInterval(poll))
             </div>
             <template v-else>
               <div class="mb-3">
-                <label class="form-label">Instance name</label>
+                <label class="form-label">Server name</label>
                 <input
                   v-model="create.name"
                   class="form-control"
@@ -458,7 +458,7 @@ onUnmounted(() => clearInterval(poll))
                 </select>
               </div>
               <div class="mb-3">
-                <label class="form-label">Branch</label>
+                <label class="form-label">Game version</label>
                 <select v-model="create.branch" class="form-select">
                   <option value="stable">Stable (1874900)</option>
                   <option value="experimental">Experimental (1890870)</option>

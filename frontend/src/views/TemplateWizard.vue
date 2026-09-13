@@ -1133,7 +1133,7 @@ function applyModTemplateResult(result) {
   const chosen = modTemplateLoad.list.find((t) => t.id === modTemplateLoad.selectedId)
   spec.mods = result.mods
   modTemplateLoad.open = false
-  const parts = [chosen ? `Loaded "${chosen.name}".` : 'Loaded the mod template.']
+  const parts = [chosen ? `Loaded "${chosen.name}".` : 'Loaded the mod list.']
   if (result.added.length) parts.push(`${result.added.length} mod(s) added.`)
   if (result.removed.length) parts.push(`${result.removed.length} removed.`)
   if (result.relocked.length) parts.push(`${result.relocked.length} version lock(s) changed.`)
@@ -1727,7 +1727,7 @@ onBeforeUnmount(() => {
                reordering a list you already have, and it was missed there. -->
           <div class="mb-2">
             <div class="input-group">
-              <span class="input-group-text">🧰 Mod template</span>
+              <span class="input-group-text">🧰 Mod list</span>
               <select
                 class="form-select"
                 :value="modTemplateLoad.selectedId"
@@ -1738,7 +1738,7 @@ onBeforeUnmount(() => {
                   {{
                     modTemplateLoad.list.length
                       ? 'Choose a saved mod list…'
-                      : 'No mod templates saved yet'
+                      : 'No mod lists saved yet'
                   }}
                 </option>
                 <option v-for="mt in modTemplateLoad.list" :key="mt.id" :value="mt.id">
@@ -1748,13 +1748,13 @@ onBeforeUnmount(() => {
               <button
                 class="btn btn-primary"
                 :disabled="!modTemplateAddPreview"
-                title="Add every mod on the selected mod template to this template's mod list"
+                title="Add every mod on the selected mod list to this template's mods"
                 @click="addModTemplate"
-              >Add mod template</button>
+              >Add mod list</button>
               <button
                 class="btn btn-outline-secondary"
                 :disabled="!modTemplateLoad.selectedId"
-                title="See exactly what would change first — or replace this mod list with the mod template's, instead of adding to it"
+                title="See exactly what would change first — or replace this template's mods with the list, instead of adding to them"
                 @click="openModTemplates"
               >Preview / replace…</button>
             </div>
@@ -1766,9 +1766,9 @@ onBeforeUnmount(() => {
                 ></span>Loading…
               </template>
               <template v-else-if="!modTemplateLoad.list.length">
-                A mod template is a saved mod list you can reuse in every server template —
-                build one on the
-                <router-link :to="{ name: 'mod-templates' }">Library › Mod templates</router-link> page.
+                A mod list is a saved set of mods you can reuse in every server template —
+                build one under
+                <router-link :to="{ name: 'mod-templates' }">Library › Mod lists</router-link>.
               </template>
               <template v-else-if="modTemplateAddPreview">
                 Adds {{ modTemplateAddPreview.added.length }} mod(s) to the
@@ -1945,12 +1945,12 @@ onBeforeUnmount(() => {
           <div class="modal-dialog modal-lg modal-dialog-scrollable">
             <div class="modal-content">
               <div class="modal-header">
-                <h5 class="modal-title">Load a mod template</h5>
+                <h5 class="modal-title">Load a mod list</h5>
                 <button class="btn-close" @click="modTemplateLoad.open = false"></button>
               </div>
               <div class="modal-body">
                 <p class="small text-secondary">
-                  A mod template is a saved mod list, in the order you arranged it. Loading
+                  A mod list is saved in the order you arranged it. Loading
                   one changes only the mods of this server template, and only after you press
                   <em>Load</em> — and it is still not saved until you save the template.
                 </p>
@@ -1966,9 +1966,9 @@ onBeforeUnmount(() => {
                   v-else-if="!modTemplateLoad.list.length"
                   class="text-secondary small"
                 >
-                  No mod templates yet. Create one under
-                  <router-link :to="{ name: 'mod-templates' }">Library › Mod templates</router-link>
-                  — it is a mod list you can reuse in every server template.
+                  No mod lists yet. Create one under
+                  <router-link :to="{ name: 'mod-templates' }">Library › Mod lists</router-link>
+                  — a set of mods you can reuse in every server template.
                 </div>
 
                 <template v-else>
@@ -2003,7 +2003,7 @@ onBeforeUnmount(() => {
                     />
                     <label class="form-check-label" for="mt-add">
                       <strong>Add to this template</strong> — keep the mods that are already
-                      here, append the rest in the mod template's order
+                      here, append the rest in the mod list's order
                     </label>
                   </div>
                   <div class="form-check small mb-3">
@@ -2032,7 +2032,7 @@ onBeforeUnmount(() => {
                         from this template.
                       </li>
                       <li v-if="modTemplatePreview.relocked.length">
-                        {{ modTemplatePreview.relocked.length }} mod(s) take the mod template's
+                        {{ modTemplatePreview.relocked.length }} mod(s) take the mod list's
                         version lock.
                       </li>
                     </ul>
@@ -2486,7 +2486,7 @@ onBeforeUnmount(() => {
           <div v-show="showAccess" class="border-top pt-3">
             <p class="small text-secondary">
               Who administers this server, and who may join it. Everything here is
-              part of the template, so every server instance built from it gets the
+              part of the template, so every server built from it gets the
               same lists.
             </p>
 

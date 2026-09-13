@@ -120,7 +120,7 @@ def _view(instance_id: int) -> dict:
     for v in instance_service.list_views():
         if v["id"] == instance_id:
             return v
-    raise HTTPException(status_code=404, detail="Instance not found")
+    raise HTTPException(status_code=404, detail="Server not found")
 
 
 @router.get("/{instance_id}")
@@ -409,7 +409,7 @@ async def logs(websocket: WebSocket, instance_id: int):
         docker_service.find_instance_container, instance_id
     )
     if container is None:
-        await websocket.send_json({"type": "info", "line": "No container yet — start the instance."})
+        await websocket.send_json({"type": "info", "line": "No container yet — start the server."})
         await websocket.close()
         return
 

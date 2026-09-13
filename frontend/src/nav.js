@@ -8,7 +8,7 @@ export const NAV = [
     key: 'library',
     to: '/library',
     label: 'Library',
-    full: 'Server templates, mod templates and mods',
+    full: 'Server templates, mod lists and mods',
   },
   {
     key: 'system',
@@ -23,7 +23,7 @@ export const HELP = { key: 'help', to: '/help', label: 'Help', full: 'User guide
 export const SUBNAV = {
   library: [
     { to: '/library/templates', label: 'Server templates' },
-    { to: '/library/mod-templates', label: 'Mod templates' },
+    { to: '/library/mod-lists', label: 'Mod lists' },
     { to: '/library/mods', label: 'Mods overview' },
   ],
   system: [
@@ -55,11 +55,18 @@ export const LEGACY_REDIRECTS = [
   { path: '/templates', redirect: '/library/templates' },
   { path: '/templates/new', redirect: '/library/templates/new' },
   { path: '/templates/:id/edit', redirect: (to) => `/library/templates/${to.params.id}/edit` },
-  { path: '/mod-templates', redirect: '/library/mod-templates' },
-  { path: '/mod-templates/new', redirect: '/library/mod-templates/new' },
+  { path: '/mod-templates', redirect: '/library/mod-lists' },
+  { path: '/mod-templates/new', redirect: '/library/mod-lists/new' },
   {
     path: '/mod-templates/:id/edit',
-    redirect: (to) => `/library/mod-templates/${to.params.id}/edit`,
+    redirect: (to) => `/library/mod-lists/${to.params.id}/edit`,
+  },
+  // Mod templates were renamed mod lists (#189); their pages moved with the name.
+  { path: '/library/mod-templates', redirect: '/library/mod-lists' },
+  { path: '/library/mod-templates/new', redirect: '/library/mod-lists/new' },
+  {
+    path: '/library/mod-templates/:id/edit',
+    redirect: (to) => `/library/mod-lists/${to.params.id}/edit`,
   },
   { path: '/mods', redirect: '/library/mods' },
   { path: '/backup', redirect: '/system/export' },

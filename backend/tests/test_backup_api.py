@@ -305,7 +305,7 @@ def test_a_damaged_template_entry_names_itself(logged_in):
     }
     r = logged_in.post("/api/backup/preview", json=dupes)
     assert r.status_code == 400
-    assert "more than one mod template named 'Same'" in r.json()["detail"]
+    assert "more than one mod list named 'Same'" in r.json()["detail"]
 
 
 def test_a_template_saved_before_the_enriched_mod_list_still_round_trips(logged_in):

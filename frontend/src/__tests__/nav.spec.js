@@ -11,7 +11,7 @@ function makeRouter() {
   const targets = [
     '/servers', '/servers/:id',
     '/library/templates', '/library/templates/new', '/library/templates/:id/edit',
-    '/library/mod-templates', '/library/mod-templates/new', '/library/mod-templates/:id/edit',
+    '/library/mod-lists', '/library/mod-lists/new', '/library/mod-lists/:id/edit',
     '/library/mods',
     '/system/server-files', '/system/network', '/system/export',
     '/help',
@@ -37,9 +37,13 @@ describe('legacy URLs (#189)', () => {
     ['/templates', '/library/templates'],
     ['/templates/new', '/library/templates/new'],
     ['/templates/3/edit', '/library/templates/3/edit'],
-    ['/mod-templates', '/library/mod-templates'],
-    ['/mod-templates/new', '/library/mod-templates/new'],
-    ['/mod-templates/5/edit', '/library/mod-templates/5/edit'],
+    ['/mod-templates', '/library/mod-lists'],
+    ['/mod-templates/new', '/library/mod-lists/new'],
+    ['/mod-templates/5/edit', '/library/mod-lists/5/edit'],
+    // mod templates became mod lists (#189), after 0.56.0 had already moved them here
+    ['/library/mod-templates', '/library/mod-lists'],
+    ['/library/mod-templates/new', '/library/mod-lists/new'],
+    ['/library/mod-templates/5/edit', '/library/mod-lists/5/edit'],
     ['/mods', '/library/mods'],
     ['/backup', '/system/export'],
     ['/downloads', '/system/server-files'],
@@ -74,8 +78,8 @@ describe('isUnder', () => {
   })
 
   it('does not claim a sibling that merely shares a prefix', () => {
-    // "/library/mod-templates" starts with "/library/mod" but is not under "/library/mods".
-    expect(isUnder('/library/mod-templates', '/library/mods')).toBe(false)
+    // "/library/mod-lists" starts with "/library/mod" but is not under "/library/mods".
+    expect(isUnder('/library/mod-lists', '/library/mods')).toBe(false)
     expect(isUnder('/serversettings', '/servers')).toBe(false)
   })
 })

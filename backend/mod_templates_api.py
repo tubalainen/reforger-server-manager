@@ -96,7 +96,7 @@ def _require_free_name(session: Session, name: str, exclude_id: int | None = Non
         query = query.where(ModTemplate.id != exclude_id)
     if session.exec(query).first():
         raise HTTPException(
-            status_code=409, detail=f"A mod template named '{name}' already exists"
+            status_code=409, detail=f"A mod list named '{name}' already exists"
         )
 
 
@@ -134,7 +134,7 @@ async def get_mod_template(
     with Session(get_engine()) as session:
         mt = session.get(ModTemplate, mod_template_id)
         if not mt:
-            raise HTTPException(status_code=404, detail="Mod template not found")
+            raise HTTPException(status_code=404, detail="Mod list not found")
         return _out(mt)
 
 
@@ -147,7 +147,7 @@ async def update_mod_template(
     with Session(get_engine()) as session:
         mt = session.get(ModTemplate, mod_template_id)
         if not mt:
-            raise HTTPException(status_code=404, detail="Mod template not found")
+            raise HTTPException(status_code=404, detail="Mod list not found")
         _require_free_name(session, spec.name, exclude_id=mod_template_id)
         before = change_log.mod_template_snapshot(mt)  # capture before mutating
         mt.name = spec.name
@@ -174,7 +174,7 @@ async def delete_mod_template(
     with Session(get_engine()) as session:
         mt = session.get(ModTemplate, mod_template_id)
         if not mt:
-            raise HTTPException(status_code=404, detail="Mod template not found")
+            raise HTTPException(status_code=404, detail="Mod list not found")
         change_log.delete_for_mod_template(session, mod_template_id)
         session.delete(mt)
         session.commit()
@@ -190,5 +190,5 @@ async def mod_template_changelog(
     """
     with Session(get_engine()) as session:
         if not session.get(ModTemplate, mod_template_id):
-            raise HTTPException(status_code=404, detail="Mod template not found")
+            raise HTTPException(status_code=404, detail="Mod list not found")
         return change_log.mod_template_entries(session, mod_template_id, q)

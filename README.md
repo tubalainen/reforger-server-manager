@@ -1,6 +1,6 @@
 # Reforger Server Manager
 
-A web-based manager for running one or more [Arma Reforger Dedicated Servers](https://community.bistudio.com/wiki/Arma_Reforger:Server_Hosting) with Docker. Create reusable templates, manage scenarios and Workshop mods, download server files with SteamCMD, and operate every instance from one browser UI.
+A web-based manager for running one or more [Arma Reforger Dedicated Servers](https://community.bistudio.com/wiki/Arma_Reforger:Server_Hosting) with Docker. Create reusable templates, manage scenarios and Workshop mods, download server files with SteamCMD, and operate every server from one browser UI.
 
 It runs on Linux, a public VPS, or Windows 10/11 through Docker Desktop. The project is stable and feature-complete; current work focuses on maintenance, compatibility, and fixes.
 
@@ -8,17 +8,17 @@ It runs on Linux, a public VPS, or Windows 10/11 through Docker Desktop. The pro
 
 [Installation](docs/installation.md) · [Feature tour](docs/features.md) · [Releases](https://github.com/tubalainen/reforger-server-manager/releases) · [Video walkthrough](https://youtu.be/s6ml4SacnRo)
 
-![Server templates](docs/images/01-server-templates.png)
+![Servers overview](docs/images/06-servers-overview.png)
 
 ## Highlights
 
-- Run multiple isolated stable or experimental server instances.
+- Run multiple isolated stable or experimental servers.
 - Build reusable templates for scenarios, mods, admins, bans, whitelist, and server settings.
 - Search the Workshop, resolve dependencies, lock versions, and control mod order.
 - Download and update server files through SteamCMD with live progress.
 - Start, stop, restart, monitor, and inspect live logs from the browser.
 - Schedule restarts and optionally update or restart servers when new builds are detected.
-- Back up and restore every server template and mod template as one file.
+- Back up and restore every server template and mod list as one file.
 - Back up, download and restore each server's saved world, including one written under a template the server no longer runs — or force a combination the manager would refuse.
 - Import or export `config.json` while preserving settings the UI does not know about.
 - Keep Docker access behind a least-privilege socket proxy; managed containers run with `no-new-privileges`.
@@ -44,7 +44,7 @@ powershell -ExecutionPolicy Bypass -File $installer
 > [!IMPORTANT]
 > The GUI can control Docker containers and should be treated like host-level access. Use a strong password, never expose port `7780` directly to the internet, and use HTTPS for remote access. The VPS installer configures HTTPS through Caddy.
 
-Players connect through UDP game ports, not the web UI. The default ranges are `2001-2020` and `17777-17796`; forward only the ports assigned to your instances. Never forward the GUI or RCON ports. See [Networking and firewalls](docs/installation.md#networking-and-firewalls).
+Players connect through UDP game ports, not the web UI. The default ranges are `2001-2020` and `17777-17796`; forward only the ports assigned to your servers. Never forward the GUI or RCON ports. See [Networking and firewalls](docs/installation.md#networking-and-firewalls).
 
 ### First run
 
@@ -52,9 +52,9 @@ After signing in:
 
 1. Pull the server runtime image under **System › Server files**.
 2. Download the stable or experimental server files on the same page.
-3. Create a template under **Library**, then create and start an instance from it under **Servers**.
+3. Create a template under **Library**, then create and start a server from it under **Servers**.
 
-The default instance runtime is the [ACE Mod-compatible image](https://github.com/acemod/reforger), configurable with `REFORGER_SERVER_IMAGE`.
+The default server runtime is the [ACE Mod-compatible image](https://github.com/acemod/reforger), configurable with `REFORGER_SERVER_IMAGE`.
 
 ## Architecture
 

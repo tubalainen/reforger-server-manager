@@ -5,6 +5,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { api, upload } from '../api'
 import { formatBytes } from '../format'
+import HelpTip from './HelpTip.vue'
 
 const props = defineProps({
   id: { type: [String, Number], required: true },
@@ -239,10 +240,17 @@ onMounted(load)
     </div>
     <div class="card-body">
       <p class="text-secondary small mb-2">
-        A copy of this server's world — the save points and everything the scenario and
-        its mods wrote beside them. Take one before you change the template or the
-        scenario: the new setup writes its own data, and the old world is only still
-        there if you kept it.
+        Copies of this server's world. Take one before changing its template.
+        <HelpTip label="What a backup holds">
+          <p>
+            A copy of this server's world — the save points and everything the scenario and
+            its mods wrote beside them.
+          </p>
+          <p>
+            Take one before you change the template or the scenario: the new setup writes
+            its own data, and the old world is only still there if you kept it.
+          </p>
+        </HelpTip>
       </p>
 
       <div v-if="error" class="alert alert-warning py-2 small">
@@ -303,9 +311,12 @@ onMounted(load)
             </div>
           </div>
           <small v-if="running" class="d-block text-secondary mt-1">
-            The server is running, so a backup is still fine to take — it is only a copy.
-            A save point being written at that exact moment can land in it half-finished,
-            so stop the server first if this copy has to be perfect.
+            Fine to take while it runs.
+            <HelpTip label="Backing up a running server">
+              A backup is only a copy, so the server can keep running. A save point being
+              written at that exact moment can land in it half-finished, though — stop the
+              server first if this copy has to be perfect.
+            </HelpTip>
           </small>
         </div>
 
@@ -364,9 +375,11 @@ onMounted(load)
             />
           </label>
           <small class="text-secondary">
-            The newest {{ info.keep }} backups are kept; older ones are removed
-            automatically. They live on the host with the instance, so a downloaded copy
-            is the one that survives the box.
+            The newest {{ info.keep }} are kept.
+            <HelpTip label="How long backups are kept">
+              Older backups are removed automatically as new ones are made. They live on the
+              host with the server, so a downloaded copy is the one that survives the machine.
+            </HelpTip>
           </small>
         </div>
       </template>

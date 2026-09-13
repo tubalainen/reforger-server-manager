@@ -25,7 +25,7 @@ const links = [
   {
     href: 'https://github.com/acemod/docker-reforger',
     title: 'ACE Mod docker-reforger',
-    desc: 'The default Docker image every server instance runs from.',
+    desc: 'The default Docker image every server runs from.',
   },
 ]
 
@@ -34,8 +34,8 @@ const faq = [
     q: 'Can a server (or template) run more than one scenario?',
     a: `No — this is a game limit, not an app limit. A Reforger server config holds exactly
        one scenarioId and the game has no built-in scenario rotation. To offer several
-       scenarios, save one template per scenario and either run multiple instances or
-       switch a single instance between templates (restart required).`,
+       scenarios, save one template per scenario and either run multiple servers or
+       switch a single server between templates (restart required).`,
   },
   {
     q: 'Can I start from a terrain (map) instead of a scenario?',
@@ -47,7 +47,7 @@ const faq = [
        To run another of that terrain's scenarios, save a second template.`,
   },
   {
-    q: 'Why does my instance say "starting…" for several minutes?',
+    q: 'Why does my server say "starting…" for several minutes?',
     a: `Because it is. Starting the container is instant, but the Arma server then downloads
        its mods and loads the world before anyone can join — on a heavy modset that is
        minutes, not seconds. The status stays amber ("Starting server…") until the server's
@@ -59,7 +59,7 @@ const faq = [
   {
     q: "Players can't find or join my server. What should I check?",
     a: `Three usual suspects: (1) UDP ports — the game port and A2S port of each running
-       instance must be forwarded through your router/firewall to the Docker host
+       server must be forwarded through your router/firewall to the Docker host
        (defaults: game 2001–2020, A2S 17777–17796); (2) PUBLIC_ADDRESS in .env should be
        your public IP so the server advertises correctly; (3) the template's "Public
        (server browser)" switch must be on for the server to be listed.`,
@@ -92,7 +92,7 @@ const faq = [
        download it from the repo and run it from anywhere if that folder is gone. It shows
        exactly what it found and only proceeds when you type REMOVE. It takes away the
        containers, the install folder, the Desktop shortcut, the firewall rule and the
-       installer's leftovers. Your data — templates, instances, saved games and the ~10 GB of
+       installer's leftovers. Your data — templates, servers, saved games and the ~10 GB of
        server files — is KEPT by default, in Docker volumes, so a reinstall picks it up again;
        pass -RemoveData to wipe it for good. Docker Desktop and WSL2 are never touched, since
        other things on your machine may use them.`,
@@ -112,7 +112,7 @@ const faq = [
        a few minutes). Maintenance clears old logs too. Clearing the saved game — which resets
        the world, so take a backup first and only do that when you want a clean slate — is on
        the Saves tab. Changing a
-       template's launch parameters no longer needs any of this: the instance rebuilds its
+       template's launch parameters no longer needs any of this: the server rebuilds its
        container by itself on the next start.`,
   },
   {
@@ -150,20 +150,20 @@ const faq = [
     q: 'What is the difference between Stable and Experimental?',
     a: `They are two separate builds of the dedicated server with separate ~10 GB
        downloads (Steam app 1874900 vs 1890870). Experimental servers only accept
-       Experimental game clients. You can run both side by side; each instance is bound
+       Experimental game clients. You can run both side by side; each server is bound
        to one branch when you create it.`,
   },
   {
-    q: 'How many instances can I run?',
-    a: `Each running instance leases one game port and one A2S port from the ranges in
+    q: 'How many servers can I run?',
+    a: `Each running server leases one game port and one A2S port from the ranges in
        .env — 20 each by default. In practice CPU and RAM run out first: plan roughly two
        to four cores and 6–12 GB of RAM per populated server depending on scenario, mods
        and player count.`,
   },
   {
-    q: 'Will I lose my save game if I switch an instance to another template?',
+    q: 'Will I lose my save game if I switch a server to another template?',
     a: `Persistent saves are tied to the template's persistence settings (the hive id).
-       When you swap an instance to a template that writes to a different save — or has
+       When you swap a server to a template that writes to a different save — or has
        persistence off — the app warns you before applying. Keeping the same hive id
        keeps the same save. Since 0.54.0 the swap form also offers to back the current
        world up first, ticked by default whenever there is one, so the old scenario's data
@@ -179,8 +179,8 @@ const faq = [
        needs the server stopped: it deletes the current world and unpacks the backup in its
        place, and offers to back up the world it is about to replace first. Download gives
        you a file to keep off the box, and "Upload a backup file" puts one back on the
-       shelf — on a rebuilt host, or on another instance. The newest ten are kept per
-       instance; older ones are removed as new ones are made.`,
+       shelf — on a rebuilt host, or on another server. The newest ten are kept per
+       server; older ones are removed as new ones are made.`,
   },
   {
     q: 'One server, several templates over time — which backups can I actually restore?',
@@ -190,10 +190,10 @@ const faq = [
        the last one catches two templates running the same scenario on different hive ids,
        where the files look right and the server still starts an empty world. When a backup
        does not match, the row names the template that does ("loads under template X") and
-       the restore dialog offers "Switch template & restore", which repoints the instance
+       the restore dialog offers "Switch template & restore", which repoints the server
        and puts the world back in one action. If no template on this manager targets that
        save, it says that instead of pretending — restore the files anyway if you like,
-       then build a template with that scenario. Backups belong to the instance, not to a
+       then build a template with that scenario. Backups belong to the server, not to a
        template: swapping a template never moves, copies or deletes one.`,
   },
   {
@@ -215,8 +215,8 @@ const faq = [
        template on the next start), and the server's own ownerToken.bin — that is the
        server's identity with the Reforger backend rather than world state, it is reissued
        by itself if lost, and copying it onto a second server would give two servers one
-       identity. A restore leaves all three alone. Backups live with the instance on the
-       host, so deleting the instance and its data deletes them too: download the ones you
+       identity. A restore leaves all three alone. Backups live with the server on the
+       host, so deleting the server and its data deletes them too: download the ones you
        care about.`,
   },
   {
@@ -285,7 +285,7 @@ const faq = [
     a: `If you used a Linux installer, run: rsm update. Installed by hand, from the folder
        with your docker-compose.yaml: docker compose pull, then docker compose up -d. On
        Windows just launch it from the Desktop shortcut — start.ps1 pulls the newest image
-       on every start unless you pinned MANAGER_VERSION in .env. Templates, instances and
+       on every start unless you pinned MANAGER_VERSION in .env. Templates, servers and
        downloaded server files survive updates — they live in ./data and ./serverfiles next
        to the compose file (Docker named volumes on Windows).`,
   },
@@ -310,12 +310,12 @@ const faq = [
   {
     q: 'Where is everything stored?',
     a: `Next to your docker-compose.yaml: ./data holds the manager database (templates,
-       instances) and per-instance configs, profiles and logs; ./serverfiles holds the
+       servers) and per-server configs, profiles and logs; ./serverfiles holds the
        downloaded game server per branch. A server's persistent save lives with its profile,
        under ./data/instances/<id>/profile — on the host, never inside a container image, so
        it survives rebuilds and updates; the backups you make on a server's Saves tab sit
-       beside it in ./data/instances/<id>/backups. Deleting an instance without ticking
-       "also delete stored data" leaves that folder behind, and if a later instance is
+       beside it in ./data/instances/<id>/backups. Deleting a server without ticking
+       "also delete stored data" leaves that folder behind, and if a later server is
        given the same id the folder is moved to ./data/orphaned-instances/<id>-<date>/
        rather than handed to the new server — so nothing is lost and nothing is inherited.
        Back up the data folder to keep your setup. On
@@ -339,8 +339,8 @@ const faq = [
     <div class="d-flex flex-wrap gap-2 mb-4">
       <a class="btn btn-sm btn-outline-secondary" href="#getting-started">Getting started</a>
       <a class="btn btn-sm btn-outline-secondary" href="#templates">Server Templates</a>
-      <a class="btn btn-sm btn-outline-secondary" href="#mod-templates">Mod Templates</a>
-      <a class="btn btn-sm btn-outline-secondary" href="#instances">Server Instances</a>
+      <a class="btn btn-sm btn-outline-secondary" href="#mod-templates">Mod lists</a>
+      <a class="btn btn-sm btn-outline-secondary" href="#instances">Servers</a>
       <a class="btn btn-sm btn-outline-secondary" href="#backup">Export &amp; import</a>
       <a class="btn btn-sm btn-outline-secondary" href="#faq">FAQ</a>
       <a class="btn btn-sm btn-outline-secondary" href="#links">External references</a>
@@ -358,12 +358,12 @@ const faq = [
           <li class="mb-2">
             <strong>Pull the server runtime image.</strong> Go to
             <router-link :to="{ name: 'server-files' }">System › Server files</router-link>
-            and pull the Docker image instances run from. This happens once.
+            and pull the Docker image servers run from. This happens once.
           </li>
           <li class="mb-2">
             <strong>Download the server files</strong> for the branch you want (Stable for
             normal play) in the same section — roughly 10 GB via SteamCMD, shared by every
-            instance of that branch.
+            server on that branch.
           </li>
           <li class="mb-2">
             <strong>Create a Server Template.</strong> Under
@@ -373,14 +373,14 @@ const faq = [
             live preview shows the exact <code>config.json</code> the server will run.
           </li>
           <li class="mb-2">
-            <strong>Create and start a Server Instance.</strong> On
+            <strong>Create and start a server.</strong> On
             <router-link :to="{ name: 'instances' }">Servers</router-link> click "New
-            instance", pick your template and branch, and start it. Ports are leased
+            server", pick your template and branch, and start it. Ports are leased
             automatically; live logs and status stream to the server's page.
           </li>
           <li>
             <strong>Open the ports.</strong> For internet players, forward each running
-            instance's UDP game port (default range 2001–2020) and A2S port (17777–17796)
+            server's UDP game port (default range 2001–2020) and A2S port (17777–17796)
             through your router and host firewall, and set <code>PUBLIC_ADDRESS</code> in
             <code>.env</code> to your public IP. The
             <router-link :to="{ name: 'network' }">System › Ports &amp; firewall</router-link>
@@ -398,7 +398,7 @@ const faq = [
         <p class="text-secondary small mb-3">
           A template is a reusable server definition — scenario, mods and settings — that
           renders to the exact <code>config.json</code> the dedicated server reads. Many
-          instances can share one template.
+          servers can share one template.
         </p>
         <ul class="mb-0">
           <li class="mb-2">
@@ -416,9 +416,9 @@ const faq = [
             to <code>config.json</code> — and you can drag any row to change it, sort by
             name or by when you added them, put every mod after what it requires with
             <em>Dependencies first</em>, or ask an AI for an order with
-            <em>AI order…</em> (see below). The <em>🧰 Mod template</em> picker, right under
+            <em>AI order…</em> (see below). The <em>🧰 Mod list</em> picker, right under
             the search box, adds every mod of a saved mod list in one press (see
-            <a href="#mod-templates">Mod Templates</a>). It exports/imports as
+            <a href="#mod-templates">Mod lists</a>). It exports/imports as
             JSON to share between templates or friends. Badges show each mod's role:
             <em>scenario</em> (provides the scenario), <em>scenario dependency</em>
             (needed for the scenario to work), <em>addon</em> (an extra you chose),
@@ -444,7 +444,7 @@ const faq = [
             list match on <em>Bohemia identity ids only</em>: a Steam id will not work
             there. Leave the whitelist empty and everybody may join; put one player on it
             and the server turns whitelist-only, so make sure you are on it yourself.
-            The lists belong to the template, so every instance built from it shares them.
+            The lists belong to the template, so every server built from it shares them.
           </li>
           <li class="mb-2">
             <strong>Import/export:</strong> upload an existing <code>config.json</code> to
@@ -472,16 +472,16 @@ const faq = [
     <!-- MOD TEMPLATES -->
     <div id="mod-templates" class="card mb-4">
       <div class="card-body">
-        <h2 class="h5">Mod Templates</h2>
+        <h2 class="h5">Mod lists</h2>
         <p class="text-secondary small mb-3">
-          A mod template is a saved list of mods and nothing else — no scenario, no server
+          A mod list is a saved set of mods and nothing else — no scenario, no server
           settings. Build a set once ("our milsim pack", "training night"), then load it
           into the Mods step of any server template.
         </p>
         <ul class="mb-0">
           <li class="mb-2">
             <strong>Build it:</strong> on
-            <router-link :to="{ name: 'mod-templates' }">Library › Mod templates</router-link>, create one and add
+            <router-link :to="{ name: 'mod-templates' }">Library › Mod lists</router-link>, create one and add
             mods the same way as in the wizard — search the Workshop, or paste ids/URLs,
             several at once, comma-separated. Lock a version per mod, or leave it on
             <em>latest</em>. Drag the rows (or use ↑ ↓) to set the order.
@@ -489,8 +489,8 @@ const faq = [
           <li class="mb-2">
             <strong>Load it into a server template:</strong> open a template's
             <strong>Mods</strong> step. Under the mod search box there is a
-            <em>🧰 Mod template</em> picker: choose a list and press
-            <em>Add mod template</em>, and its mods are appended to the ones already there.
+            <em>🧰 Mod list</em> picker: choose a list and press
+            <em>Add mod list</em>, and its mods are appended to the ones already there.
             <em>Preview / replace…</em> beside it shows the full list first, and offers
             <em>Replace</em> instead — this template then ends up with exactly that mod
             list (the scenario's own mods always stay). Either way you see how many mods
@@ -499,11 +499,11 @@ const faq = [
           </li>
           <li class="mb-2">
             <strong>It is a copy, not a link:</strong> a server template keeps its own mods.
-            Editing or deleting a mod template later never changes a server you already
+            Editing or deleting a mod list later never changes a server you already
             built — load it again when you want the newer set.
           </li>
           <li>
-            <strong>Change log:</strong> like server templates, each mod template keeps a
+            <strong>Change log:</strong> like server templates, each mod list keeps a
             searchable, read-only history — mods added and removed, version locks, renames
             and reorderings — from the <strong>Change log</strong> button on the list.
           </li>
@@ -514,10 +514,10 @@ const faq = [
     <!-- INSTANCES -->
     <div id="instances" class="card mb-4">
       <div class="card-body">
-        <h2 class="h5">Server Instances</h2>
+        <h2 class="h5">Servers</h2>
         <p class="text-secondary small mb-3">
-          An instance is a real running server: a template bound to a branch, a set of
-          ports and a Docker container that the manager creates and supervises.
+          A server is a template bound to a game version, a set of ports and a Docker
+          container that the manager creates and supervises.
         </p>
         <ul class="mb-0">
           <li class="mb-2">
@@ -576,15 +576,15 @@ const faq = [
           <li class="mb-2">
             <strong>Saved game backups:</strong> one archive of a server's world — the save
             points and the data the scenario and its mods keep beside them — made on demand,
-            or automatically before you switch the instance to another template. Restore
+            or automatically before you switch the server to another template. Restore
             one (server stopped), download it to keep off the box, or upload one back. The
-            newest ten per instance are kept.
+            newest ten per server are kept.
           </li>
           <li class="mb-2">
             <strong>Template changes:</strong> editing a template does not touch running
-            servers — the instance flags <strong>“Template changed — restart to apply”</strong>
+            servers — the server flags <strong>“Template changed — restart to apply”</strong>
             once its template was edited after the server started, and one click restarts it.
-            Swapping an instance to a different template warns you if the persistent-save
+            Swapping a server to a different template warns you if the persistent-save
             target (hive id) would change, and offers to back the current world up before
             it does.
           </li>
@@ -612,8 +612,8 @@ const faq = [
         <h2 class="h5">Export &amp; import</h2>
         <p class="text-secondary small mb-3">
           <router-link :to="{ name: 'backup' }">System › Export &amp; import</router-link> saves everything you built — every
-          server template and every mod template — into one file, and puts it back later.
-          Server instances are not included: a running server is a container, a port lease
+          server template and every mod list — into one file, and puts it back later.
+          Servers are not included: a running server is a container, a port lease
           and a folder of saved games belonging to this machine.
         </p>
         <ul class="mb-0">
@@ -641,7 +641,7 @@ const faq = [
           </li>
           <li>
             <strong>What an import does to your servers:</strong> overwriting keeps the
-            template in place, so instances built from it stay pointed at it and pick up
+            template in place, so servers built from it stay pointed at it and pick up
             the restored settings when they next start — the Servers page flags a running
             server whose template has changed. An import is all or nothing, is written to
             each template's change log, and never touches a template someone else has open

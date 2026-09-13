@@ -219,10 +219,10 @@ def _read_template(raw, index: int) -> dict:
 
 def _read_mod_template(raw, index: int) -> dict:
     if not isinstance(raw, dict):
-        raise BackupError(f"Mod template #{index + 1} is not a JSON object.")
-    name = _str(raw.get("name"), f"Mod template #{index + 1}: name",
+        raise BackupError(f"Mod list #{index + 1} is not a JSON object.")
+    name = _str(raw.get("name"), f"Mod list #{index + 1}: name",
                 required=True, limit=_NAME_MAX)
-    label = f"Mod template '{name}'"
+    label = f"Mod list '{name}'"
     return {
         "name": name,
         "description": _str(raw.get("description"), f"{label}: description"),
@@ -270,7 +270,7 @@ def parse(payload) -> dict:
         for i, raw in enumerate(_list(payload.get("mod_templates"), "mod_templates"))
     ]
     _no_duplicate_names(templates, "server template")
-    _no_duplicate_names(mod_templates, "mod template")
+    _no_duplicate_names(mod_templates, "mod list")
     if not templates and not mod_templates:
         raise BackupError("This backup holds no templates.")
     return {

@@ -116,7 +116,7 @@ async def remove_serverfiles(branch: str, _user: str = Depends(auth.require_sess
     if running:
         raise HTTPException(
             status_code=409,
-            detail=f"Stop these {branch} instances first: {', '.join(running)}",
+            detail=f"Stop these {branch} servers first: {', '.join(running)}",
         )
     try:
         await asyncio.to_thread(steam.remove_files, branch)

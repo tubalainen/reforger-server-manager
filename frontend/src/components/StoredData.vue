@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../api'
 import { formatBytes } from '../format'
+import HelpTip from './HelpTip.vue'
 
 // What a server has written to disk, and clearing it (#79). The saved game lives on
 // the Saves tab and the mods and logs under Settings › Maintenance (#189), so each
@@ -125,7 +126,19 @@ onMounted(loadData)
 <template>
   <div class="card">
     <div class="card-header d-flex justify-content-between align-items-center py-2">
-      <span class="fw-semibold small">{{ title }}</span>
+      <span class="fw-semibold small">
+        {{ title }}
+        <HelpTip v-if="dataInfo && dataInfo.host_path" label="Where this data lives">
+          <p>
+            None of it lives inside the container image — it is all kept on the host at
+            <code class="text-break">{{ dataInfo.host_path }}</code> and mounted in, so it
+            survives container rebuilds and manager updates.
+          </p>
+          <p v-if="targets.includes('saves')">
+            To keep a copy of the world, use the backups above rather than copying files by hand.
+          </p>
+        </HelpTip>
+      </span>
       <button class="btn btn-sm btn-outline-secondary" @click="loadData">Refresh</button>
     </div>
     <div class="card-body">
@@ -140,15 +153,6 @@ onMounted(loadData)
       </div>
 
       <template v-else-if="dataInfo">
-        <p v-if="dataInfo.host_path" class="text-secondary small">
-          None of it lives inside the container image — it is all kept on the host at
-          <code class="text-break">{{ dataInfo.host_path }}</code> and mounted in, so it
-          survives container rebuilds and manager updates.
-          <template v-if="targets.includes('saves')">
-            To keep a copy of the world, use the backups above rather than copying files by hand.
-          </template>
-        </p>
-
         <div v-if="dataNotice" class="alert alert-success py-2 small">{{ dataNotice }}</div>
 
         <div v-if="running" class="alert alert-secondary py-2 small mb-3">
