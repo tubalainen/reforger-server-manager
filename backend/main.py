@@ -4,6 +4,7 @@ Serves the JSON API under /api/* and the built Vue SPA for everything else.
 """
 import asyncio
 import logging
+import mimetypes
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -26,6 +27,10 @@ from services import auto_update, docker_service, fleet_history, instance_servic
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("manager")
+
+# The SPA ships a web app manifest next to its icons. Older Pythons' type table does
+# not know the extension, and a guessed octet-stream under nosniff is not a manifest.
+mimetypes.add_type("application/manifest+json", ".webmanifest")
 
 
 @asynccontextmanager

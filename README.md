@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/logo.svg" width="112" height="112" alt="Reforger Server Manager logo">
+</p>
+
 # Reforger Server Manager
 
 A web-based manager for running one or more [Arma Reforger Dedicated Servers](https://community.bistudio.com/wiki/Arma_Reforger:Server_Hosting) with Docker. Create reusable templates, manage scenarios and Workshop mods, download server files with SteamCMD, and operate every server from one browser UI.

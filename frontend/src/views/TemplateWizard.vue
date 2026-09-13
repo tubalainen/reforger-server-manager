@@ -6,6 +6,7 @@ import { formatBytes } from '../format'
 import { randomServerName } from '../serverName'
 import CollapsibleCard from '../components/CollapsibleCard.vue'
 import HelpTip from '../components/HelpTip.vue'
+import MenuButton from '../components/MenuButton.vue'
 
 // CodeMirror is ~130 KB gzipped and only needed once someone clicks "Edit JSON",
 // which most users never will — so it gets its own chunk instead of riding along
@@ -1057,12 +1058,11 @@ function applyAiOrder() {
     : 'That order matches the list you already have — nothing moved.'
 }
 
-// ---- Load a saved mod template into this list (#166) ------------------------
-// A mod template is a named mod list kept on the Mod Templates page. Loading one
-// only changes the list you are editing here — nothing is saved until you press
-// Save. The picker sits with the other ways of adding mods: choose a list, press
-// "Add mod template". "Preview / replace…" opens the same choice with the full
-// preview and the option to replace the list instead of adding to it.
+// ---- Load a saved mod list into this template's mods (#166) -----------------
+// A mod list is kept under Library › Mod lists. Loading one only changes the mods
+// you are editing here — nothing is saved until you press Save. "From a mod list…",
+// beside the search, opens the dialog: pick a list, see exactly what it would do,
+// and add it to the mods here or replace them with it.
 const modTemplateLoad = reactive({
   open: false,
   loading: false,
@@ -1073,8 +1073,6 @@ const modTemplateLoad = reactive({
   replace: false, // false = add to the list, true = replace it
 })
 
-// Fetched on mount so the picker is populated — the whole point is that you can
-// see the saved lists without hunting for them first.
 async function loadModTemplates() {
   modTemplateLoad.loading = true
   try {
@@ -1117,14 +1115,7 @@ function previewModTemplate(replace) {
   return applyModTemplate(spec.mods, modTemplateLoad.mods, { replace })
 }
 
-// The inline button always adds; only the modal offers "replace", so a replace
-// chosen there and cancelled cannot change what the button does.
-const modTemplateAddPreview = computed(() => previewModTemplate(false))
 const modTemplatePreview = computed(() => previewModTemplate(modTemplateLoad.replace))
-
-function addModTemplate() {
-  applyModTemplateResult(modTemplateAddPreview.value)
-}
 
 function applyModTemplateToSpec() {
   applyModTemplateResult(modTemplatePreview.value)
@@ -1441,7 +1432,6 @@ onMounted(async () => {
     }
   }
   refreshPreview()
-  loadModTemplates() // deliberately not awaited — fills the picker when it lands
 })
 
 onBeforeUnmount(() => {
@@ -1680,7 +1670,8 @@ onBeforeUnmount(() => {
             <input
               v-model="search.q"
               class="form-control"
-              placeholder="Search the Workshop, or paste mod ids / Workshop URLs (comma-separated)…"
+              placeholder="Search the Workshop, or paste mod ids or URLs…"
+              title="Search the Workshop by name, or paste one or more mod ids / Workshop URLs, comma-separated"
               @keyup.enter="submitModSearch"
             />
             <button
@@ -1698,6 +1689,12 @@ onBeforeUnmount(() => {
                       : 'Search'
               }}
             </button>
+            <!-- The other way to add mods: a whole saved list at once (#166). -->
+            <button
+              class="btn btn-outline-secondary text-nowrap"
+              title="Add every mod on a saved mod list — or replace these mods with one"
+              @click="openModTemplates"
+            >From a mod list…</button>
           </div>
           <div v-if="search.error" class="alert alert-warning py-2 small mb-2">{{ search.error }}</div>
           <div
@@ -1727,129 +1724,87 @@ onBeforeUnmount(() => {
           <div v-if="modAdd.error" class="alert alert-info py-2 small mb-2">{{ modAdd.error }}</div>
           <div v-if="modNotice" class="alert alert-secondary py-2 small mb-2">{{ modNotice }}</div>
 
-          <!-- Add every mod of a saved mod template (#166). This belongs here,
-               with the other ways of adding mods — the toolbar below is for
-               reordering a list you already have, and it was missed there. -->
-          <div class="mb-2">
-            <div class="input-group">
-              <span class="input-group-text">🧰 Mod list</span>
-              <select
-                class="form-select"
-                :value="modTemplateLoad.selectedId"
-                :disabled="!modTemplateLoad.list.length"
-                @change="selectModTemplate($event.target.value)"
-              >
-                <option value="">
-                  {{
-                    modTemplateLoad.list.length
-                      ? 'Choose a saved mod list…'
-                      : 'No mod lists saved yet'
-                  }}
-                </option>
-                <option v-for="mt in modTemplateLoad.list" :key="mt.id" :value="mt.id">
-                  {{ mt.name }} — {{ mt.mod_count }} mod(s)
-                </option>
-              </select>
-              <button
-                class="btn btn-primary"
-                :disabled="!modTemplateAddPreview"
-                title="Add every mod on the selected mod list to this template's mods"
-                @click="addModTemplate"
-              >Add mod list</button>
-              <button
-                class="btn btn-outline-secondary"
-                :disabled="!modTemplateLoad.selectedId"
-                title="See exactly what would change first — or replace this template's mods with the list, instead of adding to them"
-                @click="openModTemplates"
-              >Preview / replace…</button>
-            </div>
-            <small class="text-secondary">
-              <template v-if="modTemplateLoad.loading">
-                <span
-                  class="spinner-border spinner-border-sm me-1"
-                  style="width: .7rem; height: .7rem"
-                ></span>Loading…
-              </template>
-              <template v-else-if="!modTemplateLoad.list.length">
-                A mod list is a saved set of mods you can reuse in every server template —
-                build one under
-                <router-link :to="{ name: 'mod-templates' }">Library › Mod lists</router-link>.
-              </template>
-              <template v-else-if="modTemplateAddPreview">
-                Adds {{ modTemplateAddPreview.added.length }} mod(s) to the
-                {{ spec.mods.length }} already here<template
-                  v-if="modTemplateAddPreview.relocked.length"
-                >, and takes its version lock for
-                  {{ modTemplateAddPreview.relocked.length }} of them</template
-                >. Nothing is removed.
-              </template>
-              <template v-else>
-                Pick a saved mod list and add all of its mods to this template.
-              </template>
-            </small>
-            <div v-if="modTemplateLoad.error" class="alert alert-warning py-2 small mt-2 mb-0">
-              {{ modTemplateLoad.error }}
-            </div>
-          </div>
-
-          <!-- Enabled mods overview -->
+          <!-- Enabled mods: a heading and two menus, instead of seven buttons (#189) -->
           <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-3 mb-2">
             <h2 class="h6 mb-0">
-              Enabled mods ({{ spec.mods.length }})
+              Enabled mods · {{ spec.mods.length }}
+              <HelpTip label="About the order of the mods">
+                This is the order the mods are written to <code>config.json</code>. Drag a
+                row to change it, or use the ↑ ↓ buttons on the row. <em>Sort</em> reorders
+                them all at once.
+              </HelpTip>
               <small v-if="hydratingVersions" class="text-secondary fw-normal ms-1">
                 <span class="spinner-border spinner-border-sm me-1" style="width: .75rem; height: .75rem"></span>
                 fetching version history…
               </small>
             </h2>
-            <!-- Wraps as a row of separate buttons: a button group broke its labels
-                 mid-word once the column got narrow (#189). -->
-            <div class="d-flex flex-wrap gap-1">
-              <button
-                class="btn btn-sm btn-outline-secondary text-nowrap"
-                :disabled="spec.mods.length < 2"
-                title="Order the mods with an AI — copy the prompt into ChatGPT, Gemini or Claude, or ask a service you have configured"
-                @click="openAiOrder"
-              >✨ AI order…</button>
-              <button
-                class="btn btn-sm btn-outline-secondary text-nowrap"
-                :disabled="spec.mods.length < 2"
-                title="Reorder so every mod is listed after the mods it requires, leaving everything else where it is"
-                @click="sortByDependencies"
-              >Dependencies first</button>
-              <button
-                class="btn btn-sm btn-outline-secondary text-nowrap"
-                :disabled="spec.mods.length < 2"
-                title="Sort the mods alphabetically — this is the order saved to config.json"
-                @click="sortByName"
-              >Sort A–Z</button>
-              <button
-                class="btn btn-sm btn-outline-secondary text-nowrap"
-                :disabled="spec.mods.length < 2"
-                title="Sort the mods in the order they were added"
-                @click="sortByAdded"
-              >Sort as added</button>
-              <button
-                class="btn btn-sm btn-outline-secondary text-nowrap"
-                :disabled="!anyLocked"
-                title="Clear every version lock so all mods follow the latest Workshop release"
-                @click="unlockAll"
-              >Unlock all</button>
-              <button
-                class="btn btn-sm btn-outline-secondary text-nowrap"
-                :disabled="!spec.mods.length"
-                title="Save the enabled mod list to a JSON file"
-                @click="exportMods"
-              >Export JSON</button>
-              <label class="btn btn-sm btn-outline-secondary text-nowrap mb-0" title="Load an enabled mod list from a JSON file">
-                Import JSON
-                <input
-                  ref="modsFileInput"
-                  type="file"
-                  accept=".json,application/json"
-                  class="d-none"
-                  @change="importMods"
-                />
-              </label>
+            <div class="d-flex gap-1">
+              <MenuButton label="Sort">
+                <li>
+                  <button
+                    class="dropdown-item"
+                    :disabled="spec.mods.length < 2"
+                    title="Reorder so every mod is listed after the mods it requires, leaving everything else where it is"
+                    @click="sortByDependencies"
+                  >Dependencies first</button>
+                </li>
+                <li>
+                  <button
+                    class="dropdown-item"
+                    :disabled="spec.mods.length < 2"
+                    title="Sort the mods alphabetically — this is the order saved to config.json"
+                    @click="sortByName"
+                  >A–Z</button>
+                </li>
+                <li>
+                  <button
+                    class="dropdown-item"
+                    :disabled="spec.mods.length < 2"
+                    title="Sort the mods in the order they were added"
+                    @click="sortByAdded"
+                  >As added</button>
+                </li>
+                <li><hr class="dropdown-divider" /></li>
+                <li>
+                  <button
+                    class="dropdown-item"
+                    :disabled="spec.mods.length < 2"
+                    title="Order the mods with an AI — copy the prompt into ChatGPT, Gemini or Claude, or ask a service you have configured"
+                    @click="openAiOrder"
+                  >✨ Order with an AI…</button>
+                </li>
+              </MenuButton>
+              <MenuButton label="⋯" aria-label="More mod actions">
+                <li>
+                  <button
+                    class="dropdown-item"
+                    :disabled="!anyLocked"
+                    title="Clear every version lock so all mods follow the latest Workshop release"
+                    @click="unlockAll"
+                  >Unlock all versions</button>
+                </li>
+                <li><hr class="dropdown-divider" /></li>
+                <li>
+                  <button
+                    class="dropdown-item"
+                    :disabled="!spec.mods.length"
+                    title="Save the enabled mod list to a JSON file"
+                    @click="exportMods"
+                  >Export JSON</button>
+                </li>
+                <li>
+                  <label class="dropdown-item mb-0" title="Load an enabled mod list from a JSON file">
+                    Import JSON…
+                    <input
+                      ref="modsFileInput"
+                      type="file"
+                      accept=".json,application/json"
+                      class="d-none"
+                      @change="importMods"
+                    />
+                  </label>
+                </li>
+              </MenuButton>
             </div>
           </div>
 
@@ -1859,19 +1814,20 @@ onBeforeUnmount(() => {
 
           <!-- One list, in load order (#164): drag a row anywhere, dependencies
                included. Row 1 is the first entry of config.json's mods[]. -->
-          <div v-if="spec.mods.length" class="text-secondary small mb-1">
-            This is the order the mods are written to <code>config.json</code>. Drag a row
-            (or use ↑ ↓) to change it.
-            <span v-if="depOrderWarnings.length" class="text-warning-emphasis">
-              {{ depOrderWarnings.length }} mod(s) are listed before something they require —
-              "Dependencies first" fixes that.
+          <div
+            v-if="depOrderWarnings.length"
+            class="alert alert-warning d-flex flex-wrap align-items-center gap-2 py-1 px-2 small mb-2"
+          >
+            <span class="me-auto">
+              {{ depOrderWarnings.length }} mod(s) are listed before something they require.
             </span>
+            <button class="btn btn-sm btn-warning py-0" @click="sortByDependencies">Fix order</button>
           </div>
           <ul v-if="spec.mods.length" class="list-group mb-2">
             <li
               v-for="(m, i) in spec.mods"
               :key="m.modId"
-              class="list-group-item d-flex justify-content-between align-items-center py-2"
+              class="list-group-item rsm-mod-row d-flex justify-content-between align-items-center py-2"
               :class="{
                 'bg-body-tertiary': !m.explicit,
                 'opacity-50': drag.from === i,
@@ -1912,32 +1868,37 @@ onBeforeUnmount(() => {
                 <option :value="null">latest</option>
                 <option v-for="v in lockOptions(m)" :key="v" :value="v">🔒 v{{ v }}</option>
               </select>
-              <div class="btn-group btn-group-sm flex-shrink-0">
+              <!-- Move buttons show on hover or keyboard focus (always on touch
+                   screens); dragging is the everyday way to reorder (#189). -->
+              <div class="rsm-mod-move btn-group btn-group-sm flex-shrink-0 me-1">
                 <button
                   class="btn btn-outline-secondary"
                   :disabled="i === 0"
+                  :aria-label="`Move ${m.name || m.modId} up`"
                   title="Move up"
                   @click="moveOne(m.modId, -1)"
                 >↑</button>
                 <button
                   class="btn btn-outline-secondary"
                   :disabled="i === spec.mods.length - 1"
+                  :aria-label="`Move ${m.name || m.modId} down`"
                   title="Move down"
                   @click="moveOne(m.modId, 1)"
                 >↓</button>
-                <button
-                  v-if="m.explicit"
-                  class="btn btn-outline-danger"
-                  :title="m.from_scenario ? 'Change the scenario to remove this' : 'Remove'"
-                  @click="removeMod(m.modId)"
-                >✕</button>
-                <button
-                  v-else
-                  class="btn btn-outline-secondary"
-                  disabled
-                  title="Added automatically because another mod requires it — remove that mod to drop this one"
-                >✕</button>
               </div>
+              <button
+                v-if="m.explicit"
+                class="btn btn-sm btn-link text-danger text-decoration-none rsm-mod-remove flex-shrink-0"
+                :aria-label="`Remove ${m.name || m.modId}`"
+                :title="m.from_scenario ? 'Change the scenario to remove this' : 'Remove'"
+                @click="removeMod(m.modId)"
+              >✕</button>
+              <!-- Added because another mod requires it: nothing to remove here. -->
+              <span
+                v-else
+                class="rsm-mod-remove flex-shrink-0"
+                title="Added automatically because another mod requires it — remove that mod to drop this one"
+              ></span>
             </li>
           </ul>
         </div>
@@ -3137,6 +3098,37 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* A mod row keeps to what you read: its move buttons appear when you point at the
+   row or tab into it. A screen without hover (a phone, a tablet) always shows them. */
+@media (hover: hover) {
+  .rsm-mod-row .rsm-mod-move {
+    opacity: 0;
+    transition: opacity 0.12s;
+  }
+
+  .rsm-mod-row:hover .rsm-mod-move,
+  .rsm-mod-row:focus-within .rsm-mod-move {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rsm-mod-row .rsm-mod-move {
+    transition: none;
+  }
+}
+
+/* Same width with or without a remove button, and one width for every version
+   picker, so the rows line up. */
+.rsm-mod-remove {
+  width: 2rem;
+  text-align: center;
+}
+
+.rsm-mod-row .form-select {
+  min-width: 9rem;
+}
+
 /* The step row: underlined like the app's other tabs, with each step's number in a
    small disc (#189). */
 .rsm-steps {

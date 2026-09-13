@@ -33,7 +33,8 @@ async function submit() {
   <div class="d-flex align-items-center justify-content-center" style="min-height: 100vh">
     <div class="card shadow" style="width: 22rem">
       <div class="card-body p-4">
-        <h1 class="h4 mb-1 text-center">⬢ Reforger Server Manager</h1>
+        <img src="/favicon.svg" width="64" height="64" alt="" class="d-block mx-auto mb-3" />
+        <h1 class="h4 mb-1 text-center">Reforger Server Manager</h1>
         <p class="text-secondary text-center small mb-4">Sign in to manage your servers</p>
         <form @submit.prevent="submit">
           <div class="mb-3">
