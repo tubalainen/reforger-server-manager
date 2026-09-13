@@ -524,8 +524,17 @@ const faq = [
             logs stream into the instance page, alongside players, FPS, CPU (a real
             0–100% of the whole machine) and memory. The Connect line shows the address
             players use — auto-detected from the server log unless
-            <code>PUBLIC_ADDRESS</code> is set. The Servers page shows every server's
-            online state and player count at a glance.
+            <code>PUBLIC_ADDRESS</code> is set.
+          </li>
+          <li class="mb-2">
+            <strong>The Servers page:</strong> the whole host at a glance — how many
+            servers are online, players, and CPU and memory across all of them, each with
+            a line for the last hour. Below that, one <em>Needs attention</em> list gathers
+            what is waiting for you (a template edited since a server started, server
+            files not downloaded, a new server release), each with the button that fixes
+            it. Every server has a row with its players, FPS, CPU, memory, uptime and next
+            restart, and Start, Stop, Restart and Delete right there. <em>Restart all
+            running</em> asks before it disconnects everyone.
           </li>
           <li class="mb-2">
             <strong>Who's online:</strong> the instance page lists the connected players

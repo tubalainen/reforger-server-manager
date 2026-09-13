@@ -22,7 +22,7 @@ import serverfiles_api
 import system_api
 import templates_api
 import workshop_api
-from services import auto_update, docker_service, instance_service
+from services import auto_update, docker_service, fleet_history, instance_service
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("manager")
@@ -104,6 +104,9 @@ async def _crash_monitor():
                 await auto_update.tick()
                 if ticks % 240 == 0:  # ~hourly at a 15s cadence
                     await asyncio.to_thread(instance_service.prune_old_logs)
+                # One point a minute for the Servers overview's sparklines (#189).
+                if ticks % fleet_history.SAMPLE_EVERY_TICKS == 0:
+                    await asyncio.to_thread(instance_service.record_summary_sample)
         except Exception as exc:  # never let the monitor die silently
             logger.warning("Crash monitor pass failed: %s", exc)
         ticks += 1

@@ -32,6 +32,13 @@ Key template capabilities include:
 
 Each instance gets its own ports, configuration, profile, Workshop content, and lifecycle controls while sharing downloaded server binaries where appropriate.
 
+The **Servers** page is the overview of the whole host:
+
+- Servers online, players, and CPU and memory across all servers, with a sparkline of the last hour for each.
+- One *Needs attention* list — templates edited since a server started, server files not downloaded, new server releases — each with the button that fixes it.
+- A row per server with status, players against the limit, FPS, CPU, memory, uptime and next scheduled restart, plus Start, Stop, Restart and Delete.
+- Restart every running server at once, after a confirmation.
+
 ![Instance detail](images/05-instance-detail.png)
 
 From the instance view you can:
