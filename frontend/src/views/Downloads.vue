@@ -211,9 +211,6 @@ async function pullImage() {
   }
 }
 
-// Instances.vue embeds this view and starts a download from its update prompt.
-defineExpose({ startDownload })
-
 onMounted(refresh)
 onUnmounted(() => {
   for (const ws of Object.values(sockets)) ws.close()

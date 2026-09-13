@@ -166,7 +166,7 @@ onMounted(loadSummary)
 
 <template>
   <div class="container">
-    <h1 class="h3 mb-3">Backup &amp; restore</h1>
+    <h1 class="h3 mb-3">Export &amp; import</h1>
 
     <p class="text-secondary small">
       A backup holds your <strong>server templates</strong> and

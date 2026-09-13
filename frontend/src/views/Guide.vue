@@ -99,7 +99,7 @@ const faq = [
   },
   {
     q: 'Which exact firewall command do I need?',
-    a: `Open the "Ports & firewall" panel on Server Instances — it prints the ready-to-run
+    a: `Open System › Ports & firewall — it prints the ready-to-run
        PowerShell (Windows) or ufw (Linux) command for the port ranges this install
        actually uses, so you can copy it straight into a terminal. Your router needs the
        same UDP ranges forwarded to this machine's LAN IP.`,
@@ -271,10 +271,10 @@ const faq = [
   },
   {
     q: 'How do I update the server files when the game updates?',
-    a: `The manager checks Steam once a day by itself and puts a prompt at the top of the
-       Server Instances page when a new release is out; one click there downloads it. You
-       can still do it by hand in the Server files section at the bottom of that page, and
-       under Automatic updates you can let the manager download new server files on its own
+    a: `The manager checks Steam once a day by itself and, when a new release is out, puts a
+       prompt at the top of the Servers page and a count on System in the menu; one click
+       on the prompt downloads it. You can still do it by hand under System › Server files,
+       and under Automatic updates there you can let the manager download new server files on its own
        — and, if you want, restart that branch's servers onto the new build once the
        download finishes. Until a server restarts it keeps running the build it started
        with.`,
@@ -340,7 +340,7 @@ const faq = [
       <a class="btn btn-sm btn-outline-secondary" href="#templates">Server Templates</a>
       <a class="btn btn-sm btn-outline-secondary" href="#mod-templates">Mod Templates</a>
       <a class="btn btn-sm btn-outline-secondary" href="#instances">Server Instances</a>
-      <a class="btn btn-sm btn-outline-secondary" href="#backup">Backup &amp; restore</a>
+      <a class="btn btn-sm btn-outline-secondary" href="#backup">Export &amp; import</a>
       <a class="btn btn-sm btn-outline-secondary" href="#faq">FAQ</a>
       <a class="btn btn-sm btn-outline-secondary" href="#links">External references</a>
     </div>
@@ -356,7 +356,7 @@ const faq = [
         <ol class="mb-2">
           <li class="mb-2">
             <strong>Pull the server runtime image.</strong> Go to
-            <router-link to="/instances#server-files">Server Instances → Server files</router-link>
+            <router-link :to="{ name: 'server-files' }">System › Server files</router-link>
             and pull the Docker image instances run from. This happens once.
           </li>
           <li class="mb-2">
@@ -365,15 +365,15 @@ const faq = [
             instance of that branch.
           </li>
           <li class="mb-2">
-            <strong>Create a Server Template.</strong> On
-            <router-link to="/">Server Templates</router-link> click "New template": pick a
+            <strong>Create a Server Template.</strong> Under
+            <router-link :to="{ name: 'templates' }">Library › Server templates</router-link> click "New template": pick a
             scenario from the Workshop (its mod and all dependencies are added
             automatically), add extra mods if you like, tune the settings and save. The
             live preview shows the exact <code>config.json</code> the server will run.
           </li>
           <li class="mb-2">
             <strong>Create and start a Server Instance.</strong> On
-            <router-link to="/instances">Server Instances</router-link> click "New
+            <router-link :to="{ name: 'instances' }">Servers</router-link> click "New
             instance", pick your template and branch, and start it. Ports are leased
             automatically; live logs and status stream to the instance page.
           </li>
@@ -382,8 +382,8 @@ const faq = [
             instance's UDP game port (default range 2001–2020) and A2S port (17777–17796)
             through your router and host firewall, and set <code>PUBLIC_ADDRESS</code> in
             <code>.env</code> to your public IP. The
-            <router-link to="/instances">Ports &amp; firewall</router-link> panel on Server
-            Instances prints the exact firewall command for this host. Keep RCON
+            <router-link :to="{ name: 'network' }">System › Ports &amp; firewall</router-link>
+            page prints the exact firewall command for this host. Keep RCON
             (19999–20018) and the web GUI (7780) private.
           </li>
         </ol>
@@ -480,7 +480,7 @@ const faq = [
         <ul class="mb-0">
           <li class="mb-2">
             <strong>Build it:</strong> on
-            <router-link to="/mod-templates">Mod Templates</router-link>, create one and add
+            <router-link :to="{ name: 'mod-templates' }">Library › Mod templates</router-link>, create one and add
             mods the same way as in the wizard — search the Workshop, or paste ids/URLs,
             several at once, comma-separated. Lock a version per mod, or leave it on
             <em>latest</em>. Drag the rows (or use ↑ ↓) to set the order.
@@ -524,8 +524,8 @@ const faq = [
             logs stream into the instance page, alongside players, FPS, CPU (a real
             0–100% of the whole machine) and memory. The Connect line shows the address
             players use — auto-detected from the server log unless
-            <code>PUBLIC_ADDRESS</code> is set. A compact status bar in the top banner
-            shows every server's online state and player count from any page.
+            <code>PUBLIC_ADDRESS</code> is set. The Servers page shows every server's
+            online state and player count at a glance.
           </li>
           <li class="mb-2">
             <strong>Who's online:</strong> the instance page lists the connected players
@@ -557,14 +557,15 @@ const faq = [
             it does.
           </li>
           <li class="mb-2">
-            <strong>Server files:</strong> the shared per-branch install lives at the
-            bottom of the Server Instances page — download, check for updates against
+            <strong>Server files:</strong> the shared per-branch install lives under
+            System › Server files — download, check for updates against
             Steam, or delete it there.
           </li>
           <li>
             <strong>Automatic updates:</strong> once a day the manager asks Steam whether
             a newer server release exists for the branches you have installed, and says so
-            at the top of the Server Instances page. Nothing is downloaded unless you tick
+            at the top of the Servers page and with a count on System in the menu. Nothing
+            is downloaded unless you tick
             <em>Download new server files automatically</em>, and no server is restarted
             unless you also tick <em>Restart my servers onto the new build</em> — which
             disconnects whoever is playing, so it is off by default.
@@ -576,9 +577,9 @@ const faq = [
     <!-- BACKUP -->
     <div id="backup" class="card mb-4">
       <div class="card-body">
-        <h2 class="h5">Backup &amp; restore</h2>
+        <h2 class="h5">Export &amp; import</h2>
         <p class="text-secondary small mb-3">
-          <router-link to="/backup">Backup</router-link> saves everything you built — every
+          <router-link :to="{ name: 'backup' }">System › Export &amp; import</router-link> saves everything you built — every
           server template and every mod template — into one file, and puts it back later.
           Server instances are not included: a running server is a container, a port lease
           and a folder of saved games belonging to this machine.
@@ -609,7 +610,7 @@ const faq = [
           <li>
             <strong>What an import does to your servers:</strong> overwriting keeps the
             template in place, so instances built from it stay pointed at it and pick up
-            the restored settings when they next start — the Instances page flags a running
+            the restored settings when they next start — the Servers page flags a running
             server whose template has changed. An import is all or nothing, is written to
             each template's change log, and never touches a template someone else has open
             in the wizard.

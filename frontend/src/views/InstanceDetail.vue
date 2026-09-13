@@ -371,7 +371,7 @@ onUnmounted(() => {
 
 <template>
   <div class="container">
-    <router-link to="/instances" class="btn btn-sm btn-outline-secondary mb-3">← Instances</router-link>
+    <router-link :to="{ name: 'instances' }" class="btn btn-sm btn-outline-secondary mb-3">← Instances</router-link>
 
     <div v-if="error" class="alert alert-warning py-2">{{ error }}</div>
 
@@ -407,7 +407,7 @@ onUnmounted(() => {
 
       <div v-if="!inst.server_files_ready" class="alert alert-warning py-2">
         The {{ inst.branch }} server files are not downloaded yet —
-        <router-link to="/instances#server-files">download them under Server files on the Instances tab</router-link> before starting.
+        <router-link :to="{ name: 'server-files' }">download them under System › Server files</router-link> before starting.
       </div>
 
       <!-- The running server keeps the config it started with; a template edited
