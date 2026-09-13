@@ -41,7 +41,7 @@ The **Servers** page is the overview of the whole host:
 
 ![Instance detail](images/05-instance-detail.png)
 
-A server's own page keeps every server listed down the left and splits into five tabs — Overview, Console, Players, Saves and Settings. From it you can:
+A server's own page keeps every server listed down the left and splits into five tabs — Overview, Console, Players, Saves and Settings. Settings is one form with one Save: changed fields are marked, fields that need the server stopped are locked with the reason, and leaving with unsaved changes asks first. From it you can:
 
 - Start, stop, restart, and delete a server.
 - Follow live logs and copy useful diagnostic output.
