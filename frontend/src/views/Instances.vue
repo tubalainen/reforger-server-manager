@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
+import DeleteServerDialog from '../components/DeleteServerDialog.vue'
 import Sparkline from '../components/Sparkline.vue'
 import { formatBytes, formatUptime } from '../format'
 import { attentionItems, branchLabel } from '../overview'
@@ -210,46 +211,11 @@ async function submitCreate() {
   }
 }
 
-const fmtBytes = (n) => formatBytes(n, { empty: 'empty' })
-
 // --- Delete ---------------------------------------------------------------------
-// The delete dialog. Its container comes off either way; the stored data on disk
-// (mods, saves, logs, configs) is left behind unless the user opts to wipe it too.
-const del = reactive({ inst: null, data: null, purge: false, busy: false, error: '' })
-
-// What is on disk, only the targets that actually hold something.
-const delItems = computed(() => (del.data?.items || []).filter((i) => i.files))
-const delTotalBytes = computed(() =>
-  (del.data?.items || []).reduce((sum, i) => sum + (i.size_bytes || 0), 0),
-)
-
-function remove(inst) {
-  del.inst = inst
-  del.data = null
-  del.purge = false
-  del.busy = false
-  del.error = ''
-  // Show what wiping would take with it; the delete works fine without this.
-  api(`/api/instances/${inst.id}/data`)
-    .then((d) => { if (del.inst?.id === inst.id) del.data = d })
-    .catch(() => {})
-}
-
-async function confirmDelete() {
-  const inst = del.inst
-  if (!inst) return
-  del.busy = true
-  del.error = ''
-  try {
-    const q = del.purge ? '?purge_data=true' : ''
-    await api(`/api/instances/${inst.id}${q}`, { method: 'DELETE' })
-    del.inst = null
-    await load()
-  } catch (e) {
-    del.error = e.message
-  } finally {
-    del.busy = false
-  }
+const deleting = ref(null)
+async function onDeleted() {
+  deleting.value = null
+  await load()
 }
 
 const hasTemplates = computed(() => templates.value.length > 0)
@@ -316,11 +282,11 @@ onUnmounted(() => clearInterval(poll))
 
     <template v-else-if="summary">
       <!-- Host totals, each with the last hour as a sparkline -->
-      <div class="rsm-totals mb-3">
-        <div v-for="t in totals" :key="t.key" class="rsm-total" :title="t.title">
+      <div class="rsm-tiles mb-3">
+        <div v-for="t in totals" :key="t.key" class="rsm-tile" :title="t.title">
           <div class="small text-secondary">{{ t.label }}</div>
-          <div class="rsm-total-value">
-            {{ t.value }}<span class="rsm-total-unit">{{ t.unit }}</span>
+          <div class="rsm-tile-value">
+            {{ t.value }}<span class="rsm-tile-unit">{{ t.unit }}</span>
           </div>
           <Sparkline class="text-primary" :values="t.values" :label="`${t.label}, last hour`" />
         </div>
@@ -337,7 +303,7 @@ onUnmounted(() => clearInterval(poll))
             :key="item.key"
             class="list-group-item d-flex align-items-start gap-2 py-2"
           >
-            <span class="rsm-dot rsm-dot-text rounded-circle bg-warning" aria-hidden="true"></span>
+            <span class="rsm-dot rsm-dot-text bg-warning" aria-hidden="true"></span>
             <div class="d-flex flex-wrap align-items-center gap-2 flex-grow-1">
               <span class="me-auto">
                 <strong>{{ item.subject }}</strong>
@@ -380,7 +346,7 @@ onUnmounted(() => clearInterval(poll))
               </td>
               <td data-label="Status">
                 <span class="d-inline-flex align-items-center gap-2 text-nowrap" :title="rowStatus(s).long">
-                  <span class="rsm-dot rounded-circle" :class="dotClass(s)" aria-hidden="true"></span>
+                  <span class="rsm-dot" :class="dotClass(s)" aria-hidden="true"></span>
                   {{ rowStatus(s).label }}
                 </span>
               </td>
@@ -422,7 +388,7 @@ onUnmounted(() => clearInterval(poll))
                 <button
                   class="btn btn-sm btn-outline-danger ms-1"
                   :aria-label="`Delete ${s.name}`"
-                  @click="remove(s)"
+                  @click="deleting = s"
                 >Delete</button>
               </td>
             </tr>
@@ -535,111 +501,16 @@ onUnmounted(() => clearInterval(poll))
       </div>
     </div>
 
-    <!-- Delete modal: offer to also wipe the on-disk data, not just drop the
-         container and orphan the folder (#131 follow-up). -->
-    <div v-if="del.inst" class="modal d-block" tabindex="-1" style="background: rgba(0,0,0,.5)">
-      <div class="modal-dialog">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h5 class="modal-title">Delete "{{ del.inst.name }}"?</h5>
-            <button type="button" class="btn-close" @click="del.inst = null"></button>
-          </div>
-          <div class="modal-body">
-            <div v-if="del.error" class="alert alert-danger py-2 small">{{ del.error }}</div>
-
-            <p class="mb-3">
-              This instance's container is removed and it disappears from the list.
-            </p>
-
-            <div class="form-check mb-2">
-              <input id="purgeData" v-model="del.purge" class="form-check-input" type="checkbox" />
-              <label for="purgeData" class="form-check-label">
-                Also delete all stored data from disk
-                <small class="text-secondary d-block">
-                  Baked mods, saved game, logs, configs — and this instance's saved game
-                  backups. Otherwise they are left on the host and can no longer be
-                  reached from the manager.
-                </small>
-              </label>
-            </div>
-
-            <!-- What is actually on disk, so the choice is informed (#79 data). -->
-            <div v-if="del.data === null" class="small text-secondary">Checking disk usage…</div>
-            <template v-else>
-              <ul v-if="delItems.length" class="small mb-2">
-                <li v-for="item in delItems" :key="item.target">
-                  <span class="text-capitalize">{{ item.target }}</span>
-                  — {{ fmtBytes(item.size_bytes) }} ({{ item.files }} file(s))
-                </li>
-              </ul>
-              <p v-else class="small text-secondary mb-2">Nothing is stored on disk yet.</p>
-
-              <div v-if="del.purge && delTotalBytes" class="alert alert-danger py-2 small mb-0">
-                This permanently erases {{ fmtBytes(delTotalBytes) }} of data, including the
-                saved game and every backup of it — the persistent world is gone for good
-                and cannot be recovered. Download the backups you want to keep first.
-              </div>
-            </template>
-          </div>
-          <div class="modal-footer">
-            <button class="btn btn-outline-secondary" @click="del.inst = null">Cancel</button>
-            <button class="btn btn-danger" :disabled="del.busy" @click="confirmDelete">
-              {{ del.busy ? 'Deleting…' : (del.purge ? 'Delete instance & data' : 'Delete instance') }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
+    <DeleteServerDialog
+      v-if="deleting"
+      :server="deleting"
+      @close="deleting = null"
+      @deleted="onDeleted"
+    />
   </div>
 </template>
 
 <style scoped>
-.rsm-dot {
-  display: inline-block;
-  width: 0.55rem;
-  height: 0.55rem;
-  flex: none;
-}
-
-/* Beside a line of text, sit on that line rather than the top of the box. */
-.rsm-dot-text {
-  margin-top: 0.5rem;
-}
-
-/* Four figures read as one strip: hairline dividers from the gap, not four cards. */
-.rsm-totals {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 1px;
-  background: var(--bs-border-color);
-  border: 1px solid var(--bs-border-color);
-  border-radius: var(--bs-border-radius);
-  overflow: hidden;
-}
-
-.rsm-total {
-  background: var(--bs-body-bg);
-  padding: 0.7rem 0.9rem 0.5rem;
-}
-
-.rsm-total-value {
-  font-size: 1.45rem;
-  font-weight: 600;
-  line-height: 1.2;
-  font-variant-numeric: tabular-nums;
-}
-
-.rsm-total-unit {
-  font-size: 0.85rem;
-  font-weight: 400;
-  color: var(--bs-secondary-color);
-}
-
-.rsm-num {
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
 .rsm-players-bar {
   height: 0.25rem;
   width: 5.5rem;
@@ -654,12 +525,6 @@ onUnmounted(() => clearInterval(poll))
 
 .rsm-fleet tbody tr:last-child td {
   border-bottom: 0;
-}
-
-@media (max-width: 991.98px) {
-  .rsm-totals {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 /* On a phone the table becomes one stacked block per server: name on top, the

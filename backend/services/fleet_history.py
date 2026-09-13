@@ -1,4 +1,4 @@
-"""Recent host-wide totals behind the Servers overview's sparklines (#189).
+"""Recent figures behind the sparklines on the Servers overview and server pages (#189).
 
 The background monitor records one point a minute from the same summary the page
 polls, and keeps the last hour. It lives in memory only: a manager restart starts
@@ -22,13 +22,29 @@ _lock = threading.Lock()
 
 
 def record(summary: dict, now: float | None = None) -> None:
-    """Append one point built from an instances_summary() result."""
+    """Append one point built from an instances_summary() result.
+
+    Besides the host totals, a point keeps each running server's own figures under
+    its id (as a string, the way JSON will carry it), so a server's page can draw
+    its own lines from the same history.
+    """
+    per_server = {
+        str(s["id"]): {
+            "players": s.get("players"),
+            "server_fps": s.get("server_fps"),
+            "cpu_percent": s.get("cpu_percent"),
+            "mem_bytes": s.get("mem_bytes"),
+        }
+        for s in summary.get("servers", [])
+        if s.get("status") == "running"
+    }
     point = {
         "t": int(now if now is not None else time.time()),
         "running": summary.get("running", 0),
         "players": summary.get("players_total", 0),
         "cpu_percent": summary.get("cpu_percent"),
         "mem_bytes": summary.get("mem_bytes"),
+        "servers": per_server,
     }
     with _lock:
         _points.append(point)

@@ -38,7 +38,7 @@ onMounted(async () => {
   <div class="container">
     <nav
       ref="navEl"
-      class="rsm-subnav nav nav-underline flex-nowrap overflow-x-auto mb-4 border-bottom"
+      class="rsm-tabs nav nav-underline mb-4"
       :aria-label="section"
     >
       <router-link
@@ -61,26 +61,3 @@ onMounted(async () => {
   </div>
   <router-view />
 </template>
-
-<style scoped>
-/* The underline sits on the row's own bottom border rather than floating above it. */
-.rsm-subnav .nav-link {
-  margin-bottom: -1px;
-}
-
-/* Only the page you are on is emphasised; the others are quiet until pointed at. */
-.rsm-subnav .nav-link:not(.active) {
-  color: var(--bs-secondary-color);
-}
-
-.rsm-subnav .nav-link:not(.active):hover,
-.rsm-subnav .nav-link:not(.active):focus-visible {
-  color: var(--bs-emphasis-color);
-}
-
-/* It still scrolls sideways on a narrow screen, just without a scrollbar drawn
-   through the underline. */
-.rsm-subnav {
-  scrollbar-width: none;
-}
-</style>

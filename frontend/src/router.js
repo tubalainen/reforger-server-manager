@@ -29,7 +29,8 @@ const router = createRouter({
   routes: [
     { path: '/login', name: 'login', component: Login, meta: { public: true } },
     { path: '/servers', name: 'instances', component: Instances },
-    { path: '/servers/:id', name: 'instance-detail', component: InstanceDetail, props: true },
+    // Overview is the bare /servers/:id; the other tabs add a segment (#189).
+    { path: '/servers/:id/:tab?', name: 'instance-detail', component: InstanceDetail, props: true },
     {
       path: '/library',
       component: SectionLayout,
