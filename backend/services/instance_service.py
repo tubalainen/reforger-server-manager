@@ -25,7 +25,7 @@ from sqlmodel import Session, select
 
 import config
 from models import Instance, Template, get_engine
-from services import docker_service, ports, template_service
+from services import docker_service, fleet_history, ports, template_service
 
 # Pure log parsing lives in server_log (#88). Re-exported so callers and tests keep
 # using instance_service.parse_* unchanged.
@@ -1508,57 +1508,108 @@ def prune_old_logs() -> int:
     return removed
 
 
+def _max_players(config_json: str) -> int | None:
+    """The player limit a template's rendered config sets, or None if unreadable."""
+    try:
+        value = (json.loads(config_json or "{}").get("game") or {}).get("maxPlayers")
+    except (ValueError, AttributeError):
+        return None
+    return value if isinstance(value, int) else None
+
+
 def instances_summary() -> dict:
-    """Aggregate + per-server snapshot for the summary status bar (issue #12)."""
+    """Aggregate + per-server snapshot for the Servers overview (#12, #189).
+
+    Everything the overview's table needs comes from here, so the page polls this
+    one endpoint rather than /stats once per server. It still costs one ping and
+    one container listing however many servers there are (#87): the same listed
+    container serves status, uptime, the log read and the CPU sampler.
+    """
     public = config.settings.public_address
     docker_up = docker_service.ping()
-    # One listing for every server on the bar; the same containers then serve both
-    # the status and the log read, instead of being looked up twice each (#87).
     containers = docker_service.instance_containers() if docker_up else {}
     with Session(get_engine()) as session:
         instances = _all_instances(session)
+        templates = {t.id: t for t in session.exec(select(Template)).all()}
 
+    files_ready: dict[str, bool] = {}  # one filesystem check per branch, not per server
     servers = []
     running = 0
     players_total = 0
+    cpu_total = None
+    mem_total = None
     for inst in instances:
+        template = templates.get(inst.template_id)
+        if inst.branch not in files_ready:
+            files_ready[inst.branch] = server_files_ready(inst.branch)
         status = container_status(inst.id, containers) if docker_up else "unknown"
-        players = None
-        state = None
-        address = public  # env-configured PUBLIC_ADDRESS wins
-        if status == "running":
-            running += 1
-            container = containers.get(inst.id)
-            if container:
-                try:
-                    log_text = current_run_log(container)
-                    state = server_state(container, log_text)
-                    parsed = parse_server_status(log_text)
-                    if parsed and parsed["players"] is not None:
-                        players = parsed["players"]
-                        players_total += players
-                    if not address:  # fall back to the registered public IP (#46)
-                        address = parse_public_address(log_text)
-                except DockerException:
-                    pass
-        servers.append({
+        entry = {
             "id": inst.id,
             "name": inst.name,
             "branch": inst.branch,
             "status": status,
-            "server_state": state,
-            "players": players,
-            "connect": f"{address}:{inst.game_port}" if address else None,
-        })
+            "server_state": None,
+            "players": None,
+            "connect": None,
+            "template_id": inst.template_id,
+            "template_name": template.name if template else None,
+            "scenario_name": template.scenario_name if template else "",
+            "max_players": _max_players(template.config_json) if template else None,
+            "template_changed": False,
+            "server_files_ready": files_ready[inst.branch],
+            "next_restart": next_restart_label(inst),
+            "uptime_seconds": None,
+            "server_fps": None,
+            "cpu_percent": None,
+            "mem_bytes": None,
+        }
+        address = public  # env-configured PUBLIC_ADDRESS wins
+        container = containers.get(inst.id) if status == "running" else None
+        if status == "running":
+            running += 1
+        if container:
+            entry["uptime_seconds"] = _container_uptime_seconds(container)
+            entry["template_changed"] = _template_changed_since_start(
+                container, template.updated_at if template else None
+            )
+            try:
+                log_text = current_run_log(container)
+                entry["server_state"] = server_state(container, log_text)
+                parsed = parse_server_status(log_text)
+                if parsed:
+                    entry["server_fps"] = parsed["fps"]
+                    if parsed["players"] is not None:
+                        entry["players"] = parsed["players"]
+                        players_total += parsed["players"]
+                if not address:  # fall back to the registered public IP (#46)
+                    address = parse_public_address(log_text)
+            except DockerException:
+                pass
+            sample = cpu_mem_for(inst.id, container)
+            if sample:
+                entry["cpu_percent"] = sample.get("cpu_percent")
+                entry["mem_bytes"] = sample.get("mem_bytes")
+                cpu_total = (cpu_total or 0) + (entry["cpu_percent"] or 0)
+                mem_total = (mem_total or 0) + (entry["mem_bytes"] or 0)
+        entry["connect"] = f"{address}:{inst.game_port}" if address else None
+        servers.append(entry)
 
     return {
         "total": len(instances),
         "running": running,
         "players_total": players_total,
-        # (no top-level public_address: each server carries its own `connect`,
-        # which is what the bar actually renders — #88)
+        # Across every running server; None until the sampler has read any of
+        # them. CPU is each server's share of the whole machine, so the sum is too.
+        "cpu_percent": round(cpu_total, 1) if cpu_total is not None else None,
+        "mem_bytes": mem_total,
         "servers": servers,
+        "history": fleet_history.points(),
     }
+
+
+def record_summary_sample() -> None:
+    """One point for the overview's sparklines; called by the background monitor."""
+    fleet_history.record(instances_summary())
 
 
 def list_views() -> list[dict]:

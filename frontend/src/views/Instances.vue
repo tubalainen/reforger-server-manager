@@ -2,17 +2,25 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
-import { formatBytes } from '../format'
+import Sparkline from '../components/Sparkline.vue'
+import { formatBytes, formatUptime } from '../format'
+import { attentionItems, branchLabel } from '../overview'
 import { serverStatus } from '../status'
+
+// The Servers overview (#189): host totals, one list of what needs attention, and a
+// row per server with its live numbers and quick actions. Everything on it comes
+// from /api/instances/summary, so it costs one request per poll however many
+// servers there are.
 
 const router = useRouter()
 
-const instances = ref([])
 const summary = ref(null)
+const servers = computed(() => summary.value?.servers || [])
 // New Arma server releases the daily check found (#177).
 const updates = ref([])
 const autoDownload = ref(false)
 const templates = ref([])
+const templatesLoaded = ref(false)
 const error = ref('')
 const showCreate = ref(false)
 const orphanedData = ref('')
@@ -25,15 +33,10 @@ let poll = null
 
 async function load() {
   try {
-    instances.value = await api('/api/instances')
+    summary.value = await api('/api/instances/summary')
     error.value = ''
   } catch (e) {
     error.value = e.message
-  }
-  try {
-    summary.value = await api('/api/instances/summary')
-  } catch {
-    /* keep last */
   }
   try {
     const auto = await api('/api/serverfiles/auto-update')
@@ -44,9 +47,74 @@ async function load() {
   }
 }
 
+async function loadTemplates() {
+  try {
+    templates.value = await api('/api/templates')
+  } catch (e) {
+    create.error = e.message
+  } finally {
+    templatesLoaded.value = true
+  }
+}
+
+// --- Totals and their sparklines ----------------------------------------------
+const history = computed(() => summary.value?.history || [])
+const series = (key) => history.value.map((p) => p[key])
+const fmtMem = (n) => formatBytes(n, { empty: '—' })
+
+const totals = computed(() => {
+  const s = summary.value
+  if (!s) return []
+  return [
+    {
+      key: 'running',
+      label: 'Online',
+      value: s.running,
+      unit: ` / ${s.total} server${s.total === 1 ? '' : 's'}`,
+      values: series('running'),
+    },
+    { key: 'players', label: 'Players', value: s.players_total, unit: '', values: series('players') },
+    {
+      key: 'cpu',
+      label: 'CPU · all servers',
+      value: s.cpu_percent != null ? s.cpu_percent : '—',
+      unit: s.cpu_percent != null ? '%' : '',
+      values: series('cpu_percent'),
+      title: "Each server's share of this whole machine, added up",
+    },
+    {
+      key: 'mem',
+      label: 'Memory · all servers',
+      value: fmtMem(s.mem_bytes),
+      unit: '',
+      values: series('mem_bytes'),
+    },
+  ]
+})
+
+// --- Needs attention ------------------------------------------------------------
+const attention = computed(() => attentionItems(servers.value, updates.value, autoDownload.value))
+
+const ATTENTION_BUTTON = {
+  restart: 'Restart',
+  update: 'Update server files',
+  'server-files': 'Server files',
+}
+
+function runAttention(item) {
+  const a = item.action
+  if (a.kind === 'restart') {
+    const s = servers.value.find((x) => x.id === a.id)
+    if (s) action(s, 'restart')
+  } else if (a.kind === 'update') {
+    updateNow(a.branch)
+  } else {
+    router.push({ name: 'server-files' })
+  }
+}
+
 // Start the branch's download, then open System › Server files, which picks up the
-// running job and streams its progress and log (#177). Server files used to sit at
-// the bottom of this page; they moved to System in #189.
+// running job and streams its progress and log (#177).
 async function updateNow(branch) {
   try {
     await api(`/api/serverfiles/${branch}/download`, { method: 'POST' })
@@ -57,29 +125,63 @@ async function updateNow(branch) {
   router.push({ name: 'server-files' })
 }
 
-// The summary carries whether each running server is still loading or actually
-// online (#76); the cards come from /api/instances, so pair them up by id.
-const stateById = computed(() =>
-  Object.fromEntries((summary.value?.servers || []).map((s) => [s.id, s.server_state])),
-)
-
-// Stop/start/restart the user asked for but that is still in flight, per instance.
+// --- Table ----------------------------------------------------------------------
+// Stop/start/restart the user asked for but that is still in flight, per server.
 const pending = reactive({})
 
-function cardStatus(inst) {
-  return serverStatus(inst.status, stateById.value[inst.id], pending[inst.id])
+function rowStatus(s) {
+  return serverStatus(s.status, s.server_state, pending[s.id])
+}
+function dotClass(s) {
+  return rowStatus(s).cls.replace('text-bg-', 'bg-')
+}
+const isRunning = (s) => s.status === 'running'
+
+function playersText(s) {
+  const max = s.max_players != null ? ` / ${s.max_players}` : ''
+  return `${isRunning(s) && s.players != null ? s.players : '—'}${max}`
+}
+function playersFill(s) {
+  if (!isRunning(s) || s.players == null || !s.max_players) return 0
+  return Math.min(100, Math.round((s.players / s.max_players) * 100))
+}
+const fmtFps = (s) => (s.server_fps != null ? Math.round(s.server_fps) : '—')
+const fmtCpu = (s) => (s.cpu_percent != null ? `${s.cpu_percent}%` : '—')
+const fmtUp = (s) => (isRunning(s) ? formatUptime(s.uptime_seconds) : '—')
+// The backend renders "YYYY-MM-DD HH:MM" in the server's local time; the time of day
+// is what matters in a table, the full label goes in the tooltip.
+const fmtNext = (s) => (s.next_restart ? s.next_restart.slice(11) : '—')
+const scenarioOf = (s) => s.scenario_name || s.template_name || '—'
+
+async function action(s, verb) {
+  pending[s.id] = verb
+  try {
+    await api(`/api/instances/${s.id}/${verb}`, { method: 'POST' })
+    await load()
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    delete pending[s.id]
+  }
 }
 
+// Restarting everything disconnects every player on the host, so it asks first.
+const running = computed(() => servers.value.filter(isRunning))
+const restartAll = reactive({ open: false, busy: false })
+async function confirmRestartAll() {
+  restartAll.busy = true
+  await Promise.all(running.value.map((s) => action(s, 'restart')))
+  restartAll.busy = false
+  restartAll.open = false
+}
+
+// --- New server -----------------------------------------------------------------
 async function openCreate() {
   create.name = ''
   create.branch = 'stable'
   create.error = ''
-  try {
-    templates.value = await api('/api/templates')
-    create.template_id = templates.value[0]?.id ?? null
-  } catch (e) {
-    create.error = e.message
-  }
+  await loadTemplates()
+  create.template_id = templates.value[0]?.id ?? null
   showCreate.value = true
 }
 
@@ -108,20 +210,9 @@ async function submitCreate() {
   }
 }
 
-async function action(inst, verb) {
-  pending[inst.id] = verb
-  try {
-    await api(`/api/instances/${inst.id}/${verb}`, { method: 'POST' })
-    await load()
-  } catch (e) {
-    error.value = e.message
-  } finally {
-    delete pending[inst.id]
-  }
-}
-
 const fmtBytes = (n) => formatBytes(n, { empty: 'empty' })
 
+// --- Delete ---------------------------------------------------------------------
 // The delete dialog. Its container comes off either way; the stored data on disk
 // (mods, saves, logs, configs) is left behind unless the user opts to wipe it too.
 const del = reactive({ inst: null, data: null, purge: false, busy: false, error: '' })
@@ -164,7 +255,7 @@ async function confirmDelete() {
 const hasTemplates = computed(() => templates.value.length > 0)
 
 onMounted(async () => {
-  await load()
+  await Promise.all([load(), loadTemplates()])
   poll = setInterval(load, 5000)
 })
 onUnmounted(() => clearInterval(poll))
@@ -172,9 +263,23 @@ onUnmounted(() => clearInterval(poll))
 
 <template>
   <div class="container">
-    <div class="d-flex justify-content-between align-items-center mb-3">
-      <h1 class="h3 mb-0">Server instances</h1>
-      <button class="btn btn-primary" @click="openCreate">+ New instance</button>
+    <div class="d-flex flex-wrap align-items-center gap-3 mb-3">
+      <div class="me-auto">
+        <h1 class="h3 mb-0">Servers</h1>
+        <div v-if="summary && summary.total" class="text-secondary small">
+          {{ summary.total }} server{{ summary.total === 1 ? '' : 's' }} ·
+          {{ summary.running }} online · {{ summary.players_total }}
+          player{{ summary.players_total === 1 ? '' : 's' }}
+        </div>
+      </div>
+      <button
+        v-if="servers.length"
+        class="btn btn-outline-secondary"
+        :disabled="!running.length"
+        :title="running.length ? '' : 'No server is running'"
+        @click="restartAll.open = true"
+      >Restart all running</button>
+      <button class="btn btn-primary" @click="openCreate">New server</button>
     </div>
 
     <div v-if="error" class="alert alert-warning py-2">{{ error }}</div>
@@ -186,141 +291,170 @@ onUnmounted(() => clearInterval(poll))
         to <code class="text-break">{{ orphanedData }}</code> rather than handed to the
         new server, which starts empty. Nothing was deleted.
       </span>
-      <button class="btn-close ms-auto" @click="orphanedData = ''"></button>
+      <button class="btn-close ms-auto" aria-label="Dismiss" @click="orphanedData = ''"></button>
     </div>
 
-    <!-- A new base server release is out. Shown here, above the servers it
-         affects, because that is where you notice it (#177). -->
-    <div
-      v-for="u in updates"
-      :key="u.branch"
-      class="alert alert-info d-flex flex-wrap align-items-center gap-2 py-2"
-    >
-      <span>
-        ⬆️ <strong>New {{ u.label }} server release</strong> — build
-        {{ u.installed_build }} → {{ u.latest_build }}.
-        <template v-if="u.downloading">Downloading it now.</template>
-        <template v-else-if="autoDownload">It downloads automatically.</template>
-        <template v-else>
-          Your servers keep running the installed build until the server files are updated.
+    <!-- Nothing to show yet: point at the one next step. -->
+    <div v-if="summary && !servers.length" class="card text-center py-5">
+      <div class="card-body">
+        <template v-if="templatesLoaded && !hasTemplates">
+          <h2 class="h5">Start in the Library</h2>
+          <p class="text-secondary mb-3">
+            A server runs a template: the scenario, its mods and settings. Build one first.
+          </p>
+          <router-link class="btn btn-primary" :to="{ name: 'template-new' }">New template</router-link>
         </template>
-      </span>
-      <button
-        v-if="!u.downloading"
-        class="btn btn-sm btn-primary ms-auto"
-        @click="updateNow(u.branch)"
-      >Update server files</button>
-      <router-link class="btn btn-sm btn-outline-secondary" :to="{ name: 'server-files' }">
-        Server files
-      </router-link>
+        <template v-else>
+          <h2 class="h5">No servers yet</h2>
+          <p class="text-secondary mb-3">
+            Create one from a template to run an Arma Reforger server in its own container.
+          </p>
+          <button class="btn btn-primary" @click="openCreate">New server</button>
+        </template>
+      </div>
     </div>
 
-    <!-- Summary status bar (issue #12) -->
-    <div v-if="summary && summary.total" class="card mb-3 bg-body-tertiary">
-      <div class="card-body py-2">
-        <div class="d-flex flex-wrap align-items-center gap-3">
-          <div class="d-flex gap-3 me-2">
-            <div><span class="fs-5 fw-semibold">{{ summary.running }}</span>
-              <span class="text-secondary small">/ {{ summary.total }} running</span></div>
-            <div><span class="fs-5 fw-semibold">{{ summary.players_total }}</span>
-              <span class="text-secondary small">players online</span></div>
+    <template v-else-if="summary">
+      <!-- Host totals, each with the last hour as a sparkline -->
+      <div class="rsm-totals mb-3">
+        <div v-for="t in totals" :key="t.key" class="rsm-total" :title="t.title">
+          <div class="small text-secondary">{{ t.label }}</div>
+          <div class="rsm-total-value">
+            {{ t.value }}<span class="rsm-total-unit">{{ t.unit }}</span>
           </div>
-          <div class="vr d-none d-md-block"></div>
-          <div class="d-flex flex-wrap gap-2">
-            <router-link
-              v-for="s in summary.servers"
-              :key="s.id"
-              :to="{ name: 'instance-detail', params: { id: s.id } }"
-              class="text-decoration-none d-inline-flex align-items-center gap-2 border rounded-pill ps-1 pe-2 py-1"
-              :title="s.connect || 'PUBLIC_ADDRESS not set'"
-            >
-              <!-- A still-loading server has no players to speak of: say so
-                   instead of showing a hollow "0 👤" (#76). -->
-              <span class="badge rounded-pill" :class="serverStatus(s.status, s.server_state).cls">
-                {{
-                  s.status === 'running' && s.server_state !== 'starting'
-                    ? (s.players ?? '—') + ' 👤'
-                    : serverStatus(s.status, s.server_state).label
-                }}
-              </span>
-              <span class="small text-body text-truncate" style="max-width: 16rem">{{ s.name }}</span>
-            </router-link>
-          </div>
+          <Sparkline class="text-primary" :values="t.values" :label="`${t.label}, last hour`" />
         </div>
       </div>
-    </div>
 
-    <div v-if="!instances.length" class="card text-center text-secondary py-5">
-      <div class="card-body">
-        <p class="fs-1 mb-2">🖥️</p>
-        <p class="mb-1">No server instances yet.</p>
-        <p class="small mb-0">
-          Create one from a <router-link :to="{ name: 'templates' }">template</router-link> to run an Arma
-          Reforger server in its own container.
-        </p>
-      </div>
-    </div>
-
-    <div v-else class="row g-3">
-      <div v-for="inst in instances" :key="inst.id" class="col-12 col-xl-6">
-        <div class="card h-100">
-          <div class="card-body">
-            <div class="d-flex justify-content-between align-items-start mb-2">
-              <div>
-                <router-link
-                  :to="{ name: 'instance-detail', params: { id: inst.id } }"
-                  class="h5 mb-0 text-decoration-none"
-                >{{ inst.name }}</router-link>
-                <div class="small text-secondary">
-                  {{ inst.template_name || '—' }}
-                  <span class="badge ms-1" :class="inst.branch === 'stable' ? 'text-bg-success' : 'text-bg-warning'">
-                    {{ inst.branch }}
-                  </span>
-                </div>
-              </div>
-              <span class="badge" :class="cardStatus(inst).cls">
-                {{ cardStatus(inst).label }}
+      <!-- One list for the whole host, each line with the button that fixes it -->
+      <div v-if="attention.length" class="card mb-3">
+        <div class="card-header py-2 fw-semibold small">
+          Needs attention · {{ attention.length }}
+        </div>
+        <ul class="list-group list-group-flush">
+          <li
+            v-for="item in attention"
+            :key="item.key"
+            class="list-group-item d-flex align-items-start gap-2 py-2"
+          >
+            <span class="rsm-dot rsm-dot-text rounded-circle bg-warning" aria-hidden="true"></span>
+            <div class="d-flex flex-wrap align-items-center gap-2 flex-grow-1">
+              <span class="me-auto">
+                <strong>{{ item.subject }}</strong>
+                <span class="text-secondary"> · {{ item.text }}</span>
               </span>
-            </div>
-
-            <div class="small text-secondary mb-3">
-              game :{{ inst.game_port }} · A2S :{{ inst.a2s_port }} · RCON :{{ inst.rcon_port }}
-            </div>
-
-            <div v-if="!inst.server_files_ready" class="alert alert-warning py-1 px-2 small mb-2">
-              {{ inst.branch }} server files not downloaded —
-              <router-link :to="{ name: 'server-files' }">get them under System › Server files</router-link>
-              before starting.
-            </div>
-
-            <!-- Template edited since this server started: its config is stale
-                 until a restart (#116). -->
-            <div v-if="inst.template_changed" class="alert alert-warning py-1 px-2 small mb-2">
-              ⚠️ Template changed —
-              <a href="#" @click.prevent="action(inst, 'restart')">restart</a> to apply.
-            </div>
-
-            <div class="d-flex gap-2 flex-wrap">
               <button
-                v-if="inst.status !== 'running'"
-                class="btn btn-sm btn-success"
-                :disabled="!inst.server_files_ready"
-                @click="action(inst, 'start')"
-              >Start</button>
-              <button v-else class="btn btn-sm btn-outline-secondary" @click="action(inst, 'stop')">
-                Stop
-              </button>
-              <button class="btn btn-sm btn-outline-primary" @click="action(inst, 'restart')">
-                Restart
-              </button>
-              <router-link
-                class="btn btn-sm btn-outline-info"
-                :to="{ name: 'instance-detail', params: { id: inst.id } }"
-              >Logs</router-link>
-              <button class="btn btn-sm btn-outline-danger ms-auto" @click="remove(inst)">
-                Delete
-              </button>
+                class="btn btn-sm btn-outline-secondary"
+                :disabled="item.action.kind === 'restart' && !!pending[item.action.id]"
+                @click="runAttention(item)"
+              >{{ ATTENTION_BUTTON[item.action.kind] }}</button>
             </div>
+          </li>
+        </ul>
+      </div>
+
+      <!-- A row per server -->
+      <div class="card">
+        <table class="table rsm-fleet align-middle mb-0">
+          <thead>
+            <tr class="small">
+              <th scope="col">Server</th>
+              <th scope="col">Status</th>
+              <th scope="col">Players</th>
+              <th scope="col" class="text-end">FPS</th>
+              <th scope="col" class="text-end">CPU</th>
+              <th scope="col" class="text-end">Memory</th>
+              <th scope="col" class="text-end">Uptime</th>
+              <th scope="col" class="text-end">Next restart</th>
+              <th scope="col"><span class="visually-hidden">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="s in servers" :key="s.id">
+              <td class="rsm-cell-name">
+                <router-link
+                  :to="{ name: 'instance-detail', params: { id: s.id } }"
+                  class="fw-semibold text-decoration-none"
+                >{{ s.name }}</router-link>
+                <div class="small text-secondary">{{ scenarioOf(s) }} · {{ branchLabel(s.branch) }}</div>
+              </td>
+              <td data-label="Status">
+                <span class="d-inline-flex align-items-center gap-2 text-nowrap" :title="rowStatus(s).long">
+                  <span class="rsm-dot rounded-circle" :class="dotClass(s)" aria-hidden="true"></span>
+                  {{ rowStatus(s).label }}
+                </span>
+              </td>
+              <td data-label="Players">
+                <div class="rsm-num">{{ playersText(s) }}</div>
+                <div class="progress rsm-players-bar" role="presentation">
+                  <div class="progress-bar" :style="{ width: `${playersFill(s)}%` }"></div>
+                </div>
+              </td>
+              <td data-label="FPS" class="text-end rsm-num">{{ fmtFps(s) }}</td>
+              <td data-label="CPU" class="text-end rsm-num">{{ fmtCpu(s) }}</td>
+              <td data-label="Memory" class="text-end rsm-num">{{ isRunning(s) ? fmtMem(s.mem_bytes) : '—' }}</td>
+              <td data-label="Uptime" class="text-end rsm-num">{{ fmtUp(s) }}</td>
+              <td
+                data-label="Next restart"
+                class="text-end rsm-num"
+                :title="s.next_restart ? `${s.next_restart} (server time)` : ''"
+              >{{ fmtNext(s) }}</td>
+              <td class="rsm-cell-actions text-end text-nowrap">
+                <template v-if="isRunning(s)">
+                  <button
+                    class="btn btn-sm btn-outline-secondary"
+                    :disabled="!!pending[s.id]"
+                    @click="action(s, 'stop')"
+                  >Stop</button>
+                  <button
+                    class="btn btn-sm btn-outline-secondary ms-1"
+                    :disabled="!!pending[s.id]"
+                    @click="action(s, 'restart')"
+                  >Restart</button>
+                </template>
+                <button
+                  v-else
+                  class="btn btn-sm btn-success"
+                  :disabled="!s.server_files_ready || !!pending[s.id]"
+                  :title="s.server_files_ready ? '' : `${branchLabel(s.branch)} server files are not downloaded yet`"
+                  @click="action(s, 'start')"
+                >Start</button>
+                <button
+                  class="btn btn-sm btn-outline-danger ms-1"
+                  :aria-label="`Delete ${s.name}`"
+                  @click="remove(s)"
+                >Delete</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </template>
+
+    <p v-else-if="!error" class="text-secondary">Loading…</p>
+
+    <!-- Restart all: every player on the host is disconnected, so confirm it -->
+    <div v-if="restartAll.open" class="modal d-block" tabindex="-1" style="background: rgba(0,0,0,.5)">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">
+              Restart {{ running.length }} running server{{ running.length === 1 ? '' : 's' }}?
+            </h5>
+            <button type="button" class="btn-close" @click="restartAll.open = false"></button>
+          </div>
+          <div class="modal-body">
+            <p class="mb-2">{{ running.map((s) => s.name).join(', ') }}</p>
+            <p class="small text-secondary mb-0">
+              Everyone playing on them is disconnected, and each server takes a few minutes to
+              load its mods and world again.
+            </p>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-outline-secondary" @click="restartAll.open = false">Cancel</button>
+            <button class="btn btn-warning" :disabled="restartAll.busy" @click="confirmRestartAll">
+              {{ restartAll.busy ? 'Restarting…' : 'Restart all' }}
+            </button>
           </div>
         </div>
       </div>
@@ -331,7 +465,7 @@ onUnmounted(() => clearInterval(poll))
       <div class="modal-dialog">
         <div class="modal-content">
           <div class="modal-header">
-            <h5 class="modal-title">New instance</h5>
+            <h5 class="modal-title">New server</h5>
             <button type="button" class="btn-close" @click="showCreate = false"></button>
           </div>
           <div class="modal-body">
@@ -458,3 +592,116 @@ onUnmounted(() => clearInterval(poll))
     </div>
   </div>
 </template>
+
+<style scoped>
+.rsm-dot {
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  flex: none;
+}
+
+/* Beside a line of text, sit on that line rather than the top of the box. */
+.rsm-dot-text {
+  margin-top: 0.5rem;
+}
+
+/* Four figures read as one strip: hairline dividers from the gap, not four cards. */
+.rsm-totals {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--bs-border-color);
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--bs-border-radius);
+  overflow: hidden;
+}
+
+.rsm-total {
+  background: var(--bs-body-bg);
+  padding: 0.7rem 0.9rem 0.5rem;
+}
+
+.rsm-total-value {
+  font-size: 1.45rem;
+  font-weight: 600;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.rsm-total-unit {
+  font-size: 0.85rem;
+  font-weight: 400;
+  color: var(--bs-secondary-color);
+}
+
+.rsm-num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.rsm-players-bar {
+  height: 0.25rem;
+  width: 5.5rem;
+  margin-top: 0.25rem;
+}
+
+.rsm-fleet thead th {
+  font-weight: 500;
+  color: var(--bs-secondary-color);
+  white-space: nowrap;
+}
+
+.rsm-fleet tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+@media (max-width: 991.98px) {
+  .rsm-totals {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* On a phone the table becomes one stacked block per server: name on top, the
+   figures as labelled pairs, the buttons at the bottom. */
+@media (max-width: 767.98px) {
+  .rsm-fleet thead {
+    display: none;
+  }
+
+  .rsm-fleet tbody tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.35rem 1rem;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--bs-border-color);
+  }
+
+  .rsm-fleet tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  .rsm-fleet tbody td {
+    display: block;
+    padding: 0;
+    border: 0;
+    text-align: left !important;
+  }
+
+  .rsm-fleet td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 0.75rem;
+    color: var(--bs-secondary-color);
+  }
+
+  .rsm-fleet .rsm-cell-name,
+  .rsm-fleet .rsm-cell-actions {
+    grid-column: 1 / -1;
+  }
+
+  .rsm-fleet .rsm-cell-actions {
+    margin-top: 0.25rem;
+  }
+}
+</style>

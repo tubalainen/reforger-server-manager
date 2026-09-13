@@ -35,6 +35,8 @@ describe('serverStatus', () => {
     expect(serverStatus('running', null).label).toBe('running')
     expect(serverStatus('exited', null).cls).toBe('text-bg-danger')
     expect(serverStatus('absent', null).cls).toBe('text-bg-secondary')
+    // No container at all is a stopped server, not a Docker term to decode (#189).
+    expect(serverStatus('absent', null).label).toBe('stopped')
     expect(serverStatus('weird-new-state', null).cls).toBe('text-bg-secondary')
   })
 })

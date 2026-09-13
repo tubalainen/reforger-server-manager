@@ -14,6 +14,10 @@ const CONTAINER_BADGE = {
   unknown: 'text-bg-warning',
 }
 
+// "absent" is Docker's word for "this server has no container", which is simply a
+// server that is not running (#189). The other container states read fine as is.
+const CONTAINER_LABEL = { absent: 'stopped' }
+
 // While a stop/start/restart the user asked for is still in flight, say so. The
 // old server stays genuinely "online" until it exits — Reforger can take tens of
 // seconds to honour SIGTERM — so without this the badge sits on "Started and
@@ -48,9 +52,10 @@ export function serverStatus(status, serverState, pending) {
   }
   // Running but the log could not be read (Docker hiccup): fall back to the
   // container's own word for it rather than claiming either way.
+  const label = CONTAINER_LABEL[status] || status
   return {
-    label: status,
-    long: status,
+    label,
+    long: label,
     note: '',
     cls: CONTAINER_BADGE[status] || 'text-bg-secondary',
     starting: false,

@@ -56,6 +56,7 @@ async def test_monitor_pass_no_ops_while_docker_is_down_then_recovers(monkeypatc
     )
     monkeypatch.setattr(main.instance_service, "apply_scheduled_restarts", lambda: None)
     monkeypatch.setattr(main.instance_service, "prune_old_logs", lambda: 0)
+    monkeypatch.setattr(main.instance_service, "record_summary_sample", lambda: None)
 
     # Run the monitor for a few ticks with a no-op sleep, flipping Docker on midway.
     ticks = {"n": 0}
