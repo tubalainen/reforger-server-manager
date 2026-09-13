@@ -433,8 +433,8 @@ const faq = [
             chosen scenario declares on the Workshop — override it freely, it is yours.
           </li>
           <li class="mb-2">
-            <strong>Player access:</strong> at the bottom of the same Settings step,
-            under <em>Show player access</em>, you can name the server's
+            <strong>Player access:</strong> further down the same Settings step, in the
+            <em>Player access</em> section, you can name the server's
             <strong>admins</strong>, a <strong>whitelist</strong> and a
             <strong>ban list</strong>. The section is collapsed by default and
             summarises what is set beside its heading, so an active whitelist stays
