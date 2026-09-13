@@ -132,15 +132,15 @@ const faq = [
        versions are written into config.json.`,
   },
   {
-    q: 'Does the order of the mods matter, and what does "AI order…" do?',
+    q: 'Does the order of the mods matter, and what does "Order with an AI…" do?',
     a: `The list on the Mods step is written to config.json in exactly the order you see, so
-       you control it: drag a row, use ↑ ↓, or press "Dependencies first" to put every mod
+       you control it: drag a row, use its ↑ ↓, or pick Sort › Dependencies first to put every mod
        after the mods it requires. Community guidance is that frameworks and libraries
        belong at the top and mods that patch or override other mods at the bottom, because
        a later entry gets the last word. We could not find an official Bohemia statement
        that the engine honours the array order at all — it may well resolve the order
        itself — so treat ordering as something that can help and cannot hurt, not as a fix
-       for a broken server. "AI order…" writes the question for you: copy the prompt into
+       for a broken server. Sort › Order with an AI… writes the question for you: copy the prompt into
        ChatGPT, Gemini or Claude (all free) and paste the answer back, or press one button
        if your admin has configured an AI service in .env. Nothing is sent anywhere until
        you press the button, the prompt contains only mod ids, names and which mod needs
@@ -413,13 +413,14 @@ const faq = [
             Dependencies (and their dependencies) come along automatically and are removed
             again when nothing needs them. Mods follow the latest Workshop release unless
             you lock a version. The list is in load order — the order the mods are written
-            to <code>config.json</code> — and you can drag any row to change it, sort by
-            name or by when you added them, put every mod after what it requires with
-            <em>Dependencies first</em>, or ask an AI for an order with
-            <em>AI order…</em> (see below). The <em>🧰 Mod list</em> picker, right under
-            the search box, adds every mod of a saved mod list in one press (see
-            <a href="#mod-templates">Mod lists</a>). It exports/imports as
-            JSON to share between templates or friends. Badges show each mod's role:
+            to <code>config.json</code> — and you can drag any row to change it. The
+            <em>Sort</em> menu orders them by name, by when you added them, puts every mod
+            after what it requires (<em>Dependencies first</em>, also offered as
+            <em>Fix order</em> whenever a mod is listed too early), or asks an AI for an
+            order (see below). <em>From a mod list…</em>, beside the search box, adds every
+            mod of a saved mod list at once (see <a href="#mod-templates">Mod lists</a>). The
+            <em>⋯</em> menu unlocks every version and exports/imports the list as JSON to
+            share between templates or friends. Badges show each mod's role:
             <em>scenario</em> (provides the scenario), <em>scenario dependency</em>
             (needed for the scenario to work), <em>addon</em> (an extra you chose),
             <em>dependency</em> (pulled in by an addon) and <em>scenario mod</em> (an addon
@@ -484,16 +485,14 @@ const faq = [
             <router-link :to="{ name: 'mod-templates' }">Library › Mod lists</router-link>, create one and add
             mods the same way as in the wizard — search the Workshop, or paste ids/URLs,
             several at once, comma-separated. Lock a version per mod, or leave it on
-            <em>latest</em>. Drag the rows (or use ↑ ↓) to set the order.
+            <em>latest</em>. Drag the rows (or use their ↑ ↓) to set the order.
           </li>
           <li class="mb-2">
             <strong>Load it into a server template:</strong> open a template's
-            <strong>Mods</strong> step. Under the mod search box there is a
-            <em>🧰 Mod list</em> picker: choose a list and press
-            <em>Add mod list</em>, and its mods are appended to the ones already there.
-            <em>Preview / replace…</em> beside it shows the full list first, and offers
-            <em>Replace</em> instead — this template then ends up with exactly that mod
-            list (the scenario's own mods always stay). Either way you see how many mods
+            <strong>Mods</strong> step and press <em>From a mod list…</em> beside the
+            search box. Choose a list: <em>Add to this template</em> appends its mods to
+            the ones already there, and <em>Replace the mod list</em> leaves this template with exactly
+            that mod list (the scenario's own mods always stay). Either way you see how many mods
             would be added, removed or re-locked before anything moves, and nothing is
             written until you save the template.
           </li>

@@ -53,7 +53,9 @@ onUnmounted(() => clearInterval(updatePoll))
 
   <div v-else class="rsm-shell">
     <nav class="rsm-rail" aria-label="Main">
-      <router-link to="/servers" class="rsm-brand" title="Reforger Server Manager">RSM</router-link>
+      <router-link to="/servers" class="rsm-brand" title="Reforger Server Manager">
+        <img src="/favicon.svg" width="34" height="34" alt="Reforger Server Manager" />
+      </router-link>
 
       <router-link
         v-for="item in NAV"
@@ -133,12 +135,8 @@ onUnmounted(() => clearInterval(updatePoll))
 }
 
 .rsm-brand {
-  font-family: var(--bs-font-monospace);
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  color: var(--bs-secondary-color);
-  text-decoration: none;
+  display: block;
+  line-height: 0;
   margin-bottom: 0.9rem;
 }
 

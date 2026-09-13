@@ -1,4 +1,4 @@
-# README screenshots
+# README images
 
 These images are referenced by the top-level [`README.md`](../../README.md) and the
 [feature tour](../features.md). Filenames are stable — to refresh a screenshot,
@@ -12,5 +12,7 @@ replace the file in place with the same name and the pages update automatically.
 | `04-template-settings.png` | Edit template → Settings step |
 | `05-instance-detail.png` | A running server's page: the server list, header and Overview tab |
 | `06-servers-overview.png` | Servers: host totals, needs attention, a row per server |
+| `logo.svg` | The logo shown at the top of the README (same file as `frontend/public/favicon.svg`) |
+| `social-preview.png` | 1280×640 card for the repository's social preview (Settings → General → Social preview) |
 
 Keep them reasonably sized (PNG, roughly 1200–1400 px wide is plenty).

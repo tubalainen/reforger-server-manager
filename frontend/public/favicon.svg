@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Reforger Server Manager">
+  <!-- Reforger Server Manager mark: the hexagon the app has always used (⬢), in olive
+       drab, holding three server blades — the top one with a green "online" light. -->
+  <path d="M32 3.5 56.68 17.75v28.5L32 60.5 7.32 46.25v-28.5Z" fill="#4D6134" stroke="#26301B" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M32 7.9 52.9 20v24L32 56.1 11.1 44V20Z" fill="none" stroke="#6F8650" stroke-width="1.2" stroke-linejoin="round" opacity=".55"/>
+  <g fill="#EEE8D3">
+    <rect x="17" y="18" width="30" height="7.6" rx="1.8"/>
+    <rect x="17" y="28.2" width="30" height="7.6" rx="1.8"/>
+    <rect x="17" y="38.4" width="30" height="7.6" rx="1.8"/>
+  </g>
+  <g fill="#26301B">
+    <rect x="20.5" y="20.9" width="9" height="1.8" rx=".9"/>
+    <rect x="20.5" y="31.1" width="9" height="1.8" rx=".9"/>
+    <rect x="20.5" y="41.3" width="9" height="1.8" rx=".9"/>
+    <circle cx="42.4" cy="32" r="1.7"/>
+    <circle cx="42.4" cy="42.2" r="1.7"/>
+  </g>
+  <circle cx="42.4" cy="21.8" r="2.3" fill="#3DDC84" stroke="#26301B" stroke-width=".9"/>
+</svg>
