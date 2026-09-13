@@ -1768,7 +1768,7 @@ onBeforeUnmount(() => {
               <template v-else-if="!modTemplateLoad.list.length">
                 A mod template is a saved mod list you can reuse in every server template —
                 build one on the
-                <router-link :to="{ name: 'mod-templates' }">Mod Templates</router-link> page.
+                <router-link :to="{ name: 'mod-templates' }">Library › Mod templates</router-link> page.
               </template>
               <template v-else-if="modTemplateAddPreview">
                 Adds {{ modTemplateAddPreview.added.length }} mod(s) to the
@@ -1966,9 +1966,9 @@ onBeforeUnmount(() => {
                   v-else-if="!modTemplateLoad.list.length"
                   class="text-secondary small"
                 >
-                  No mod templates yet. Create one on the
-                  <router-link :to="{ name: 'mod-templates' }">Mod Templates</router-link>
-                  page — it is a mod list you can reuse in every server template.
+                  No mod templates yet. Create one under
+                  <router-link :to="{ name: 'mod-templates' }">Library › Mod templates</router-link>
+                  — it is a mod list you can reuse in every server template.
                 </div>
 
                 <template v-else>

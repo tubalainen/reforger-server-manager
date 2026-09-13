@@ -50,9 +50,9 @@ Players connect through UDP game ports, not the web UI. The default ranges are `
 
 After signing in:
 
-1. Pull the server runtime image from **Downloads**.
-2. Download the stable or experimental server files.
-3. Create a template, then create and start an instance from it.
+1. Pull the server runtime image under **System › Server files**.
+2. Download the stable or experimental server files on the same page.
+3. Create a template under **Library**, then create and start an instance from it under **Servers**.
 
 The default instance runtime is the [ACE Mod-compatible image](https://github.com/acemod/reforger), configurable with `REFORGER_SERVER_IMAGE`.
 

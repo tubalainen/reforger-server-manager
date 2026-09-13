@@ -1,9 +1,10 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from './api'
+import RailIcon from './components/RailIcon.vue'
+import { HELP, isUnder, NAV } from './nav'
 import { setAuthed } from './router'
-import { serverStatus } from './status'
 
 const route = useRoute()
 const router = useRouter()
@@ -15,230 +16,243 @@ async function logout() {
   router.push({ name: 'login' })
 }
 
-// --- The tabs (#175) ---------------------------------------------------------
-// Six destinations, a live status area and the version link share one row, and
-// the full page names ("Server Templates", "Mods Overview", …) stopped fitting
-// once Backup arrived: they broke mid-word and the bar grew to three lines.
-// Short labels here, the full name in the tooltip, and nothing wraps.
-const NAV = [
-  { to: '/', label: 'Templates', full: 'Server templates' },
-  { to: '/mod-templates', label: 'Mod Templates', full: 'Mod templates' },
-  { to: '/mods', label: 'Mods', full: 'Mods overview' },
-  { to: '/instances', label: 'Instances', full: 'Server instances' },
-  { to: '/backup', label: 'Backup', full: 'Backup & restore' },
-  { to: '/guide', label: 'Guide', full: 'User guide' },
-]
+// --- The rail (#189) ---------------------------------------------------------
+// Six top tabs became three destinations and Help, down the left edge on a wide
+// screen and along the bottom on a narrow one. The old navbar's live server chips
+// (#117) are gone with it: server status belongs to the Servers page.
 
-// Which tab owns the page you are on. Matched by prefix rather than by
-// router-link's own active class so a sub-page highlights its tab too — the
-// wizard belongs to Templates, an instance's page to Instances.
-function isActive(item) {
-  const path = route.path
-  if (item.to === '/') return path === '/' || path.startsWith('/templates')
-  return path === item.to || path.startsWith(`${item.to}/`)
-}
-
-// The collapsed (hamburger) menu on narrow screens. Bootstrap's own collapse
-// needs its JavaScript bundle, which this app deliberately doesn't ship — the
-// `show` class is all the CSS needs, so Vue toggles it.
-const navOpen = ref(false)
-watch(() => route.fullPath, () => (navOpen.value = false))
-
-// --- Top-banner server status bar (#117) ---
-// A compact live view of every instance so you see at a glance which servers are
-// up and how busy they are from anywhere in the app. It is also the first thing
-// to give up room (#175): a chip per server on a wide screen, a one-line summary
-// when the tabs need the space, and nothing at all below the hamburger
-// breakpoint — the Instances page carries its own fuller bar there.
-const summary = ref(null)
-const servers = computed(() => summary.value?.servers || [])
-const CHIP_LIMIT = 4
-
-// Whether chips are worth showing at all is a question of how many servers
-// there are; whether they *fit* is a question of screen width, and that half is
-// left to Bootstrap's own breakpoints rather than a resize listener — so the two
-// blocks below carry the display classes that decide which one you see.
-const chipsFit = computed(() => servers.value.length <= CHIP_LIMIT)
-const chipClass = 'd-none d-xl-flex' // only ever rendered when chipsFit
-const summaryClass = computed(() =>
-  chipsFit.value ? 'd-none d-lg-flex d-xl-none' : 'd-none d-lg-flex',
-)
-
-async function loadSummary() {
+// Server-file releases the daily Steam check found (#177), shown as a count on
+// System so an update is noticed from any page, not only from the Servers page.
+const updates = ref(0)
+async function loadUpdates() {
   if (route.meta.public) return // no session on the login page
   try {
-    summary.value = await api('/api/instances/summary')
+    const auto = await api('/api/serverfiles/auto-update')
+    updates.value = auto.branches.filter((b) => b.update_available).length
   } catch {
-    /* transient; keep the last snapshot */
+    /* transient; keep the last count */
   }
 }
 
-// A filled dot in the server's status colour (green online, amber loading, etc.).
-function dotClass(s) {
-  return serverStatus(s.status, s.server_state).cls.replace('text-bg-', 'bg-')
-}
-function chipTitle(s) {
-  const label = serverStatus(s.status, s.server_state).long
-  const players = s.status === 'running' && s.server_state !== 'starting'
-    ? ` · ${s.players ?? '—'} players` : ''
-  return `${s.name}: ${label}${players}`
-}
-
-let summaryPoll = null
+let updatePoll = null
 onMounted(async () => {
   try {
     version.value = await api('/api/version')
   } catch {
     /* ignore */
   }
-  loadSummary()
-  summaryPoll = setInterval(loadSummary, 8000)
+  loadUpdates()
+  // The check itself runs once a day on the server; a minute is plenty to notice it.
+  updatePoll = setInterval(loadUpdates, 60000)
 })
-onUnmounted(() => clearInterval(summaryPoll))
+onUnmounted(() => clearInterval(updatePoll))
 </script>
 
 <template>
-  <nav
-    v-if="!route.meta.public"
-    class="navbar navbar-expand-lg bg-body-tertiary border-bottom mb-4"
-  >
-    <div class="container">
-      <router-link class="navbar-brand fw-semibold text-nowrap" to="/">
-        ⬢ Reforger Server Manager
+  <router-view v-if="route.meta.public" />
+
+  <div v-else class="rsm-shell">
+    <nav class="rsm-rail" aria-label="Main">
+      <router-link to="/servers" class="rsm-brand" title="Reforger Server Manager">RSM</router-link>
+
+      <router-link
+        v-for="item in NAV"
+        :key="item.key"
+        :to="item.to"
+        class="rsm-rail-item"
+        :class="{ active: isUnder(route.path, item.to) }"
+        :aria-current="isUnder(route.path, item.to) ? 'page' : undefined"
+        :title="item.full"
+      >
+        <RailIcon :name="item.key" />
+        <span>{{ item.label }}</span>
+        <span
+          v-if="item.key === 'system' && updates"
+          class="rsm-badge"
+          :title="`${updates} new server release${updates > 1 ? 's' : ''}`"
+        >{{ updates }}</span>
       </router-link>
 
-      <button
-        class="navbar-toggler border-0 px-2"
-        type="button"
-        :aria-expanded="navOpen"
-        aria-label="Toggle navigation"
-        @click="navOpen = !navOpen"
-      >
-        <span class="navbar-toggler-icon"></span>
-      </button>
-
-      <div class="collapse navbar-collapse" :class="{ show: navOpen }">
-        <!-- nav-pills so the page you are on is a filled pill, in Bootstrap's own
-             active-tab styling rather than a bespoke one (#175) -->
-        <ul class="navbar-nav nav-pills me-auto mb-2 mb-lg-0">
-          <li v-for="item in NAV" :key="item.to" class="nav-item">
-            <router-link
-              class="nav-link"
-              :class="{ active: isActive(item) }"
-              :title="item.full"
-              :to="item.to"
-            >{{ item.label }}</router-link>
-          </li>
-        </ul>
-
-        <!-- Live server status (#117): a chip per server on a wide screen… -->
-        <div
-          v-if="summary && summary.total && chipsFit"
-          class="align-items-center gap-3 me-3 small"
-          :class="chipClass"
-        >
-          <router-link
-            v-for="s in servers"
-            :key="s.id"
-            :to="{ name: 'instance-detail', params: { id: s.id } }"
-            class="rsm-chip d-inline-flex align-items-center gap-1 text-decoration-none text-body"
-            :title="chipTitle(s)"
-          >
-            <span class="rsm-dot rounded-circle" :class="dotClass(s)"></span>
-            <span class="text-truncate">{{ s.name }}</span>
-            <span
-              v-if="s.status === 'running' && s.server_state !== 'starting'"
-              class="text-secondary"
-            >{{ s.players ?? '—' }}👤</span>
-          </router-link>
-        </div>
-        <!-- …and one summary line when the tabs need that space back (#175) -->
+      <div class="rsm-rail-foot">
         <router-link
-          v-if="summary && summary.total"
-          :to="{ name: 'instances' }"
-          class="align-items-center gap-2 me-3 small text-decoration-none text-body text-nowrap"
-          :class="summaryClass"
-          :title="`${summary.running} of ${summary.total} servers online`"
+          :to="HELP.to"
+          class="rsm-rail-item"
+          :class="{ active: isUnder(route.path, HELP.to) }"
+          :aria-current="isUnder(route.path, HELP.to) ? 'page' : undefined"
+          :title="HELP.full"
         >
-          <span class="fw-semibold">{{ summary.running }}</span>
-          <span class="text-secondary">/ {{ summary.total }} online</span>
-          <span class="text-secondary">· {{ summary.players_total }}👤</span>
+          <RailIcon name="help" />
+          <span>{{ HELP.label }}</span>
         </router-link>
-
-        <div class="d-flex align-items-center gap-3">
-          <a
-            v-if="version && version.version"
-            :href="version.repo_url"
-            target="_blank"
-            rel="noopener"
-            class="navbar-text small text-secondary text-nowrap text-decoration-none p-0"
-            :title="'Open ' + version.name + ' on GitHub'"
-          >v{{ version.version }} ↗</a>
-          <button
-            v-if="!version || version.auth_enabled"
-            class="btn btn-outline-secondary btn-sm"
-            @click="logout"
-          >Log out</button>
-        </div>
+        <button
+          v-if="!version || version.auth_enabled"
+          type="button"
+          class="rsm-rail-item"
+          title="Log out"
+          @click="logout"
+        >
+          <RailIcon name="logout" />
+          <span>Log out</span>
+        </button>
+        <a
+          v-if="version && version.version"
+          :href="version.repo_url"
+          target="_blank"
+          rel="noopener"
+          class="rsm-version"
+          :title="'Open ' + version.name + ' on GitHub'"
+        >v{{ version.version }}</a>
       </div>
-    </div>
-  </nav>
-  <router-view />
+    </nav>
+
+    <main class="rsm-main">
+      <router-view />
+    </main>
+  </div>
 </template>
 
 <style scoped>
-/* One row, shared by six tabs, the live status and the version link. Every part
-   of it is kept on a single line on purpose: labels breaking mid-word is what
-   made the bar look broken (#175). */
-.navbar .navbar-nav .nav-link {
-  white-space: nowrap;
-  padding: 0.3rem 0.7rem;
+.rsm-shell {
+  display: flex;
+  min-height: 100vh;
 }
 
-/* Only the unselected tabs are dimmed — the selected one keeps the pill's own
-   white-on-primary, which this would otherwise outrank. */
-.navbar .navbar-nav .nav-link:not(.active) {
+.rsm-rail {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  width: 5rem;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.9rem 0 0.75rem;
+  background: var(--bs-tertiary-bg);
+  border-right: 1px solid var(--bs-border-color);
+}
+
+.rsm-brand {
+  font-family: var(--bs-font-monospace);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
   color: var(--bs-secondary-color);
+  text-decoration: none;
+  margin-bottom: 0.9rem;
 }
 
-/* The active pill itself comes from .nav-pills; this is the matching hover, so
-   an unselected tab reacts to the pointer instead of sitting inert. */
-.navbar .navbar-nav .nav-link:hover,
-.navbar .navbar-nav .nav-link:focus-visible {
-  background-color: var(--bs-secondary-bg);
+.rsm-rail-item {
+  position: relative;
+  width: 4.1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.55rem 0 0.45rem;
+  border: 0;
+  border-radius: 0.5rem;
+  background: none;
+  font-size: 0.72rem;
+  line-height: 1.1;
+  color: var(--bs-secondary-color);
+  text-decoration: none;
+}
+
+.rsm-rail-item:hover,
+.rsm-rail-item:focus-visible {
+  color: var(--bs-emphasis-color);
+  background: var(--bs-secondary-bg);
+}
+
+.rsm-rail-item.active {
+  color: var(--bs-emphasis-color);
+  background: var(--bs-secondary-bg);
+}
+
+/* The page you are on also gets a primary-coloured icon, so the rail reads at a
+   glance without relying on the fill alone. */
+.rsm-rail-item.active svg {
+  color: var(--bs-primary);
+}
+
+.rsm-badge {
+  position: absolute;
+  top: 0.2rem;
+  right: 0.7rem;
+  min-width: 1rem;
+  height: 1rem;
+  padding: 0 0.25rem;
+  border-radius: 0.5rem;
+  background: var(--bs-primary);
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 600;
+  line-height: 1rem;
+  text-align: center;
+}
+
+.rsm-rail-foot {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.rsm-version {
+  margin-top: 0.35rem;
+  font-size: 0.68rem;
+  color: var(--bs-secondary-color);
+  text-decoration: none;
+}
+
+.rsm-version:hover {
   color: var(--bs-emphasis-color);
 }
 
-/* Chips are the widest optional thing up here, so their names are capped
-   tighter than the tabs need — the full name is in the tooltip. */
-.rsm-chip {
-  max-width: 8rem;
+.rsm-main {
+  flex: 1;
+  min-width: 0;
+  padding: 1.5rem 0 3rem;
 }
 
-.rsm-dot {
-  width: 0.6rem;
-  height: 0.6rem;
-  flex: 0 0 auto;
-}
-
-/* The tightest band: still one row (the hamburger starts below 992px), but the
-   brand, six tabs, the status summary and the version link together need more
-   than the 960px container gives them — so the brand and the tab padding give a
-   little back rather than the row overflowing. */
-@media (min-width: 992px) and (max-width: 1199.98px) {
-  .navbar .navbar-brand {
-    font-size: 1.05rem;
-  }
-
-  .navbar .navbar-nav .nav-link {
-    padding-inline: 0.5rem;
-  }
-}
-
-/* Stacked in the hamburger menu, the tabs read as a list rather than a row. */
+/* Narrow screens: the rail becomes a bottom bar of the same items. Brand and
+   version drop out; the System pages show the version too. */
 @media (max-width: 991.98px) {
-  .navbar .navbar-nav .nav-link {
-    padding: 0.4rem 0.75rem;
+  .rsm-shell {
+    display: block;
+  }
+
+  .rsm-rail {
+    position: fixed;
+    inset: auto 0 0 0;
+    z-index: 1030;
+    height: auto;
+    width: auto;
+    flex-direction: row;
+    justify-content: space-around;
+    padding: 0.25rem 0.5rem calc(0.25rem + env(safe-area-inset-bottom));
+    border-right: 0;
+    border-top: 1px solid var(--bs-border-color);
+  }
+
+  .rsm-brand,
+  .rsm-version {
+    display: none;
+  }
+
+  .rsm-rail-foot {
+    display: contents;
+  }
+
+  .rsm-rail-item {
+    width: auto;
+    min-width: 3.6rem;
+  }
+
+  .rsm-main {
+    padding-bottom: 5.5rem;
   }
 }
 </style>

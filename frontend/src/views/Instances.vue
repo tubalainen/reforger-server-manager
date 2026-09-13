@@ -1,18 +1,17 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { api } from '../api'
 import { formatBytes } from '../format'
-import Downloads from './Downloads.vue'
-import PortsFirewall from '../components/PortsFirewall.vue'
 import { serverStatus } from '../status'
+
+const router = useRouter()
 
 const instances = ref([])
 const summary = ref(null)
-// New Arma server releases the daily check found, and the embedded Server files
-// view we hand a download to (#177).
+// New Arma server releases the daily check found (#177).
 const updates = ref([])
 const autoDownload = ref(false)
-const downloads = ref(null)
 const templates = ref([])
 const error = ref('')
 const showCreate = ref(false)
@@ -45,12 +44,17 @@ async function load() {
   }
 }
 
-// Start the branch's download in the Server files view below, so its progress
-// and log show up where they always do, then take the user to it.
+// Start the branch's download, then open System › Server files, which picks up the
+// running job and streams its progress and log (#177). Server files used to sit at
+// the bottom of this page; they moved to System in #189.
 async function updateNow(branch) {
-  await downloads.value?.startDownload(branch)
-  document.getElementById('server-files')?.scrollIntoView({ behavior: 'smooth' })
-  await load()
+  try {
+    await api(`/api/serverfiles/${branch}/download`, { method: 'POST' })
+  } catch (e) {
+    error.value = e.message
+    return
+  }
+  router.push({ name: 'server-files' })
 }
 
 // The summary carries whether each running server is still loading or actually
@@ -206,7 +210,9 @@ onUnmounted(() => clearInterval(poll))
         class="btn btn-sm btn-primary ms-auto"
         @click="updateNow(u.branch)"
       >Update server files</button>
-      <a class="btn btn-sm btn-outline-secondary" href="#server-files">Server files</a>
+      <router-link class="btn btn-sm btn-outline-secondary" :to="{ name: 'server-files' }">
+        Server files
+      </router-link>
     </div>
 
     <!-- Summary status bar (issue #12) -->
@@ -244,15 +250,12 @@ onUnmounted(() => clearInterval(poll))
       </div>
     </div>
 
-    <!-- The exact firewall command for this host, from the configured ranges (#51) -->
-    <PortsFirewall />
-
     <div v-if="!instances.length" class="card text-center text-secondary py-5">
       <div class="card-body">
         <p class="fs-1 mb-2">🖥️</p>
         <p class="mb-1">No server instances yet.</p>
         <p class="small mb-0">
-          Create one from a <router-link to="/">template</router-link> to run an Arma
+          Create one from a <router-link :to="{ name: 'templates' }">template</router-link> to run an Arma
           Reforger server in its own container.
         </p>
       </div>
@@ -286,7 +289,8 @@ onUnmounted(() => clearInterval(poll))
 
             <div v-if="!inst.server_files_ready" class="alert alert-warning py-1 px-2 small mb-2">
               {{ inst.branch }} server files not downloaded —
-              <a href="#server-files">get them below</a> before starting.
+              <router-link :to="{ name: 'server-files' }">get them under System › Server files</router-link>
+              before starting.
             </div>
 
             <!-- Template edited since this server started: its config is stale
@@ -333,7 +337,7 @@ onUnmounted(() => clearInterval(poll))
           <div class="modal-body">
             <div v-if="create.error" class="alert alert-danger py-2 small">{{ create.error }}</div>
             <div v-if="!hasTemplates" class="alert alert-info py-2 small">
-              You need a <router-link to="/">template</router-link> first.
+              You need a <router-link :to="{ name: 'templates' }">template</router-link> first.
             </div>
             <template v-else>
               <div class="mb-3">
@@ -453,7 +457,4 @@ onUnmounted(() => clearInterval(poll))
       </div>
     </div>
   </div>
-
-  <!-- Server files (formerly the Downloads tab) live at the bottom here now -->
-  <Downloads id="server-files" ref="downloads" class="border-top pt-4 mt-4" />
 </template>

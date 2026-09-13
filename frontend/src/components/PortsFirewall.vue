@@ -5,6 +5,7 @@ import { api } from '../api'
 const net = ref(null)
 const os = ref('linux')
 const copied = ref(false)
+const error = ref('')
 
 const command = computed(() => (net.value ? net.value.firewall[os.value] : ''))
 
@@ -22,23 +23,27 @@ onMounted(async () => {
   try {
     net.value = await api('/api/system/network')
     os.value = net.value.host
-  } catch {
-    /* the panel simply stays hidden */
+  } catch (e) {
+    // This used to be an optional panel that could just hide; on its own page (#189)
+    // a blank screen would say nothing, so say what went wrong.
+    error.value = e.message
   }
 })
 </script>
 
 <template>
-  <details v-if="net" class="card mb-3">
-    <summary class="card-body py-2 px-3 d-flex align-items-center gap-2" style="cursor: pointer">
-      <span class="fw-semibold">Ports &amp; firewall</span>
+  <div v-if="error" class="alert alert-warning py-2">
+    Could not read this host's port ranges: {{ error }}
+  </div>
+  <div v-else-if="net" class="card mb-3">
+    <div class="card-header py-2 px-3 d-flex align-items-center gap-2">
       <span class="small text-secondary">
         game {{ net.game_port_range }}/udp · A2S {{ net.a2s_port_range }}/udp
       </span>
       <span class="badge text-bg-secondary ms-auto">{{ os === 'windows' ? 'Windows' : 'Linux' }}</span>
-    </summary>
+    </div>
 
-    <div class="card-body border-top pt-3">
+    <div class="card-body">
       <p class="small text-secondary">
         Each instance leases one UDP port of each kind from these ranges. Players need the
         <strong>game</strong> port (to join) and the <strong>A2S</strong> port (to see the server in
@@ -76,5 +81,6 @@ onMounted(async () => {
         Then forward the same UDP ranges on your router to this machine's LAN IP.
       </p>
     </div>
-  </details>
+  </div>
+  <p v-else class="text-secondary">Loading…</p>
 </template>

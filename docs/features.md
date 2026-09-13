@@ -55,6 +55,8 @@ From the instance view you can:
 
 ## Downloads and updates
 
+All of this lives under **System › Server files**.
+
 - Download stable and experimental Arma Reforger server files with SteamCMD.
 - Watch download progress and recent output in real time.
 - Check daily for server and Workshop updates.
