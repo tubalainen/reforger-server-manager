@@ -539,6 +539,17 @@ const faq = [
             button.
           </li>
           <li class="mb-2">
+            <strong>Changing settings:</strong> the Settings tab is one form. Edit as much as
+            you like — each changed field is marked, and the bar at the bottom lists what is
+            unsaved — then <em>Save changes</em> once, or <em>Discard</em>. The game version,
+            template and ports rebuild the server's container, so they are locked while it
+            runs and the tab says so; the name, restart behaviour and daily restarts can change
+            any time. Changing the template asks first and offers to back up the saved game.
+            If one part cannot be saved (a port another server already uses, say), the rest
+            is saved, the message says which part failed, and it stays in the form to fix.
+            Leaving the tab with unsaved changes asks before throwing them away.
+          </li>
+          <li class="mb-2">
             <strong>The Servers page:</strong> the whole host at a glance — how many
             servers are online, players, and CPU and memory across all of them, each with
             a line for the last hour. Below that, one <em>Needs attention</em> list gathers
