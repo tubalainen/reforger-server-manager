@@ -239,7 +239,7 @@ async function save() {
 <template>
   <div class="container" style="max-width: 60rem">
     <div class="d-flex justify-content-between align-items-center mb-3">
-      <h1 class="h3 mb-0">{{ editing ? 'Edit mod template' : 'New mod template' }}</h1>
+      <h1 class="h3 mb-0">{{ editing ? 'Edit mod list' : 'New mod list' }}</h1>
       <button class="btn btn-outline-secondary" @click="router.push({ name: 'mod-templates' })">
         Back
       </button>
@@ -426,7 +426,7 @@ async function save() {
           Cancel
         </button>
         <button class="btn btn-primary" :disabled="!canSave" @click="save">
-          {{ saving ? 'Saving…' : editing ? 'Save changes' : 'Create mod template' }}
+          {{ saving ? 'Saving…' : editing ? 'Save changes' : 'Create mod list' }}
         </button>
       </div>
     </template>

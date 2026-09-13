@@ -38,7 +38,7 @@ function downloadBackup() {
 
 const KINDS = [
   { key: 'server_templates', label: 'Server templates', one: 'server template' },
-  { key: 'mod_templates', label: 'Mod templates', one: 'mod template' },
+  { key: 'mod_templates', label: 'Mod lists', one: 'mod list' },
 ]
 
 function itemsOf(kind) {
@@ -169,11 +169,18 @@ onMounted(loadSummary)
     <h1 class="h3 mb-3">Export &amp; import</h1>
 
     <p class="text-secondary small">
-      A backup holds your <strong>server templates</strong> and
-      <strong>mod templates</strong> — everything you built, in one file you can keep
-      somewhere safe, move to another machine, or restore after a rebuild. Server
-      instances are not part of it: a running server is a container, a port lease and a
-      folder of saved games on <em>this</em> host, and none of that travels in a file.
+      Your <strong>server templates</strong> and <strong>mod lists</strong> in one file.
+      <HelpTip label="What export and import cover">
+        <p>
+          Everything you built, in one file you can keep somewhere safe, move to another
+          machine, or restore after a rebuild.
+        </p>
+        <p>
+          Servers themselves are not part of it: a running server is a container, a port
+          lease and a folder of saved games on <em>this</em> host, and none of that travels
+          in a file. A server's world has its own backups, on its Saves tab.
+        </p>
+      </HelpTip>
     </p>
 
     <div v-if="error" class="alert alert-warning py-2">{{ error }}</div>
@@ -187,7 +194,7 @@ onMounted(loadSummary)
           <strong>{{ summary.server_templates }}</strong>
           server template{{ summary.server_templates === 1 ? '' : 's' }} and
           <strong>{{ summary.mod_templates }}</strong>
-          mod template{{ summary.mod_templates === 1 ? '' : 's' }} — with their scenario,
+          mod list{{ summary.mod_templates === 1 ? '' : 's' }} — with their scenario,
           mods and load order, every setting, the engine launch parameters and any custom
           config keys you added by hand.
         </p>

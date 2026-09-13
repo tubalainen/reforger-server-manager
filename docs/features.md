@@ -6,7 +6,7 @@ Reforger Server Manager brings the common setup and day-to-day operations for Ar
 
 ## Server templates
 
-Templates define how instances are created. They cover the scenario, Workshop mods, player limits, mission headers, admins, whitelist, bans, RCON, operating settings, and supported custom `config.json` fields.
+Templates define how servers are created. They cover the scenario, Workshop mods, player limits, mission headers, admins, whitelist, bans, RCON, operating settings, and supported custom `config.json` fields.
 
 ![Server templates](images/01-server-templates.png)
 
@@ -26,11 +26,11 @@ Key template capabilities include:
 - Import an existing server `config.json` or export a generated configuration.
 - Create reusable mod lists and apply them to server templates.
 - Track known mods, dependency relationships, usage, update status, and local Workshop storage.
-- Keep template change logs and see which instances still use an older revision.
+- Keep template change logs and see which servers still use an older revision.
 
-## Instance operations
+## Server operations
 
-Each instance gets its own ports, configuration, profile, Workshop content, and lifecycle controls while sharing downloaded server binaries where appropriate.
+Each server gets its own ports, configuration, profile, Workshop content, and lifecycle controls while sharing downloaded server binaries where appropriate.
 
 The **Servers** page is the overview of the whole host:
 
@@ -39,20 +39,22 @@ The **Servers** page is the overview of the whole host:
 - A row per server with status, players against the limit, FPS, CPU, memory, uptime and next scheduled restart, plus Start, Stop, Restart and Delete.
 - Restart every running server at once, after a confirmation.
 
-![Instance detail](images/05-instance-detail.png)
+![Servers overview](images/06-servers-overview.png)
+
+![A server's page](images/05-instance-detail.png)
 
 A server's own page keeps every server listed down the left and splits into five tabs — Overview, Console, Players, Saves and Settings. Settings is one form with one Save: changed fields are marked, fields that need the server stopped are locked with the reason, and leaving with unsaved changes asks first. From it you can:
 
 - Start, stop, restart, and delete a server.
 - Follow live logs and copy useful diagnostic output.
 - View player count, process state, resource use, and server metadata.
-- Recover instances after manager or host restarts.
+- Recover servers after manager or host restarts.
 - Configure auto-start and scheduled restarts.
-- Apply template changes to existing instances.
+- Apply template changes to existing servers.
 - See assigned game, A2S, and RCON ports without managing leases manually.
 - Back up and restore the saved game data — the world, plus the databases the scenario
   and its mods keep beside it — download a backup or upload one back, and have the
-  manager take one automatically before you switch the instance to another template.
+  manager take one automatically before you switch the server to another template.
 - Restore a world from a template the server no longer runs: each backup is matched
   against the current scenario and hive id, and the template that reads it can be put
   back in the same action.
@@ -67,7 +69,7 @@ All of this lives under **System › Server files**.
 - Download stable and experimental Arma Reforger server files with SteamCMD.
 - Watch download progress and recent output in real time.
 - Check daily for server and Workshop updates.
-- Optionally download new builds automatically and restart affected instances.
+- Optionally download new builds automatically and restart affected servers.
 - Pull or replace the configurable server runtime image independently of manager updates.
 
 ## Configuration and data
@@ -75,10 +77,10 @@ All of this lives under **System › Server files**.
 - Edit known settings with forms or use the inline JSON editor.
 - Preserve valid unknown top-level keys and custom `game` or `operating` properties during form edits.
 - Validate the generated configuration before saving it.
-- Back up and restore every server template and mod template as one file.
+- Back up and restore every server template and mod list as one file.
 - Inspect Workshop storage and remove content that is no longer required.
 
-Port values are assigned per instance by the manager. Imported port settings therefore do not override an instance's port lease.
+Port values are assigned per server by the manager. Imported port settings therefore do not override a server's port lease.
 
 ## Access and safety
 

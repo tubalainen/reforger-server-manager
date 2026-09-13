@@ -25,7 +25,8 @@ const router = createRouter({
     return { top: 0 }
   },
   // Route names are what the views link by, so they stayed put when the paths
-  // moved under Servers, Library and System (#189).
+  // moved under Servers, Library and System, and when mod templates became mod
+  // lists (#189).
   routes: [
     { path: '/login', name: 'login', component: Login, meta: { public: true } },
     { path: '/servers', name: 'instances', component: Instances },
@@ -45,10 +46,10 @@ const router = createRouter({
           component: TemplateWizard,
           props: true,
         },
-        { path: 'mod-templates', name: 'mod-templates', component: ModTemplates },
-        { path: 'mod-templates/new', name: 'mod-template-new', component: ModTemplateEditor },
+        { path: 'mod-lists', name: 'mod-templates', component: ModTemplates },
+        { path: 'mod-lists/new', name: 'mod-template-new', component: ModTemplateEditor },
         {
-          path: 'mod-templates/:id/edit',
+          path: 'mod-lists/:id/edit',
           name: 'mod-template-edit',
           component: ModTemplateEditor,
           props: true,

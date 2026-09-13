@@ -8,6 +8,7 @@ import { computed, onMounted, ref } from 'vue'
 import { api } from '../api'
 import { allModIds, buildForest, expandablePaths, subtreeIds } from '../modtree'
 import ModTreeNode from '../components/ModTreeNode.vue'
+import HelpTip from '../components/HelpTip.vue'
 
 const mods = ref([])
 const tree = ref({ edges: {}, names: {}, types: {}, missing: [], resolved: true })
@@ -191,12 +192,20 @@ onMounted(load)
     </div>
 
     <p class="text-secondary small">
-      Every mod ever baked into a server template or put on a mod template, kept here even
-      after that template is gone. Each entry is tagged with its Workshop type — <strong>Scenario</strong>,
-      <strong>Terrain</strong> or <strong>Mod</strong> — and its category tags. Tick mods
-      at any level and add them to a template in one click. Green badges show where a mod
-      is baked &amp; downloaded to a server, with its version. Pin a mod as
-      <strong>persist</strong> so a rescan or delete never removes it.
+      Every mod you have used, and where it is used now.
+      <HelpTip label="About the mods overview">
+        <p>
+          Every mod ever baked into a server template or put on a mod list, kept here even
+          after that template is gone. Each entry is tagged with its Workshop type —
+          <strong>Scenario</strong>, <strong>Terrain</strong> or <strong>Mod</strong> — and
+          its category tags.
+        </p>
+        <p>
+          Tick mods at any level and add them to a template in one click. Green badges show
+          where a mod is baked &amp; downloaded to a server, with its version. Pin a mod as
+          <strong>persist</strong> so a rescan or delete never removes it.
+        </p>
+      </HelpTip>
     </p>
 
     <div v-if="error" class="alert alert-warning py-2">{{ error }}</div>

@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, reactive, nextTick } from 'vue'
 import { api } from '../api'
 import { formatBytes, formatTimestamp } from '../format'
+import HelpTip from '../components/HelpTip.vue'
 
 const state = reactive({ branches: [], docker: true, error: '', steamcmd_image: '', server_image: '' })
 const logs = reactive({})
@@ -237,8 +238,17 @@ onUnmounted(() => {
           <div>
             <h2 class="h5 mb-1">Server runtime image</h2>
             <p class="text-secondary small mb-0">
-              Each instance runs from this image — <code>{{ state.server_image }}</code>.
-              It is separate from the server files below and must be pulled once.
+              Every server runs from this image, pulled once.
+              <HelpTip label="About the runtime image">
+                <p>
+                  The Docker image each server's container is created from:
+                  <code>{{ state.server_image }}</code>.
+                </p>
+                <p>
+                  It is separate from the game's server files below. Set
+                  <code>REFORGER_SERVER_IMAGE</code> in <code>.env</code> to use another one.
+                </p>
+              </HelpTip>
             </p>
           </div>
           <span
@@ -269,7 +279,7 @@ onUnmounted(() => {
           {{ img.job.error }}
         </div>
         <div v-if="img.job && img.job.status === 'success'" class="alert alert-success py-2 small mb-2">
-          Image pulled — you can start your server instances now.
+          Image pulled — you can start your servers now.
         </div>
 
         <button
@@ -327,8 +337,8 @@ onUnmounted(() => {
           <label for="autoDownload" class="form-check-label">
             Download new server files automatically
             <small class="text-secondary d-block">
-              Off: nothing is downloaded on its own — you just get a prompt at the top of
-              this page when an update is waiting.
+              Off: nothing is downloaded on its own — you get a prompt on the Servers page
+              when an update is waiting.
             </small>
           </label>
         </div>
@@ -344,7 +354,7 @@ onUnmounted(() => {
           <label for="autoRestartOnUpdate" class="form-check-label">
             Restart my servers onto the new build once it is downloaded
             <small class="text-secondary d-block">
-              Every instance of that branch that should be running is restarted, which
+              Every server on that branch that should be running is restarted, which
               disconnects the players on it. Without this the files are updated but each
               server keeps running the build it started with.
             </small>

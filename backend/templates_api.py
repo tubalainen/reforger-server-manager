@@ -341,7 +341,7 @@ async def delete_template(
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    f"Can't delete '{t.name}': used by {len(used)} instance(s): "
+                    f"Can't delete '{t.name}': used by {len(used)} server(s): "
                     f"{listed}. Repoint or delete them first."
                 ),
             )

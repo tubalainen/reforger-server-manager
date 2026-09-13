@@ -116,7 +116,7 @@ def _instance_context(instance_id: int) -> dict:
     with Session(get_engine()) as session:
         inst = session.get(Instance, instance_id)
         if not inst:
-            raise InstanceError("Instance not found")
+            raise InstanceError("Server not found")
         template = session.get(Template, inst.template_id)
         persistence = (
             template_service.persistence_summary(template.config_json)
@@ -325,7 +325,7 @@ def overview(instance_id: int) -> dict:
     """Everything the backups card needs in one call."""
     with Session(get_engine()) as session:
         if not session.get(Instance, instance_id):
-            raise InstanceError("Instance not found")
+            raise InstanceError("Server not found")
     _sweep_stray_sidecars(instance_id)
     running = (
         instance_service.container_status(instance_id) == "running"
@@ -613,7 +613,7 @@ def store_upload(instance_id: int, filename: str, temp_path: Path) -> dict:
     """Adopt a validated archive onto this instance's shelf as a new backup."""
     with Session(get_engine()) as session:
         if not session.get(Instance, instance_id):
-            raise InstanceError("Instance not found")
+            raise InstanceError("Server not found")
     inspected = inspect_upload(temp_path)
 
     directory = backups_dir(instance_id)
@@ -684,7 +684,7 @@ def restore_backup(
     archive = archive_path(instance_id, backup_id)
     with Session(get_engine()) as session:
         if not session.get(Instance, instance_id):
-            raise InstanceError("Instance not found")
+            raise InstanceError("Server not found")
     if instance_service.container_status(instance_id) == "running":
         raise InstanceError("Stop the server before restoring a backup")
     if not docker_service.ping():

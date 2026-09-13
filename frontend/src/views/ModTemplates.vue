@@ -6,6 +6,7 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
 import ChangeLogModal from '../components/ChangeLogModal.vue'
+import HelpTip from '../components/HelpTip.vue'
 
 const router = useRouter()
 const modTemplates = ref([])
@@ -28,7 +29,7 @@ async function load() {
 
 async function remove(mt) {
   if (!confirm(
-    `Delete the mod template "${mt.name}"?\n\nServer templates you built from it keep their mods — this only removes the list itself, and its change log.`,
+    `Delete the mod list "${mt.name}"?\n\nServer templates you built from it keep their mods — this only removes the list itself, and its change log.`,
   )) return
   try {
     await api(`/api/mod-templates/${mt.id}`, { method: 'DELETE' })
@@ -44,17 +45,22 @@ onMounted(load)
 <template>
   <div class="container">
     <div class="d-flex justify-content-between align-items-center mb-3">
-      <h1 class="h3 mb-0">Mod templates</h1>
+      <h1 class="h3 mb-0">Mod lists</h1>
       <button class="btn btn-primary" @click="router.push({ name: 'mod-template-new' })">
-        + New mod template
+        + New mod list
       </button>
     </div>
 
     <p class="text-secondary small">
-      A mod template is a saved list of mods — nothing else, no scenario and no server
-      settings. Build the set once here, then load it into the <strong>Mods</strong> step of
-      any server template, in the order you arranged it. Every change is recorded in the
-      mod template's own change log.
+      Sets of mods you reuse, ready to load into any server template.
+      <HelpTip label="About mod lists">
+        <p>
+          A mod list is a saved set of mods — nothing else, no scenario and no server
+          settings. Build the set once here, then load it into the <strong>Mods</strong>
+          step of any server template, in the order you arranged it.
+        </p>
+        <p>Every change is recorded in the list's own change log.</p>
+      </HelpTip>
     </p>
 
     <div v-if="error" class="alert alert-warning py-2">{{ error }}</div>
@@ -64,7 +70,7 @@ onMounted(load)
     <div v-else-if="!modTemplates.length" class="card text-center text-secondary py-5">
       <div class="card-body">
         <p class="fs-1 mb-2">🧰</p>
-        <p class="mb-1">No mod templates yet.</p>
+        <p class="mb-1">No mod lists yet.</p>
         <p class="small mb-0">
           Create one to keep a set of mods you use over and over — a milsim pack, a
           training set — and load it into any server template in two clicks.

@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../api'
+import HelpTip from './HelpTip.vue'
 
 const net = ref(null)
 const os = ref('linux')
@@ -45,10 +46,16 @@ onMounted(async () => {
 
     <div class="card-body">
       <p class="small text-secondary">
-        Each instance leases one UDP port of each kind from these ranges. Players need the
-        <strong>game</strong> port (to join) and the <strong>A2S</strong> port (to see the server in
-        the browser) reachable — open them in this machine's firewall and forward them on your
-        router. Leave RCON ({{ net.rcon_port_range }}) and the web GUI closed to the internet.
+        Open the game and A2S ranges to players; keep RCON and the web GUI private.
+        <HelpTip label="Which ports players need">
+          <p>
+            Each server leases one UDP port of each kind from these ranges. Players need the
+            <strong>game</strong> port (to join) and the <strong>A2S</strong> port (to see the
+            server in the browser) reachable — open them in this machine's firewall and forward
+            them on your router.
+          </p>
+          <p>Leave RCON ({{ net.rcon_port_range }}) and the web GUI closed to the internet.</p>
+        </HelpTip>
       </p>
 
       <div class="btn-group btn-group-sm mb-2" role="group">

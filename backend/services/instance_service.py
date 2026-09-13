@@ -310,7 +310,7 @@ def create_instance(
         raise InstanceError(f"Unknown branch '{branch}'")
     with Session(get_engine()) as session:
         if session.exec(select(Instance).where(Instance.name == name)).first():
-            raise InstanceError(f"An instance named '{name}' already exists")
+            raise InstanceError(f"A server named '{name}' already exists")
         if not session.get(Template, template_id):
             raise InstanceError("Template not found")
         g_used, a_used, r_used = used_ports(session)
@@ -339,9 +339,9 @@ def create_instance(
                 session.delete(stale)
                 session.commit()
         raise InstanceError(
-            f"This id has data left over from a deleted instance at "
+            f"This id has data left over from a deleted server at "
             f"data/instances/{inst.id}, and it could not be moved aside ({exc}). "
-            "Move or delete that folder, then create the instance again."
+            "Move or delete that folder, then create the server again."
         ) from exc
 
     logger.info("Created instance %s (ports g=%s a2s=%s rcon=%s)", name, game, a2s, rcon)
@@ -354,7 +354,7 @@ def _resolve_port(kind: str, requested: int | None, used: set[int], rng: tuple[i
         if not (1 <= requested <= 65535):
             raise InstanceError(f"{kind} port {requested} is out of range")
         if requested in used:
-            raise InstanceError(f"{kind} port {requested} is already used by another instance")
+            raise InstanceError(f"{kind} port {requested} is already used by another server")
         return requested
     try:
         return ports.first_free(*rng, used)
@@ -374,11 +374,11 @@ def update_ports(
     removed here and recreated with the new ports on the next start.
     """
     if container_status(instance_id) == "running":
-        raise InstanceError("Stop the instance before changing its ports")
+        raise InstanceError("Stop the server before changing its ports")
     with Session(get_engine()) as session:
         inst = session.get(Instance, instance_id)
         if not inst:
-            raise InstanceError("Instance not found")
+            raise InstanceError("Server not found")
         g_used, a_used, r_used = used_ports(session, exclude_id=instance_id)
         inst.game_port = _resolve_port(
             "game", game_port if game_port is not None else inst.game_port,
@@ -410,11 +410,11 @@ def set_instance_template(instance_id: int, template_id: int) -> None:
     (same mechanism as a port change). Blocked while the server is running.
     """
     if container_status(instance_id) == "running":
-        raise InstanceError("Stop the instance before changing its template")
+        raise InstanceError("Stop the server before changing its template")
     with Session(get_engine()) as session:
         inst = session.get(Instance, instance_id)
         if not inst:
-            raise InstanceError("Instance not found")
+            raise InstanceError("Server not found")
         if not session.get(Template, template_id):
             raise InstanceError("Template not found")
         inst.template_id = template_id
@@ -458,19 +458,19 @@ def edit_instance(
     with Session(get_engine()) as session:
         inst = session.get(Instance, instance_id)
         if not inst:
-            raise InstanceError("Instance not found")
+            raise InstanceError("Server not found")
         branch_changing = branch is not None and branch != inst.branch
         if branch_changing:
             if branch not in config.BRANCHES:
                 raise InstanceError(f"Unknown branch '{branch}'")
             if container_status(instance_id) == "running":
-                raise InstanceError("Stop the instance before changing its branch")
+                raise InstanceError("Stop the server before changing its game version")
         if name is not None and name != inst.name:
             clash = session.exec(
                 select(Instance).where(Instance.name == name, Instance.id != instance_id)
             ).first()
             if clash:
-                raise InstanceError(f"An instance named '{name}' already exists")
+                raise InstanceError(f"A server named '{name}' already exists")
             inst.name = name
         if branch_changing:
             inst.branch = branch
@@ -489,7 +489,7 @@ def edit_instance(
 def _template_config(session: Session, inst: Instance) -> str:
     template = session.get(Template, inst.template_id)
     if not template:
-        raise InstanceError("Template for this instance no longer exists")
+        raise InstanceError("This server's template no longer exists")
     return template.config_json
 
 
@@ -666,7 +666,7 @@ def start_instance(instance_id: int) -> None:
     with Session(get_engine()) as session:
         inst = session.get(Instance, instance_id)
         if not inst:
-            raise InstanceError("Instance not found")
+            raise InstanceError("Server not found")
         if not server_files_ready(inst.branch):
             raise InstanceError(
                 f"The {inst.branch} server files are not downloaded yet — "
@@ -826,7 +826,7 @@ def stop_instance(instance_id: int) -> None:
     with Session(get_engine()) as session:
         inst = session.get(Instance, instance_id)
         if not inst:
-            raise InstanceError("Instance not found")
+            raise InstanceError("Server not found")
         inst.desired_state = "stopped"
         session.add(inst)
         session.commit()
@@ -897,7 +897,7 @@ def _purge_instance_dir(instance_id: int) -> None:
     except DockerException as exc:
         logger.warning("Purging data for instance %s failed: %s", instance_id, exc)
         raise InstanceError(
-            "Could not remove this instance's data. Check the manager log for details."
+            "Could not remove this server's data. Check the manager log for details."
         ) from exc
 
 
@@ -1111,7 +1111,7 @@ def instance_stats(instance_id: int) -> dict:
     with Session(get_engine()) as session:
         inst = session.get(Instance, instance_id)
         if not inst:
-            raise InstanceError("Instance not found")
+            raise InstanceError("Server not found")
         game_port = inst.game_port
 
     public = config.settings.public_address
@@ -1383,7 +1383,7 @@ def instance_data(instance_id: int) -> dict:
     with Session(get_engine()) as session:
         inst = session.get(Instance, instance_id)
         if not inst:
-            raise InstanceError("Instance not found")
+            raise InstanceError("Server not found")
         # The save row is the persistence settings' output, so the GUI can say
         # which template wrote it and whether that template configures
         # persistence at all (#160). A template deleted out from under the
@@ -1432,13 +1432,13 @@ def clear_instance_data(instance_id: int, targets: list[str]) -> dict:
         raise InstanceError("Nothing selected to clear")
     with Session(get_engine()) as session:
         if not session.get(Instance, instance_id):
-            raise InstanceError("Instance not found")
+            raise InstanceError("Server not found")
     if container_status(instance_id) == "running":
         raise InstanceError("Stop the server before clearing its data")
 
     idir = Path(config.settings.data_dir) / "instances" / str(instance_id)
     if not idir.is_dir():
-        raise InstanceError("Instance has no data directory yet")
+        raise InstanceError("This server has no data directory yet")
 
     removed = []
     victims: list[Path] = []
@@ -1638,7 +1638,7 @@ def set_restart_settings(
     with Session(get_engine()) as session:
         inst = session.get(Instance, instance_id)
         if not inst:
-            raise InstanceError("Instance not found")
+            raise InstanceError("Server not found")
         if auto_restart is not None:
             inst.auto_restart = auto_restart
         if auto_start is not None:
@@ -1702,7 +1702,7 @@ def set_restart_schedule(instance_id: int, times: list[str]) -> None:
     with Session(get_engine()) as session:
         inst = session.get(Instance, instance_id)
         if not inst:
-            raise InstanceError("Instance not found")
+            raise InstanceError("Server not found")
         if normalised:
             inst.restart_schedule_json = json.dumps({"times": normalised})
             inst.last_scheduled_restart = datetime.now()
