@@ -4,6 +4,8 @@ import { useRouter } from 'vue-router'
 import { api, clientId } from '../api'
 import { formatBytes } from '../format'
 import { randomServerName } from '../serverName'
+import CollapsibleCard from '../components/CollapsibleCard.vue'
+import HelpTip from '../components/HelpTip.vue'
 
 // CodeMirror is ~130 KB gzipped and only needed once someone clicks "Edit JSON",
 // which most users never will — so it gets its own chunk instead of riding along
@@ -1452,23 +1454,19 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="container">
-    <div class="d-flex justify-content-between align-items-center mb-3">
-      <h1 class="h3 mb-0">{{ editing ? 'Edit template' : 'New template' }}</h1>
-      <div class="d-flex align-items-center gap-2">
-        <span v-if="savedFlash" class="text-success small">✓ Saved</span>
-        <button
-          v-if="editing && step > 1"
-          class="btn btn-primary btn-sm"
-          :disabled="saving || locked"
-          title="Save the template and keep editing"
-          @click="saveAndStay"
-        >
-          {{ saving ? 'Saving…' : 'Save changes' }}
-        </button>
-        <button class="btn btn-outline-secondary btn-sm" @click="router.push({ name: 'templates' })">
-          Cancel
-        </button>
+    <!-- Header: what is being edited. Saving lives in the action bar under the step. -->
+    <div class="d-flex flex-wrap align-items-center gap-3 mb-3">
+      <div class="me-auto" style="min-width: 0">
+        <h1 class="h3 mb-0">{{ editing ? 'Edit template' : 'New template' }}</h1>
+        <div class="small text-secondary text-truncate">
+          {{ spec.name || (editing ? '' : 'Not named yet') }}<template
+            v-if="spec.scenario_id"
+          >{{ spec.name || !editing ? ' · ' : '' }}{{ scenarioDisplayName }}</template>
+        </div>
       </div>
+      <button class="btn btn-outline-secondary" @click="router.push({ name: 'templates' })">
+        Cancel
+      </button>
     </div>
 
     <div v-if="locked" class="alert alert-warning py-2">
@@ -1476,19 +1474,22 @@ onBeforeUnmount(() => {
       You can still look around — this page unlocks by itself when the other editor leaves.
     </div>
 
-    <!-- Stepper -->
-    <ul class="nav nav-pills mb-4">
-      <li v-for="(label, i) in steps" :key="label" class="nav-item">
-        <button
-          class="nav-link"
-          :class="{ active: step === i + 1 }"
-          :disabled="i + 1 > 1 && !spec.scenario_id"
-          @click="step = i + 1"
-        >
-          {{ i + 1 }}. {{ label }}
-        </button>
-      </li>
-    </ul>
+    <!-- The four steps, in order: numbered because the order is real (#189) -->
+    <nav class="rsm-steps mb-4" aria-label="Template steps">
+      <button
+        v-for="(label, i) in steps"
+        :key="label"
+        type="button"
+        class="rsm-step"
+        :class="{ active: step === i + 1 }"
+        :aria-current="step === i + 1 ? 'step' : undefined"
+        :disabled="i + 1 > 1 && !spec.scenario_id"
+        @click="step = i + 1"
+      >
+        <span class="rsm-step-num">{{ i + 1 }}</span>
+        <span>{{ label }}</span>
+      </button>
+    </nav>
 
     <div v-if="error" class="alert alert-danger py-2">{{ error }}</div>
 
@@ -1553,11 +1554,11 @@ onBeforeUnmount(() => {
             {{ spec.scenario_id
               ? 'To replace the scenario, search the Workshop and pick a new one — you\'ll be asked to confirm.'
               : 'Search the Workshop and pick a scenario. Its mod and all dependencies are added automatically.' }}
-          </p>
-          <p class="text-secondary small">
-            Search <strong>scenarios</strong> or <strong>terrains</strong> — a terrain (map)
-            usually ships playable scenarios of its own, and often more than one. Pick the
-            asset, then choose which of its scenarios this server runs.
+            <HelpTip label="Scenarios and terrains">
+              Search <strong>scenarios</strong> or <strong>terrains</strong> — a terrain (map)
+              usually ships playable scenarios of its own, and often more than one. Pick the
+              asset, then choose which of its scenarios this server runs.
+            </HelpTip>
           </p>
           <div class="input-group mb-3">
             <input
@@ -1639,19 +1640,23 @@ onBeforeUnmount(() => {
         <!-- STEP 2: MODS -->
         <div v-show="step === 2">
           <p class="text-secondary">
-            Add mods on top of the scenario. Only the mod itself goes in the config — its
-            sub-dependencies are downloaded by the server automatically, so you don't add or
-            remove them here, though you can move them in the list. Mods follow the latest
-            Workshop release unless you lock a version — only locked versions are written to
-            config.json.
-          </p>
-          <p class="text-secondary small">
-            <span class="badge text-bg-info">scenario</span> provides the selected scenario ·
-            <span class="badge text-bg-secondary">scenario dependency</span> needed for the
-            scenario to work ·
-            <span class="badge text-bg-primary">addon</span> extra mod you chose ·
-            <span class="badge text-bg-warning">scenario mod</span> an addon that carries its
-            own (unused) scenario
+            Add mods on top of the scenario.
+            <HelpTip label="How mods and their badges work">
+              <p>
+                Only the mod itself goes in the config — its sub-dependencies are downloaded by
+                the server automatically, so you don't add or remove them here, though you can
+                move them in the list. Mods follow the latest Workshop release unless you lock a
+                version — only locked versions are written to config.json.
+              </p>
+              <p>
+                <span class="badge text-bg-info">scenario</span> provides the selected scenario ·
+                <span class="badge text-bg-secondary">scenario dependency</span> needed for the
+                scenario to work ·
+                <span class="badge text-bg-primary">addon</span> extra mod you chose ·
+                <span class="badge text-bg-warning">scenario mod</span> an addon that carries its
+                own (unused) scenario
+              </p>
+            </HelpTip>
           </p>
 
           <!-- A second scenario slipped in as a mod (#69): a server runs one. -->
@@ -1788,7 +1793,7 @@ onBeforeUnmount(() => {
           </div>
 
           <!-- Enabled mods overview -->
-          <div class="d-flex justify-content-between align-items-center mt-3 mb-2">
+          <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-3 mb-2">
             <h2 class="h6 mb-0">
               Enabled mods ({{ spec.mods.length }})
               <small v-if="hydratingVersions" class="text-secondary fw-normal ms-1">
@@ -1796,44 +1801,46 @@ onBeforeUnmount(() => {
                 fetching version history…
               </small>
             </h2>
-            <div class="btn-group btn-group-sm">
+            <!-- Wraps as a row of separate buttons: a button group broke its labels
+                 mid-word once the column got narrow (#189). -->
+            <div class="d-flex flex-wrap gap-1">
               <button
-                class="btn btn-outline-secondary"
+                class="btn btn-sm btn-outline-secondary text-nowrap"
                 :disabled="spec.mods.length < 2"
                 title="Order the mods with an AI — copy the prompt into ChatGPT, Gemini or Claude, or ask a service you have configured"
                 @click="openAiOrder"
               >✨ AI order…</button>
               <button
-                class="btn btn-outline-secondary"
+                class="btn btn-sm btn-outline-secondary text-nowrap"
                 :disabled="spec.mods.length < 2"
                 title="Reorder so every mod is listed after the mods it requires, leaving everything else where it is"
                 @click="sortByDependencies"
               >Dependencies first</button>
               <button
-                class="btn btn-outline-secondary"
+                class="btn btn-sm btn-outline-secondary text-nowrap"
                 :disabled="spec.mods.length < 2"
                 title="Sort the mods alphabetically — this is the order saved to config.json"
                 @click="sortByName"
               >Sort A–Z</button>
               <button
-                class="btn btn-outline-secondary"
+                class="btn btn-sm btn-outline-secondary text-nowrap"
                 :disabled="spec.mods.length < 2"
                 title="Sort the mods in the order they were added"
                 @click="sortByAdded"
               >Sort as added</button>
               <button
-                class="btn btn-outline-secondary"
+                class="btn btn-sm btn-outline-secondary text-nowrap"
                 :disabled="!anyLocked"
                 title="Clear every version lock so all mods follow the latest Workshop release"
                 @click="unlockAll"
               >Unlock all</button>
               <button
-                class="btn btn-outline-secondary"
+                class="btn btn-sm btn-outline-secondary text-nowrap"
                 :disabled="!spec.mods.length"
                 title="Save the enabled mod list to a JSON file"
                 @click="exportMods"
               >Export JSON</button>
-              <label class="btn btn-outline-secondary mb-0" title="Load an enabled mod list from a JSON file">
+              <label class="btn btn-sm btn-outline-secondary text-nowrap mb-0" title="Load an enabled mod list from a JSON file">
                 Import JSON
                 <input
                   ref="modsFileInput"
@@ -2203,686 +2210,675 @@ onBeforeUnmount(() => {
             Max players was set to <strong>{{ maxPlayersNotice }}</strong> to match
             "{{ scenarioDisplayName }}". Override it below if you want.
           </div>
-          <div class="row g-3">
-            <div class="col-12">
-              <label class="form-label" for="game-name">Server name (in-game browser)</label>
-              <div class="input-group">
-                <input id="game-name" v-model="spec.game_name" class="form-control" />
-                <button
-                  class="btn btn-outline-secondary"
-                  type="button"
-                  title="Suggest another name"
-                  @click="spec.game_name = randomServerName()"
-                >🎲 Randomize</button>
-              </div>
-              <div class="form-text">
-                This is what players see in the in-game server browser. New templates get
-                a name of their own so yours is not one of many identical entries.
-              </div>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">Join password</label>
-              <input v-model="spec.password" class="form-control" placeholder="(none)" />
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">Admin password</label>
-              <input v-model="spec.admin_password" class="form-control" placeholder="(none)" />
-            </div>
-            <div class="col-md-4">
-              <label class="form-label">Max players</label>
-              <input v-model.number="spec.max_players" type="number" min="1" max="256" class="form-control" />
-              <!-- Seeded from the scenario's Workshop player count, always overridable (#65) -->
-              <small v-if="spec.scenario_player_count" class="d-block mt-1">
-                <span v-if="maxPlayersOverridden" class="text-warning-emphasis">
-                  "{{ scenarioDisplayName }}" is built for
-                  {{ spec.scenario_player_count }} players.
-                  <a href="#" class="ms-1" @click.prevent="resetMaxPlayers">Use {{ spec.scenario_player_count }}</a>
-                </span>
-                <span v-else class="text-secondary">
-                  Matches the {{ spec.scenario_player_count }} players
-                  "{{ scenarioDisplayName }}" declares. Change it if you want.
-                </span>
-              </small>
-              <small v-else class="d-block mt-1 text-secondary">
-                This scenario declares no player count — pick one yourself.
-              </small>
-            </div>
-            <div class="col-md-4">
-              <label class="form-label">Server view distance</label>
-              <input v-model.number="spec.server_max_view_distance" type="number" class="form-control" />
-            </div>
-            <div class="col-md-4">
-              <label class="form-label">Network view distance</label>
-              <input v-model.number="spec.network_view_distance" type="number" class="form-control" />
-            </div>
-            <div class="col-12">
-              <label class="form-label">RCON password <small class="text-secondary">(optional)</small></label>
-              <input v-model="spec.rcon_password" class="form-control" placeholder="(RCON disabled)" />
-            </div>
-            <div class="col-12 d-flex gap-4">
-              <div class="form-check">
-                <input id="visible" v-model="spec.visible" class="form-check-input" type="checkbox" />
-                <label for="visible" class="form-check-label">Public (server browser)</label>
-              </div>
-              <div class="form-check">
-                <input id="cross" v-model="spec.cross_platform" class="form-check-input" type="checkbox" />
-                <label for="cross" class="form-check-label">Cross-platform</label>
-              </div>
-              <div class="form-check">
-                <input id="be" v-model="spec.battleye" class="form-check-input" type="checkbox" />
-                <label for="be" class="form-check-label">BattlEye</label>
-              </div>
-              <div class="form-check">
-                <input id="tp" v-model="spec.disable_third_person" class="form-check-input" type="checkbox" />
-                <label for="tp" class="form-check-label">First-person only</label>
-              </div>
-            </div>
-          </div>
-
-          <button
-            class="btn btn-link px-0 mt-3"
-            @click="showAdvanced = !showAdvanced"
-          >
-            {{ showAdvanced ? '▾ Hide' : '▸ Show' }} advanced settings
-          </button>
-
-          <div v-show="showAdvanced" class="row g-3 border-top pt-3">
-            <div class="col-md-4">
-              <label class="form-label">Min grass distance <small class="text-secondary">(≥ 50)</small></label>
-              <input v-model.number="spec.server_min_grass_distance" type="number" min="50" max="150" class="form-control" />
-            </div>
-            <div class="col-md-4">
-              <label class="form-label">Player save interval (s)</label>
-              <input v-model.number="spec.player_save_time" type="number" min="0" class="form-control" />
-            </div>
-            <div class="col-md-4">
-              <label class="form-label">AI limit <small class="text-secondary">(-1 = unlimited)</small></label>
-              <input v-model.number="spec.ai_limit" type="number" min="-1" class="form-control" />
-            </div>
-            <div class="col-md-4">
-              <label class="form-label">Slot reservation timeout (s)</label>
-              <input v-model.number="spec.slot_reservation_timeout" type="number" min="5" max="300" class="form-control" />
-            </div>
-            <div class="col-md-4">
-              <label class="form-label">Join queue max size <small class="text-secondary">(0 = off)</small></label>
-              <input v-model.number="spec.join_queue_max_size" type="number" min="0" max="50" class="form-control" />
-            </div>
-            <div class="col-12">
-              <div class="fw-semibold small text-secondary mb-1">VON (voice)</div>
-              <div class="d-flex gap-4 flex-wrap">
-                <div class="form-check">
-                  <input id="von1" v-model="spec.von_disable_ui" class="form-check-input" type="checkbox" />
-                  <label for="von1" class="form-check-label">Disable VON UI</label>
+          <div class="card">
+            <div class="card-header py-2 fw-semibold small">Server</div>
+            <div class="card-body">
+              <div class="row g-3">
+                <div class="col-12">
+                  <label class="form-label" for="game-name">Server name (in-game browser)</label>
+                  <div class="input-group">
+                    <input id="game-name" v-model="spec.game_name" class="form-control" />
+                    <button
+                      class="btn btn-outline-secondary"
+                      type="button"
+                      title="Suggest another name"
+                      @click="spec.game_name = randomServerName()"
+                    >🎲 Randomize</button>
+                  </div>
+                  <div class="form-text">
+                    This is what players see in the in-game server browser. New templates get
+                    a name of their own so yours is not one of many identical entries.
+                  </div>
                 </div>
-                <div class="form-check">
-                  <input id="von2" v-model="spec.von_disable_direct_speech_ui" class="form-check-input" type="checkbox" />
-                  <label for="von2" class="form-check-label">Disable direct-speech UI</label>
-                </div>
-                <div class="form-check">
-                  <input id="von3" v-model="spec.von_can_transmit_cross_faction" class="form-check-input" type="checkbox" />
-                  <label for="von3" class="form-check-label">Cross-faction VON</label>
-                </div>
-              </div>
-            </div>
-            <div class="col-12">
-              <div class="fw-semibold small text-secondary mb-1">Operating</div>
-              <div class="d-flex gap-4 flex-wrap">
-                <div class="form-check">
-                  <input id="op1" v-model="spec.fast_validation" class="form-check-input" type="checkbox" />
-                  <label for="op1" class="form-check-label">Fast validation</label>
-                </div>
-                <div class="form-check">
-                  <input id="op2" v-model="spec.lobby_player_synchronise" class="form-check-input" type="checkbox" />
-                  <label for="op2" class="form-check-label">Lobby player sync</label>
-                </div>
-                <div class="form-check">
-                  <input id="op3" v-model="spec.disable_navmesh_streaming" class="form-check-input" type="checkbox" />
-                  <label for="op3" class="form-check-label">Disable navmesh streaming</label>
-                </div>
-                <div class="form-check">
-                  <input id="op4" v-model="spec.disable_server_shutdown" class="form-check-input" type="checkbox" />
-                  <label for="op4" class="form-check-label">Disable auto-shutdown</label>
-                </div>
-                <div class="form-check">
-                  <input id="op5" v-model="spec.disable_crash_reporter" class="form-check-input" type="checkbox" />
-                  <label for="op5" class="form-check-label">Disable crash reporter</label>
-                </div>
-                <div class="form-check">
-                  <input id="op6" v-model="spec.disable_ai" class="form-check-input" type="checkbox" />
-                  <label for="op6" class="form-check-label">Disable AI</label>
-                </div>
-                <div class="form-check">
-                  <input id="op7" v-model="spec.mods_required_by_default" class="form-check-input" type="checkbox" />
-                  <label for="op7" class="form-check-label">Mods required by default</label>
-                </div>
-              </div>
-            </div>
-
-            <div class="col-12">
-              <div class="fw-semibold small text-secondary mb-1">Persistence (save games)</div>
-              <div class="form-check mb-2">
-                <input id="persist" v-model="spec.persistence_enabled" class="form-check-input" type="checkbox" />
-                <label for="persist" class="form-check-label">Configure persistence</label>
-              </div>
-              <p class="text-secondary small mb-2">
-                The server saves the mission on its own by default. Tick the box to write a
-                <code>persistence</code> block and set these values yourself; leave it clear to let
-                the engine decide. Unticking does not switch saving off — to stop a scenario saving
-                at all, add <code>"missionHeader": &#123; "m_eSaveTypes": 0 &#125;</code> under
-                <code>game.gameProperties</code> with Edit JSON.
-              </p>
-              <!-- Three equal columns, top-aligned. Do NOT add align-items-end
-                   here: the help texts are different heights, so bottom-aligning
-                   the columns lifts the taller one's label and input off the row. -->
-              <div class="row g-2">
-                <div class="col-6 col-md-4">
-                  <label class="form-label small">Auto-save interval (min)</label>
-                  <input v-model.number="spec.auto_save_interval" type="number" min="0" max="60"
-                    class="form-control" :disabled="!spec.persistence_enabled" />
-                  <div class="form-text">0 turns automatic saves off.</div>
-                </div>
-                <div class="col-6 col-md-4">
-                  <label class="form-label small">Save points kept</label>
-                  <input v-model.number="spec.save_retention" type="number" min="1" max="128"
-                    class="form-control" :disabled="!spec.persistence_enabled" />
-                  <div class="form-text">1–128 per mission.</div>
-                </div>
-                <div class="col-6 col-md-4">
-                  <label class="form-label small">Hive ID</label>
-                  <input v-model.number="spec.hive_id" type="number" min="0" max="16383"
-                    class="form-control" :disabled="!spec.persistence_enabled" />
-                  <div class="form-text">Separates saves when servers share a database.</div>
-                </div>
-              </div>
-              <div class="d-flex gap-4 flex-wrap mt-2">
-                <div class="form-check">
-                  <input id="persist-load" v-model="spec.load_session_save" class="form-check-input"
-                    type="checkbox" :disabled="!spec.persistence_enabled" />
-                  <label for="persist-load" class="form-check-label small">
-                    Load the latest save on startup
-                  </label>
-                </div>
-                <div class="form-check">
-                  <input id="persist-keep" v-model="spec.keep_session_save" class="form-check-input"
-                    type="checkbox" :disabled="!spec.persistence_enabled" />
-                  <label for="persist-keep" class="form-check-label small">
-                    Keep save points after the mission ends
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            <div class="col-12">
-              <div class="fw-semibold small text-secondary mb-1">RCON <small>(only used when a password is set on the previous screen)</small></div>
-              <div class="row g-2">
-                <div class="col-6 col-md-4">
-                  <label class="form-label small">Permission</label>
-                  <select v-model="spec.rcon_permission" class="form-select">
-                    <option value="admin">admin</option>
-                    <option value="monitor">monitor</option>
-                  </select>
-                </div>
-                <div class="col-6 col-md-4">
-                  <label class="form-label small">Max clients</label>
-                  <input v-model.number="spec.rcon_max_clients" type="number" min="1" max="16" class="form-control" />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <button class="btn btn-link px-0 mt-3" @click="showLaunch = !showLaunch">
-            {{ showLaunch ? '▾ Hide' : '▸ Show' }} engine launch parameters
-          </button>
-          <div v-show="showLaunch" class="border-top pt-3">
-            <p class="text-secondary small">
-              Command-line parameters passed to the server engine (blank = engine default).
-            </p>
-            <div class="row g-3">
-              <div v-for="[key, label] in launchNumFields" :key="key" class="col-6 col-md-3">
-                <label class="form-label small">{{ label }}</label>
-                <input v-model.number="spec.launch[key]" type="number" class="form-control form-control-sm" placeholder="default" />
-              </div>
-              <div class="col-6 col-md-3">
-                <label class="form-label small">Freeze check mode</label>
-                <select v-model="spec.launch.freeze_check_mode" class="form-select form-select-sm">
-                  <option :value="null">default</option>
-                  <option value="crash">crash</option>
-                  <option value="disabled">disabled</option>
-                </select>
-              </div>
-              <div class="col-6 col-md-3">
-                <label class="form-label small">Debugger address</label>
-                <input v-model="spec.launch.debugger_address" class="form-control form-control-sm" placeholder="(off)" />
-              </div>
-              <div class="col-6 col-md-3">
-                <label class="form-label small">Load session save</label>
-                <input v-model="spec.launch.load_session_save" class="form-control form-control-sm" placeholder="(latest)" />
-              </div>
-            </div>
-            <div class="d-flex gap-4 flex-wrap mt-3">
-              <div v-for="[key, label] in launchSwitchFields" :key="key" class="form-check">
-                <input :id="'lp_' + key" v-model="spec.launch[key]" class="form-check-input" type="checkbox" />
-                <label :for="'lp_' + key" class="form-check-label small">{{ label }}</label>
-              </div>
-            </div>
-            <div class="mt-3">
-              <label class="form-label small">Extra launch arguments <small class="text-secondary">(raw, appended verbatim)</small></label>
-              <input v-model="spec.launch.extra_args" class="form-control form-control-sm" placeholder="-someArg value" />
-            </div>
-          </div>
-
-          <button class="btn btn-link px-0 mt-3" @click="showAccess = !showAccess">
-            {{ showAccess ? '▾ Hide' : '▸ Show' }} player access
-          </button>
-          <!-- Collapsed is the default, so the toggle has to say what is set —
-               a hidden whitelist is how someone locks themselves out (#154). -->
-          <span
-            v-if="accessSummary"
-            class="small ms-2"
-            :class="spec.player_whitelist.length ? 'text-warning-emphasis' : 'text-secondary'"
-          >{{ accessSummary }}</span>
-
-          <!-- Server admins, whitelist and ban list (#154) -->
-          <div v-show="showAccess" class="border-top pt-3">
-            <p class="small text-secondary">
-              Who administers this server, and who may join it. Everything here is
-              part of the template, so every server built from it gets the
-              same lists.
-            </p>
-
-            <!-- Admins -->
-            <div class="mb-4">
-              <label class="form-label mb-1">
-                Server admins
-                <small class="text-secondary">
-                  ({{ spec.admins.length }} of {{ ADMIN_LIMIT }})
-                </small>
-              </label>
-              <p class="small text-secondary mb-2">
-                Admins can <code>#login</code> without the admin password and use the
-                priority join queue. Accepts a Steam64 id (17 digits) or a Bohemia
-                identity id — paste several at once if you like.
-              </p>
-              <div class="input-group">
-                <input
-                  v-model="adminInput"
-                  class="form-control"
-                  placeholder="76561198000000000 or 7f9b0a4c-1d2e-4f6a-8b3c-9d0e1f2a3b4c"
-                  :disabled="locked"
-                  @keyup.enter="addAdminIds"
-                />
-                <button class="btn btn-outline-primary" :disabled="locked || !adminInput.trim()" @click="addAdminIds">
-                  Add
-                </button>
-              </div>
-              <div v-if="adminNotice" class="form-text">{{ adminNotice }}</div>
-              <div v-if="adminsOverLimit" class="alert alert-warning py-2 small mt-2 mb-0">
-                This template lists {{ spec.admins.length }} admins. Arma Reforger
-                applies at most {{ ADMIN_LIMIT }} — remove some, or the ones past the
-                limit may be ignored.
-              </div>
-              <div v-if="spec.admins.length" class="d-flex flex-wrap gap-2 mt-2">
-                <span
-                  v-for="id in spec.admins"
-                  :key="id"
-                  class="badge d-inline-flex align-items-center gap-2 text-bg-secondary"
-                >
-                  <span class="font-monospace">{{ id }}</span>
-                  <small class="opacity-75">{{ idKind(id) === 'steam' ? 'Steam' : 'identity' }}</small>
-                  <button
-                    type="button"
-                    class="btn-close btn-close-white"
-                    style="font-size: 0.55rem"
-                    aria-label="Remove admin"
-                    :disabled="locked"
-                    @click="dropAdmin(id)"
-                  ></button>
-                </span>
-              </div>
-              <div v-else class="small text-secondary mt-2">
-                No admins listed — only the admin password grants admin rights.
-              </div>
-            </div>
-
-            <!-- Whitelist -->
-            <div class="mb-4">
-              <label class="form-label mb-1">Whitelist</label>
-              <p class="small text-secondary mb-2">
-                Leave this empty and everyone may join. Add one player and the server
-                becomes <strong>whitelist-only</strong> — anyone not listed is refused.
-                Bohemia identity ids only; a Steam id will not match.
-              </p>
-              <div class="row g-2">
                 <div class="col-md-6">
-                  <input
-                    v-model="whitelistInput.id"
-                    class="form-control"
-                    placeholder="Identity id"
-                    :disabled="locked"
-                    @keyup.enter="addWhitelistPlayers"
-                  />
+                  <label class="form-label">Join password</label>
+                  <input v-model="spec.password" class="form-control" placeholder="(none)" />
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label">Admin password</label>
+                  <input v-model="spec.admin_password" class="form-control" placeholder="(none)" />
                 </div>
                 <div class="col-md-4">
-                  <input
-                    v-model="whitelistInput.name"
-                    class="form-control"
-                    placeholder="Name (optional)"
-                    :disabled="locked"
-                    @keyup.enter="addWhitelistPlayers"
-                  />
+                  <label class="form-label">Max players</label>
+                  <input v-model.number="spec.max_players" type="number" min="1" max="256" class="form-control" />
+                  <!-- Seeded from the scenario's Workshop player count, always overridable (#65) -->
+                  <small v-if="spec.scenario_player_count" class="d-block mt-1">
+                    <span v-if="maxPlayersOverridden" class="text-warning-emphasis">
+                      "{{ scenarioDisplayName }}" is built for
+                      {{ spec.scenario_player_count }} players.
+                      <a href="#" class="ms-1" @click.prevent="resetMaxPlayers">Use {{ spec.scenario_player_count }}</a>
+                    </span>
+                    <span v-else class="text-secondary">
+                      Matches the {{ spec.scenario_player_count }} players
+                      "{{ scenarioDisplayName }}" declares. Change it if you want.
+                    </span>
+                  </small>
+                  <small v-else class="d-block mt-1 text-secondary">
+                    This scenario declares no player count — pick one yourself.
+                  </small>
                 </div>
-                <div class="col-md-2 d-grid">
-                  <button
-                    class="btn btn-outline-primary"
-                    :disabled="locked || !whitelistInput.id.trim()"
-                    @click="addWhitelistPlayers"
-                  >
+                <div class="col-md-4">
+                  <label class="form-label">Server view distance</label>
+                  <input v-model.number="spec.server_max_view_distance" type="number" class="form-control" />
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">Network view distance</label>
+                  <input v-model.number="spec.network_view_distance" type="number" class="form-control" />
+                </div>
+                <div class="col-12">
+                  <label class="form-label">RCON password <small class="text-secondary">(optional)</small></label>
+                  <input v-model="spec.rcon_password" class="form-control" placeholder="(RCON disabled)" />
+                </div>
+                <div class="col-12 d-flex gap-4">
+                  <div class="form-check">
+                    <input id="visible" v-model="spec.visible" class="form-check-input" type="checkbox" />
+                    <label for="visible" class="form-check-label">Public (server browser)</label>
+                  </div>
+                  <div class="form-check">
+                    <input id="cross" v-model="spec.cross_platform" class="form-check-input" type="checkbox" />
+                    <label for="cross" class="form-check-label">Cross-platform</label>
+                  </div>
+                  <div class="form-check">
+                    <input id="be" v-model="spec.battleye" class="form-check-input" type="checkbox" />
+                    <label for="be" class="form-check-label">BattlEye</label>
+                  </div>
+                  <div class="form-check">
+                    <input id="tp" v-model="spec.disable_third_person" class="form-check-input" type="checkbox" />
+                    <label for="tp" class="form-check-label">First-person only</label>
+                  </div>
+            </div>
+          </div>
+            </div>
+          </div>
+
+          <CollapsibleCard v-model="showAdvanced" title="Advanced settings" class="mt-3">
+            <div class="row g-3">
+              <div class="col-md-4">
+                <label class="form-label">Min grass distance <small class="text-secondary">(≥ 50)</small></label>
+                <input v-model.number="spec.server_min_grass_distance" type="number" min="50" max="150" class="form-control" />
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Player save interval (s)</label>
+                <input v-model.number="spec.player_save_time" type="number" min="0" class="form-control" />
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">AI limit <small class="text-secondary">(-1 = unlimited)</small></label>
+                <input v-model.number="spec.ai_limit" type="number" min="-1" class="form-control" />
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Slot reservation timeout (s)</label>
+                <input v-model.number="spec.slot_reservation_timeout" type="number" min="5" max="300" class="form-control" />
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Join queue max size <small class="text-secondary">(0 = off)</small></label>
+                <input v-model.number="spec.join_queue_max_size" type="number" min="0" max="50" class="form-control" />
+              </div>
+              <div class="col-12">
+                <div class="fw-semibold small text-secondary mb-1">VON (voice)</div>
+                <div class="d-flex gap-4 flex-wrap">
+                  <div class="form-check">
+                    <input id="von1" v-model="spec.von_disable_ui" class="form-check-input" type="checkbox" />
+                    <label for="von1" class="form-check-label">Disable VON UI</label>
+                  </div>
+                  <div class="form-check">
+                    <input id="von2" v-model="spec.von_disable_direct_speech_ui" class="form-check-input" type="checkbox" />
+                    <label for="von2" class="form-check-label">Disable direct-speech UI</label>
+                  </div>
+                  <div class="form-check">
+                    <input id="von3" v-model="spec.von_can_transmit_cross_faction" class="form-check-input" type="checkbox" />
+                    <label for="von3" class="form-check-label">Cross-faction VON</label>
+                  </div>
+                </div>
+              </div>
+              <div class="col-12">
+                <div class="fw-semibold small text-secondary mb-1">Operating</div>
+                <div class="d-flex gap-4 flex-wrap">
+                  <div class="form-check">
+                    <input id="op1" v-model="spec.fast_validation" class="form-check-input" type="checkbox" />
+                    <label for="op1" class="form-check-label">Fast validation</label>
+                  </div>
+                  <div class="form-check">
+                    <input id="op2" v-model="spec.lobby_player_synchronise" class="form-check-input" type="checkbox" />
+                    <label for="op2" class="form-check-label">Lobby player sync</label>
+                  </div>
+                  <div class="form-check">
+                    <input id="op3" v-model="spec.disable_navmesh_streaming" class="form-check-input" type="checkbox" />
+                    <label for="op3" class="form-check-label">Disable navmesh streaming</label>
+                  </div>
+                  <div class="form-check">
+                    <input id="op4" v-model="spec.disable_server_shutdown" class="form-check-input" type="checkbox" />
+                    <label for="op4" class="form-check-label">Disable auto-shutdown</label>
+                  </div>
+                  <div class="form-check">
+                    <input id="op5" v-model="spec.disable_crash_reporter" class="form-check-input" type="checkbox" />
+                    <label for="op5" class="form-check-label">Disable crash reporter</label>
+                  </div>
+                  <div class="form-check">
+                    <input id="op6" v-model="spec.disable_ai" class="form-check-input" type="checkbox" />
+                    <label for="op6" class="form-check-label">Disable AI</label>
+                  </div>
+                  <div class="form-check">
+                    <input id="op7" v-model="spec.mods_required_by_default" class="form-check-input" type="checkbox" />
+                    <label for="op7" class="form-check-label">Mods required by default</label>
+                  </div>
+                </div>
+              </div>
+
+              <div class="col-12">
+                <div class="fw-semibold small text-secondary mb-1">Persistence (save games)</div>
+                <div class="form-check mb-2">
+                  <input id="persist" v-model="spec.persistence_enabled" class="form-check-input" type="checkbox" />
+                  <label for="persist" class="form-check-label">Configure persistence</label>
+                </div>
+                <p class="text-secondary small mb-2">
+                  Leave it clear to let the engine decide how the mission saves.
+                  <HelpTip label="What configuring persistence does">
+                    The server saves the mission on its own by default. Tick the box to write a
+                    <code>persistence</code> block and set these values yourself; leave it clear to let
+                    the engine decide. Unticking does not switch saving off — to stop a scenario saving
+                    at all, add <code>"missionHeader": &#123; "m_eSaveTypes": 0 &#125;</code> under
+                    <code>game.gameProperties</code> with Edit JSON.
+                  </HelpTip>
+                </p>
+                <!-- Three equal columns, top-aligned. Do NOT add align-items-end
+                     here: the help texts are different heights, so bottom-aligning
+                     the columns lifts the taller one's label and input off the row. -->
+                <div class="row g-2">
+                  <div class="col-6 col-md-4">
+                    <label class="form-label small">Auto-save interval (min)</label>
+                    <input v-model.number="spec.auto_save_interval" type="number" min="0" max="60"
+                      class="form-control" :disabled="!spec.persistence_enabled" />
+                    <div class="form-text">0 turns automatic saves off.</div>
+                  </div>
+                  <div class="col-6 col-md-4">
+                    <label class="form-label small">Save points kept</label>
+                    <input v-model.number="spec.save_retention" type="number" min="1" max="128"
+                      class="form-control" :disabled="!spec.persistence_enabled" />
+                    <div class="form-text">1–128 per mission.</div>
+                  </div>
+                  <div class="col-6 col-md-4">
+                    <label class="form-label small">Hive ID</label>
+                    <input v-model.number="spec.hive_id" type="number" min="0" max="16383"
+                      class="form-control" :disabled="!spec.persistence_enabled" />
+                    <div class="form-text">Separates saves when servers share a database.</div>
+                  </div>
+                </div>
+                <div class="d-flex gap-4 flex-wrap mt-2">
+                  <div class="form-check">
+                    <input id="persist-load" v-model="spec.load_session_save" class="form-check-input"
+                      type="checkbox" :disabled="!spec.persistence_enabled" />
+                    <label for="persist-load" class="form-check-label small">
+                      Load the latest save on startup
+                    </label>
+                  </div>
+                  <div class="form-check">
+                    <input id="persist-keep" v-model="spec.keep_session_save" class="form-check-input"
+                      type="checkbox" :disabled="!spec.persistence_enabled" />
+                    <label for="persist-keep" class="form-check-label small">
+                      Keep save points after the mission ends
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div class="col-12">
+                <div class="fw-semibold small text-secondary mb-1">RCON <small>(only used when a password is set on the previous screen)</small></div>
+                <div class="row g-2">
+                  <div class="col-6 col-md-4">
+                    <label class="form-label small">Permission</label>
+                    <select v-model="spec.rcon_permission" class="form-select">
+                      <option value="admin">admin</option>
+                      <option value="monitor">monitor</option>
+                    </select>
+                  </div>
+                  <div class="col-6 col-md-4">
+                    <label class="form-label small">Max clients</label>
+                    <input v-model.number="spec.rcon_max_clients" type="number" min="1" max="16" class="form-control" />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </CollapsibleCard>
+
+          <CollapsibleCard v-model="showLaunch" title="Engine launch parameters" class="mt-3">
+            <div>
+              <p class="text-secondary small">
+                Command-line parameters passed to the server engine (blank = engine default).
+              </p>
+              <div class="row g-3">
+                <div v-for="[key, label] in launchNumFields" :key="key" class="col-6 col-md-3">
+                  <label class="form-label small">{{ label }}</label>
+                  <input v-model.number="spec.launch[key]" type="number" class="form-control form-control-sm" placeholder="default" />
+                </div>
+                <div class="col-6 col-md-3">
+                  <label class="form-label small">Freeze check mode</label>
+                  <select v-model="spec.launch.freeze_check_mode" class="form-select form-select-sm">
+                    <option :value="null">default</option>
+                    <option value="crash">crash</option>
+                    <option value="disabled">disabled</option>
+                  </select>
+                </div>
+                <div class="col-6 col-md-3">
+                  <label class="form-label small">Debugger address</label>
+                  <input v-model="spec.launch.debugger_address" class="form-control form-control-sm" placeholder="(off)" />
+                </div>
+                <div class="col-6 col-md-3">
+                  <label class="form-label small">Load session save</label>
+                  <input v-model="spec.launch.load_session_save" class="form-control form-control-sm" placeholder="(latest)" />
+                </div>
+              </div>
+              <div class="d-flex gap-4 flex-wrap mt-3">
+                <div v-for="[key, label] in launchSwitchFields" :key="key" class="form-check">
+                  <input :id="'lp_' + key" v-model="spec.launch[key]" class="form-check-input" type="checkbox" />
+                  <label :for="'lp_' + key" class="form-check-label small">{{ label }}</label>
+                </div>
+              </div>
+              <div class="mt-3">
+                <label class="form-label small">Extra launch arguments <small class="text-secondary">(raw, appended verbatim)</small></label>
+                <input v-model="spec.launch.extra_args" class="form-control form-control-sm" placeholder="-someArg value" />
+              </div>
+            </div>
+          </CollapsibleCard>
+
+          <CollapsibleCard v-model="showAccess" title="Player access" :summary="accessSummary"
+            :summary-class="spec.player_whitelist.length ? 'text-warning-emphasis' : 'text-secondary'" class="mt-3">
+            <div>
+              <p class="small text-secondary">
+                Who administers this server, and who may join it. Everything here is
+                part of the template, so every server built from it gets the
+                same lists.
+              </p>
+
+              <!-- Admins -->
+              <div class="mb-4">
+                <label class="form-label mb-1">
+                  Server admins
+                  <small class="text-secondary">
+                    ({{ spec.admins.length }} of {{ ADMIN_LIMIT }})
+                  </small>
+                </label>
+                <p class="small text-secondary mb-2">
+                  Admins can <code>#login</code> without the admin password and use the
+                  priority join queue. Accepts a Steam64 id (17 digits) or a Bohemia
+                  identity id — paste several at once if you like.
+                </p>
+                <div class="input-group">
+                  <input
+                    v-model="adminInput"
+                    class="form-control"
+                    placeholder="76561198000000000 or 7f9b0a4c-1d2e-4f6a-8b3c-9d0e1f2a3b4c"
+                    :disabled="locked"
+                    @keyup.enter="addAdminIds"
+                  />
+                  <button class="btn btn-outline-primary" :disabled="locked || !adminInput.trim()" @click="addAdminIds">
                     Add
                   </button>
                 </div>
-              </div>
-              <div v-if="whitelistNotice" class="form-text">{{ whitelistNotice }}</div>
-              <div v-if="spec.player_whitelist.length" class="alert alert-warning py-2 small mt-2 mb-2">
-                Whitelist is <strong>active</strong>: only these
-                {{ spec.player_whitelist.length }}
-                {{ spec.player_whitelist.length === 1 ? 'player' : 'players' }} can join.
-                Make sure your own identity id is on it.
-              </div>
-              <ul v-if="spec.player_whitelist.length" class="list-group mt-2">
-                <li
-                  v-for="p in spec.player_whitelist"
-                  :key="p.identityId"
-                  class="list-group-item d-flex align-items-center justify-content-between py-2"
-                >
-                  <span>
-                    <span class="fw-semibold">{{ p.name || '(no name)' }}</span>
-                    <span class="font-monospace small text-secondary ms-2">{{ p.identityId }}</span>
-                  </span>
-                  <button
-                    class="btn btn-sm btn-outline-secondary"
-                    :disabled="locked"
-                    @click="dropWhitelistPlayer(p.identityId)"
+                <div v-if="adminNotice" class="form-text">{{ adminNotice }}</div>
+                <div v-if="adminsOverLimit" class="alert alert-warning py-2 small mt-2 mb-0">
+                  This template lists {{ spec.admins.length }} admins. Arma Reforger
+                  applies at most {{ ADMIN_LIMIT }} — remove some, or the ones past the
+                  limit may be ignored.
+                </div>
+                <div v-if="spec.admins.length" class="d-flex flex-wrap gap-2 mt-2">
+                  <span
+                    v-for="id in spec.admins"
+                    :key="id"
+                    class="badge d-inline-flex align-items-center gap-2 text-bg-secondary"
                   >
-                    Remove
-                  </button>
-                </li>
-              </ul>
-            </div>
-
-            <!-- Ban list -->
-            <div>
-              <label class="form-label mb-1">Ban list</label>
-              <p class="small text-secondary mb-2">
-                Players refused entry, by Bohemia identity id. Bans written here apply
-                when the server starts; to ban someone mid-session use the in-game
-                admin tools or RCON.
-              </p>
-              <div class="row g-2">
-                <div class="col-md-4">
-                  <input
-                    v-model="banInput.id"
-                    class="form-control"
-                    placeholder="Identity id"
-                    :disabled="locked"
-                    @keyup.enter="addBannedPlayers"
-                  />
-                </div>
-                <div class="col-md-3">
-                  <input
-                    v-model="banInput.name"
-                    class="form-control"
-                    placeholder="Name (optional)"
-                    :disabled="locked"
-                    @keyup.enter="addBannedPlayers"
-                  />
-                </div>
-                <div class="col-md-3">
-                  <input
-                    v-model="banInput.reason"
-                    class="form-control"
-                    placeholder="Reason (optional)"
-                    :disabled="locked"
-                    @keyup.enter="addBannedPlayers"
-                  />
-                </div>
-                <div class="col-md-2 d-grid">
-                  <button
-                    class="btn btn-outline-danger"
-                    :disabled="locked || !banInput.id.trim()"
-                    @click="addBannedPlayers"
-                  >
-                    Ban
-                  </button>
-                </div>
-              </div>
-              <div v-if="banNotice" class="form-text">{{ banNotice }}</div>
-              <ul v-if="spec.player_ban_list.length" class="list-group mt-2">
-                <li
-                  v-for="p in spec.player_ban_list"
-                  :key="p.identityId"
-                  class="list-group-item d-flex align-items-center justify-content-between py-2"
-                >
-                  <span>
-                    <span class="fw-semibold">{{ p.name || '(no name)' }}</span>
-                    <span class="font-monospace small text-secondary ms-2">{{ p.identityId }}</span>
-                    <span v-if="p.reason" class="small text-secondary ms-2">— {{ p.reason }}</span>
-                  </span>
-                  <button
-                    class="btn btn-sm btn-outline-secondary"
-                    :disabled="locked"
-                    @click="dropBannedPlayer(p.identityId)"
-                  >
-                    Unban
-                  </button>
-                </li>
-              </ul>
-              <div v-else class="small text-secondary mt-2">Nobody is banned.</div>
-            </div>
-          </div>
-
-          <button class="btn btn-link px-0 mt-3" @click="showMissionHeader = !showMissionHeader">
-            {{ showMissionHeader ? '▾ Hide' : '▸ Show' }} mission header
-          </button>
-          <!-- Collapsed by default like player access, so the toggle has to say
-               whether anything is set (#162). -->
-          <span v-if="missionHeaderCount" class="small ms-2 text-secondary">
-            {{ missionHeaderCount }} override{{ missionHeaderCount === 1 ? '' : 's' }}
-          </span>
-
-          <!-- Mission header overrides (#162) -->
-          <div v-show="showMissionHeader" class="border-top pt-3">
-            <p class="small text-secondary">
-              Overrides for the scenario's own mission header — player count, XP rate,
-              time of day, campaign supplies. Which settings a scenario accepts depends
-              on the scenario, and a mod can add its own; anything you type is written
-              through, whether or not it's on the list below.
-            </p>
-
-            <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
-              <div class="btn-group btn-group-sm" role="group">
-                <button
-                  class="btn"
-                  :class="headerView === 'rows' ? 'btn-primary' : 'btn-outline-secondary'"
-                  @click="headerView = 'rows'"
-                >
-                  Settings
-                </button>
-                <button
-                  class="btn"
-                  :class="headerView === 'json' ? 'btn-primary' : 'btn-outline-secondary'"
-                  @click="openHeaderJson"
-                >
-                  JSON
-                </button>
-              </div>
-              <button class="btn btn-sm btn-outline-primary" :disabled="locked" @click="openPaste">
-                Paste from AMP or a config…
-              </button>
-            </div>
-
-            <!-- Rows -->
-            <template v-if="headerView === 'rows'">
-              <div v-if="!headerRows.length" class="small text-secondary mb-3">
-                No overrides — the scenario's own values are used.
-              </div>
-              <div v-for="(row, i) in headerRows" :key="i" class="row g-2 align-items-start mb-2">
-                <div class="col-md-4">
-                  <input
-                    v-model="row.key"
-                    class="form-control form-control-sm font-monospace"
-                    :disabled="locked"
-                    @change="commitHeaderRows"
-                  />
-                  <div v-if="describeRow(row.key)" class="form-text">
-                    {{ describeRow(row.key).help }}
-                    <span v-if="describeRow(row.key).caveat" class="text-warning-emphasis">
-                      {{ describeRow(row.key).caveat }}
-                    </span>
-                  </div>
-                </div>
-                <div class="col-md-2">
-                  <select
-                    class="form-select form-select-sm"
-                    :value="row.kind"
-                    :disabled="locked || row.kind === 'json'"
-                    @change="changeHeaderRowKind(row, $event.target.value)"
-                  >
-                    <option value="number">Number</option>
-                    <option value="string">Text</option>
-                    <option value="boolean">On / off</option>
-                    <option v-if="row.kind === 'json'" value="json">Block</option>
-                  </select>
-                </div>
-                <div class="col-md-5">
-                  <input
-                    v-if="row.kind === 'number'"
-                    v-model.number="row.value"
-                    type="number"
-                    step="any"
-                    class="form-control form-control-sm"
-                    :disabled="locked"
-                    @change="commitHeaderRows"
-                  />
-                  <input
-                    v-else-if="row.kind === 'string'"
-                    v-model="row.value"
-                    class="form-control form-control-sm"
-                    :disabled="locked"
-                    @change="commitHeaderRows"
-                  />
-                  <div v-else-if="row.kind === 'boolean'" class="form-check mt-1">
-                    <input
-                      :id="'mh-' + i"
-                      v-model="row.value"
-                      class="form-check-input"
-                      type="checkbox"
+                    <span class="font-monospace">{{ id }}</span>
+                    <small class="opacity-75">{{ idKind(id) === 'steam' ? 'Steam' : 'identity' }}</small>
+                    <button
+                      type="button"
+                      class="btn-close btn-close-white"
+                      style="font-size: 0.55rem"
+                      aria-label="Remove admin"
                       :disabled="locked"
-                      @change="commitHeaderRows"
+                      @click="dropAdmin(id)"
+                    ></button>
+                  </span>
+                </div>
+                <div v-else class="small text-secondary mt-2">
+                  No admins listed — only the admin password grants admin rights.
+                </div>
+              </div>
+
+              <!-- Whitelist -->
+              <div class="mb-4">
+                <label class="form-label mb-1">Whitelist</label>
+                <p class="small text-secondary mb-2">
+                  Leave this empty and everyone may join. Add one player and the server
+                  becomes <strong>whitelist-only</strong> — anyone not listed is refused.
+                  Bohemia identity ids only; a Steam id will not match.
+                </p>
+                <div class="row g-2">
+                  <div class="col-md-6">
+                    <input
+                      v-model="whitelistInput.id"
+                      class="form-control"
+                      placeholder="Identity id"
+                      :disabled="locked"
+                      @keyup.enter="addWhitelistPlayers"
                     />
-                    <label :for="'mh-' + i" class="form-check-label small">
-                      {{ row.value ? 'On' : 'Off' }}
-                    </label>
                   </div>
-                  <!-- A nested block (a mod's settings tree) is edited as JSON
-                       rather than flattened into rows that lie about its shape. -->
-                  <div v-else class="d-flex align-items-center gap-2">
-                    <span class="badge text-bg-secondary font-monospace">
-                      {{ nestedSummary(row.value) }}
-                    </span>
-                    <button class="btn btn-sm btn-link px-0" @click="openHeaderJson">
-                      Edit as JSON
+                  <div class="col-md-4">
+                    <input
+                      v-model="whitelistInput.name"
+                      class="form-control"
+                      placeholder="Name (optional)"
+                      :disabled="locked"
+                      @keyup.enter="addWhitelistPlayers"
+                    />
+                  </div>
+                  <div class="col-md-2 d-grid">
+                    <button
+                      class="btn btn-outline-primary"
+                      :disabled="locked || !whitelistInput.id.trim()"
+                      @click="addWhitelistPlayers"
+                    >
+                      Add
                     </button>
                   </div>
                 </div>
-                <div class="col-md-1 d-grid">
-                  <button
-                    class="btn btn-sm btn-outline-secondary"
-                    :disabled="locked"
-                    title="Remove this override"
-                    @click="dropHeaderRow(i)"
-                  >
-                    ✕
-                  </button>
+                <div v-if="whitelistNotice" class="form-text">{{ whitelistNotice }}</div>
+                <div v-if="spec.player_whitelist.length" class="alert alert-warning py-2 small mt-2 mb-2">
+                  Whitelist is <strong>active</strong>: only these
+                  {{ spec.player_whitelist.length }}
+                  {{ spec.player_whitelist.length === 1 ? 'player' : 'players' }} can join.
+                  Make sure your own identity id is on it.
                 </div>
+                <ul v-if="spec.player_whitelist.length" class="list-group mt-2">
+                  <li
+                    v-for="p in spec.player_whitelist"
+                    :key="p.identityId"
+                    class="list-group-item d-flex align-items-center justify-content-between py-2"
+                  >
+                    <span>
+                      <span class="fw-semibold">{{ p.name || '(no name)' }}</span>
+                      <span class="font-monospace small text-secondary ms-2">{{ p.identityId }}</span>
+                    </span>
+                    <button
+                      class="btn btn-sm btn-outline-secondary"
+                      :disabled="locked"
+                      @click="dropWhitelistPlayer(p.identityId)"
+                    >
+                      Remove
+                    </button>
+                  </li>
+                </ul>
               </div>
 
-              <div v-if="headerMissingPrereqs.length" class="alert alert-warning py-2 small">
-                <div v-for="key in headerMissingPrereqs" :key="key">
-                  <code>{{ key }}</code> has to be on before those settings do anything.
-                  <button class="btn btn-sm btn-link p-0 align-baseline" @click="addPrereq(key)">
-                    Switch it on
+              <!-- Ban list -->
+              <div>
+                <label class="form-label mb-1">Ban list</label>
+                <p class="small text-secondary mb-2">
+                  Players refused entry, by Bohemia identity id. Bans written here apply
+                  when the server starts; to ban someone mid-session use the in-game
+                  admin tools or RCON.
+                </p>
+                <div class="row g-2">
+                  <div class="col-md-4">
+                    <input
+                      v-model="banInput.id"
+                      class="form-control"
+                      placeholder="Identity id"
+                      :disabled="locked"
+                      @keyup.enter="addBannedPlayers"
+                    />
+                  </div>
+                  <div class="col-md-3">
+                    <input
+                      v-model="banInput.name"
+                      class="form-control"
+                      placeholder="Name (optional)"
+                      :disabled="locked"
+                      @keyup.enter="addBannedPlayers"
+                    />
+                  </div>
+                  <div class="col-md-3">
+                    <input
+                      v-model="banInput.reason"
+                      class="form-control"
+                      placeholder="Reason (optional)"
+                      :disabled="locked"
+                      @keyup.enter="addBannedPlayers"
+                    />
+                  </div>
+                  <div class="col-md-2 d-grid">
+                    <button
+                      class="btn btn-outline-danger"
+                      :disabled="locked || !banInput.id.trim()"
+                      @click="addBannedPlayers"
+                    >
+                      Ban
+                    </button>
+                  </div>
+                </div>
+                <div v-if="banNotice" class="form-text">{{ banNotice }}</div>
+                <ul v-if="spec.player_ban_list.length" class="list-group mt-2">
+                  <li
+                    v-for="p in spec.player_ban_list"
+                    :key="p.identityId"
+                    class="list-group-item d-flex align-items-center justify-content-between py-2"
+                  >
+                    <span>
+                      <span class="fw-semibold">{{ p.name || '(no name)' }}</span>
+                      <span class="font-monospace small text-secondary ms-2">{{ p.identityId }}</span>
+                      <span v-if="p.reason" class="small text-secondary ms-2">— {{ p.reason }}</span>
+                    </span>
+                    <button
+                      class="btn btn-sm btn-outline-secondary"
+                      :disabled="locked"
+                      @click="dropBannedPlayer(p.identityId)"
+                    >
+                      Unban
+                    </button>
+                  </li>
+                </ul>
+                <div v-else class="small text-secondary mt-2">Nobody is banned.</div>
+              </div>
+            </div>
+          </CollapsibleCard>
+
+          <CollapsibleCard v-model="showMissionHeader" title="Mission header"
+            :summary="missionHeaderCount ? `${missionHeaderCount} override${missionHeaderCount === 1 ? '' : 's'}` : ''" class="mt-3">
+            <div>
+              <p class="small text-secondary">
+                Overrides for the scenario's own mission header.
+                <HelpTip label="What the mission header is">
+                  Overrides for the scenario's own mission header — player count, XP rate,
+                  time of day, campaign supplies. Which settings a scenario accepts depends
+                  on the scenario, and a mod can add its own; anything you type is written
+                  through, whether or not it's on the list below.
+                </HelpTip>
+              </p>
+
+              <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+                <div class="btn-group btn-group-sm" role="group">
+                  <button
+                    class="btn"
+                    :class="headerView === 'rows' ? 'btn-primary' : 'btn-outline-secondary'"
+                    @click="headerView = 'rows'"
+                  >
+                    Settings
+                  </button>
+                  <button
+                    class="btn"
+                    :class="headerView === 'json' ? 'btn-primary' : 'btn-outline-secondary'"
+                    @click="openHeaderJson"
+                  >
+                    JSON
                   </button>
                 </div>
+                <button class="btn btn-sm btn-outline-primary" :disabled="locked" @click="openPaste">
+                  Paste from AMP or a config…
+                </button>
               </div>
 
-              <!-- Add a setting -->
-              <div class="position-relative" style="max-width: 32rem">
-                <input
-                  v-model="headerPick.query"
-                  class="form-control form-control-sm"
-                  placeholder="Add a setting — search, or type any name"
-                  :disabled="locked"
-                  @focus="headerPick.open = true"
-                  @keyup.enter="addHeaderRow(headerMatches[0], headerPick.query)"
-                />
-                <div
-                  v-if="headerPick.open && (headerMatches.length || headerPick.query.trim())"
-                  class="list-group position-absolute w-100 shadow"
-                  style="z-index: 5; max-height: 20rem; overflow: auto"
-                >
-                  <button
-                    v-for="entry in headerMatches"
-                    :key="entry.key"
-                    class="list-group-item list-group-item-action py-2"
-                    @click="addHeaderRow(entry)"
-                  >
-                    <div class="d-flex justify-content-between gap-2">
-                      <code>{{ entry.key }}</code>
-                      <small class="text-secondary">{{ headerGroupLabel[entry.group] }}</small>
-                    </div>
-                    <div class="small text-secondary">
-                      {{ entry.help }}
-                      <span v-if="entry.default !== undefined">
-                        Default {{ JSON.stringify(entry.default) }}.
+              <!-- Rows -->
+              <template v-if="headerView === 'rows'">
+                <div v-if="!headerRows.length" class="small text-secondary mb-3">
+                  No overrides — the scenario's own values are used.
+                </div>
+                <div v-for="(row, i) in headerRows" :key="i" class="row g-2 align-items-start mb-2">
+                  <div class="col-md-4">
+                    <input
+                      v-model="row.key"
+                      class="form-control form-control-sm font-monospace"
+                      :disabled="locked"
+                      @change="commitHeaderRows"
+                    />
+                    <div v-if="describeRow(row.key)" class="form-text">
+                      {{ describeRow(row.key).help }}
+                      <span v-if="describeRow(row.key).caveat" class="text-warning-emphasis">
+                        {{ describeRow(row.key).caveat }}
                       </span>
                     </div>
-                  </button>
-                  <button
-                    v-if="headerPick.query.trim()"
-                    class="list-group-item list-group-item-action py-2"
-                    @click="addHeaderRow(null, headerPick.query)"
+                  </div>
+                  <div class="col-md-2">
+                    <select
+                      class="form-select form-select-sm"
+                      :value="row.kind"
+                      :disabled="locked || row.kind === 'json'"
+                      @change="changeHeaderRowKind(row, $event.target.value)"
+                    >
+                      <option value="number">Number</option>
+                      <option value="string">Text</option>
+                      <option value="boolean">On / off</option>
+                      <option v-if="row.kind === 'json'" value="json">Block</option>
+                    </select>
+                  </div>
+                  <div class="col-md-5">
+                    <input
+                      v-if="row.kind === 'number'"
+                      v-model.number="row.value"
+                      type="number"
+                      step="any"
+                      class="form-control form-control-sm"
+                      :disabled="locked"
+                      @change="commitHeaderRows"
+                    />
+                    <input
+                      v-else-if="row.kind === 'string'"
+                      v-model="row.value"
+                      class="form-control form-control-sm"
+                      :disabled="locked"
+                      @change="commitHeaderRows"
+                    />
+                    <div v-else-if="row.kind === 'boolean'" class="form-check mt-1">
+                      <input
+                        :id="'mh-' + i"
+                        v-model="row.value"
+                        class="form-check-input"
+                        type="checkbox"
+                        :disabled="locked"
+                        @change="commitHeaderRows"
+                      />
+                      <label :for="'mh-' + i" class="form-check-label small">
+                        {{ row.value ? 'On' : 'Off' }}
+                      </label>
+                    </div>
+                    <!-- A nested block (a mod's settings tree) is edited as JSON
+                         rather than flattened into rows that lie about its shape. -->
+                    <div v-else class="d-flex align-items-center gap-2">
+                      <span class="badge text-bg-secondary font-monospace">
+                        {{ nestedSummary(row.value) }}
+                      </span>
+                      <button class="btn btn-sm btn-link px-0" @click="openHeaderJson">
+                        Edit as JSON
+                      </button>
+                    </div>
+                  </div>
+                  <div class="col-md-1 d-grid">
+                    <button
+                      class="btn btn-sm btn-outline-secondary"
+                      :disabled="locked"
+                      title="Remove this override"
+                      @click="dropHeaderRow(i)"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+
+                <div v-if="headerMissingPrereqs.length" class="alert alert-warning py-2 small">
+                  <div v-for="key in headerMissingPrereqs" :key="key">
+                    <code>{{ key }}</code> has to be on before those settings do anything.
+                    <button class="btn btn-sm btn-link p-0 align-baseline" @click="addPrereq(key)">
+                      Switch it on
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Add a setting -->
+                <div class="position-relative" style="max-width: 32rem">
+                  <input
+                    v-model="headerPick.query"
+                    class="form-control form-control-sm"
+                    placeholder="Add a setting — search, or type any name"
+                    :disabled="locked"
+                    @focus="headerPick.open = true"
+                    @keyup.enter="addHeaderRow(headerMatches[0], headerPick.query)"
+                  />
+                  <div
+                    v-if="headerPick.open && (headerMatches.length || headerPick.query.trim())"
+                    class="list-group position-absolute w-100 shadow"
+                    style="z-index: 5; max-height: 20rem; overflow: auto"
                   >
-                    Add <code>{{ headerPick.query.trim() }}</code> — a setting this list
-                    doesn't know about
+                    <button
+                      v-for="entry in headerMatches"
+                      :key="entry.key"
+                      class="list-group-item list-group-item-action py-2"
+                      @click="addHeaderRow(entry)"
+                    >
+                      <div class="d-flex justify-content-between gap-2">
+                        <code>{{ entry.key }}</code>
+                        <small class="text-secondary">{{ headerGroupLabel[entry.group] }}</small>
+                      </div>
+                      <div class="small text-secondary">
+                        {{ entry.help }}
+                        <span v-if="entry.default !== undefined">
+                          Default {{ JSON.stringify(entry.default) }}.
+                        </span>
+                      </div>
+                    </button>
+                    <button
+                      v-if="headerPick.query.trim()"
+                      class="list-group-item list-group-item-action py-2"
+                      @click="addHeaderRow(null, headerPick.query)"
+                    >
+                      Add <code>{{ headerPick.query.trim() }}</code> — a setting this list
+                      doesn't know about
+                    </button>
+                  </div>
+                </div>
+                <div class="form-text">
+                  Names and defaults come from the published mission header classes. A
+                  scenario or mod can accept others.
+                </div>
+              </template>
+
+              <!-- Raw JSON -->
+              <template v-else>
+                <JsonEditor v-model="headerJson" max-height="24rem" />
+                <div v-if="headerJsonError" class="alert alert-danger py-1 px-2 my-2 small">
+                  {{ headerJsonError }}
+                </div>
+                <div class="d-flex gap-2 mt-2">
+                  <button class="btn btn-sm btn-primary" :disabled="locked" @click="applyHeaderJson">
+                    Apply
+                  </button>
+                  <button class="btn btn-sm btn-outline-secondary" @click="headerView = 'rows'">
+                    Back to settings
                   </button>
                 </div>
-              </div>
-              <div class="form-text">
-                Names and defaults come from the published mission header classes. A
-                scenario or mod can accept others.
-              </div>
-            </template>
-
-            <!-- Raw JSON -->
-            <template v-else>
-              <JsonEditor v-model="headerJson" max-height="24rem" />
-              <div v-if="headerJsonError" class="alert alert-danger py-1 px-2 my-2 small">
-                {{ headerJsonError }}
-              </div>
-              <div class="d-flex gap-2 mt-2">
-                <button class="btn btn-sm btn-primary" :disabled="locked" @click="applyHeaderJson">
-                  Apply
-                </button>
-                <button class="btn btn-sm btn-outline-secondary" @click="headerView = 'rows'">
-                  Back to settings
-                </button>
-              </div>
-              <div class="form-text">
-                Applying tidies the indentation and repairs the usual copy-paste
-                damage — trailing commas, missing braces, curly quotes.
-              </div>
-            </template>
-          </div>
+                <div class="form-text">
+                  Applying tidies the indentation and repairs the usual copy-paste
+                  damage — trailing commas, missing braces, curly quotes.
+                </div>
+              </template>
+            </div>
+          </CollapsibleCard>
         </div>
 
         <!-- STEP 4: SAVE -->
@@ -2895,28 +2891,43 @@ onBeforeUnmount(() => {
             <label class="form-label">Description <small class="text-secondary">(optional)</small></label>
             <input v-model="spec.description" class="form-control" />
           </div>
-          <div class="d-flex gap-2">
-            <button class="btn btn-primary" :disabled="!canNext || saving || locked" @click="save">
-              {{ saving ? 'Saving…' : editing ? 'Save changes' : 'Save template' }}
-            </button>
-            <button class="btn btn-outline-secondary" @click="downloadJson">Download config.json</button>
-          </div>
         </div>
 
-        <!-- Nav buttons -->
-        <div class="d-flex justify-content-between mt-4">
-          <button class="btn btn-outline-secondary" :disabled="step === 1" @click="step--">
-            ← Back
-          </button>
-          <button v-if="step < 4" class="btn btn-primary" :disabled="!canNext" @click="step++">
-            Next →
-          </button>
+        <!-- One bar for moving and saving, under whichever step is open (#189) -->
+        <div class="rsm-wizard-bar card mt-4">
+          <div class="card-body py-2 d-flex flex-wrap align-items-center gap-2">
+            <button class="btn btn-outline-secondary" :disabled="step === 1" @click="step--">
+              ← Back
+            </button>
+            <span class="rsm-bar-status me-auto small text-secondary">
+              <span v-if="savedFlash" class="text-success">✓ Saved</span>
+              <span v-else class="rsm-bar-step">Step {{ step }} of {{ steps.length }} · {{ steps[step - 1] }}</span>
+            </span>
+            <button
+              v-if="editing && step > 1 && step < 4"
+              class="btn btn-outline-primary"
+              :disabled="saving || locked"
+              title="Save the template and keep editing"
+              @click="saveAndStay"
+            >
+              {{ saving ? 'Saving…' : 'Save changes' }}
+            </button>
+            <button v-if="step < 4" class="btn btn-primary" :disabled="!canNext" @click="step++">
+              Next →
+            </button>
+            <template v-else>
+              <button class="btn btn-outline-secondary" @click="downloadJson">Download config.json</button>
+              <button class="btn btn-primary" :disabled="!canNext || saving || locked" @click="save">
+                {{ saving ? 'Saving…' : editing ? 'Save changes' : 'Save template' }}
+              </button>
+            </template>
+          </div>
         </div>
       </div>
 
       <!-- Live config.json preview, and the hand editor it turns into (#29) -->
       <div class="col-lg-5">
-        <div class="card position-sticky" style="top: 1rem">
+        <div class="card position-sticky rsm-preview">
           <div class="card-header d-flex justify-content-between align-items-center py-2 gap-2">
             <span class="small fw-semibold">
               config.json {{ rawMode ? 'editor' : 'preview' }}
@@ -2983,8 +2994,8 @@ onBeforeUnmount(() => {
           <!-- Previewing -->
           <pre
             v-else
-            class="card-body bg-black text-light small mb-0 rounded-bottom"
-            style="max-height: 70vh; overflow: auto; white-space: pre-wrap"
+            class="card-body rsm-log mb-0 rounded-bottom"
+            style="max-height: 70vh; overflow: auto"
           >{{ preview || '// pick a scenario to see the config' }}</pre>
         </div>
       </div>
@@ -3126,6 +3137,92 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* The step row: underlined like the app's other tabs, with each step's number in a
+   small disc (#189). */
+.rsm-steps {
+  display: flex;
+  gap: 0.25rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-bottom: 1px solid var(--bs-border-color);
+}
+
+.rsm-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.9rem 0.6rem;
+  margin-bottom: -1px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--bs-secondary-color);
+  white-space: nowrap;
+}
+
+.rsm-step:hover:not(:disabled) {
+  color: var(--bs-emphasis-color);
+}
+
+.rsm-step:disabled {
+  opacity: 0.5;
+}
+
+.rsm-step.active {
+  color: var(--bs-emphasis-color);
+  font-weight: 600;
+  border-bottom-color: var(--bs-primary);
+}
+
+.rsm-step-num {
+  display: inline-grid;
+  place-items: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 50%;
+  border: 1px solid var(--bs-border-color);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.rsm-step.active .rsm-step-num {
+  background: var(--bs-primary);
+  border-color: var(--bs-primary);
+  color: #fff;
+}
+
+/* Back, save and next follow you down a long step, then settle under it. */
+.rsm-wizard-bar {
+  position: sticky;
+  bottom: 0.75rem;
+  z-index: 5;
+  box-shadow: 0 0.25rem 1rem rgba(0, 0, 0, 0.35);
+}
+
+@media (max-width: 991.98px) {
+  /* Clear the bottom menu bar. */
+  .rsm-wizard-bar {
+    bottom: calc(4.5rem + env(safe-area-inset-bottom));
+  }
+}
+
+/* On a phone the bar keeps to one row: the step row above already says where you
+   are, so only a "Saved" confirmation stays, and the buttons shrink. */
+@media (max-width: 575.98px) {
+  .rsm-wizard-bar .rsm-bar-step {
+    display: none;
+  }
+
+  .rsm-wizard-bar .btn {
+    padding: 0.25rem 0.6rem;
+    font-size: 0.875rem;
+  }
+}
+
+.rsm-preview {
+  top: 1.5rem;
+}
+
 .rsm-modal-backdrop {
   position: fixed;
   inset: 0;
