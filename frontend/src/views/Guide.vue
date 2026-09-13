@@ -53,7 +53,7 @@ const faq = [
        minutes, not seconds. The status stays amber ("Starting server…") until the server's
        own log says it is up (it registers with the Reforger backend and enters the online
        game state), and only then turns green ("Started and online"). If it never goes
-       green, read the server log on the instance page — a missing mod or a bad config
+       green, read the server's Console tab — a missing mod or a bad config
        shows up there, and error lines are highlighted in red.`,
   },
   {
@@ -107,10 +107,11 @@ const faq = [
   {
     q: 'I changed the template’s mods, restarted — and the server still runs the old ones.',
     a: `The server downloads and "bakes" its addons once and then reuses that copy. Open the
-       instance, stop it, and use the "Stored data" card to clear Downloaded & baked mods:
+       server, stop it, and on its Settings tab use Maintenance to clear Downloaded & baked mods:
        the next start fetches and bakes the template's current mod list from scratch (give it
-       a few minutes). The same card clears Saved game data — which resets the world, so
-       take a backup first and only do that when you want a clean slate — and old logs. Changing a
+       a few minutes). Maintenance clears old logs too. Clearing the saved game — which resets
+       the world, so take a backup first and only do that when you want a clean slate — is on
+       the Saves tab. Changing a
        template's launch parameters no longer needs any of this: the instance rebuilds its
        container by itself on the next start.`,
   },
@@ -170,7 +171,7 @@ const faq = [
   },
   {
     q: 'How do I back up my save game, and put it back?',
-    a: `The instance page has a "Saved game backups" card. "Back up now" writes one .tar.gz
+    a: `A server's Saves tab has its saved game backups. "Back up now" writes one .tar.gz
        of this server's world on the host — the save points and everything the scenario and
        its mods keep beside them (a Freedom Fighters server's shop prices, loot and mod
        databases are all in there, not just .save). Each backup lists what it holds, which
@@ -220,10 +221,10 @@ const faq = [
   },
   {
     q: 'Where does the save game actually live?',
-    a: `On the host, not in the container: the instance's "Stored data" card prints the exact
-       directory and lists what it found under Saved game data. If it says empty, nothing has
+    a: `On the host, not in the container: "Saved game on disk", on the server's Saves tab,
+       prints the exact directory and lists what it found. If it says empty, nothing has
        been saved yet: a save point appears only once the scenario writes one, and not every
-       scenario does (Game Master, for one, keeps no persistent world). The card names the
+       scenario does (Game Master, for one, keeps no persistent world). It names the
        template whose persistence settings produced it, and its hive id when one is
        configured.`,
   },
@@ -312,7 +313,7 @@ const faq = [
        instances) and per-instance configs, profiles and logs; ./serverfiles holds the
        downloaded game server per branch. A server's persistent save lives with its profile,
        under ./data/instances/<id>/profile — on the host, never inside a container image, so
-       it survives rebuilds and updates; the backups you make from the instance page sit
+       it survives rebuilds and updates; the backups you make on a server's Saves tab sit
        beside it in ./data/instances/<id>/backups. Deleting an instance without ticking
        "also delete stored data" leaves that folder behind, and if a later instance is
        given the same id the folder is moved to ./data/orphaned-instances/<id>-<date>/
@@ -375,7 +376,7 @@ const faq = [
             <strong>Create and start a Server Instance.</strong> On
             <router-link :to="{ name: 'instances' }">Servers</router-link> click "New
             instance", pick your template and branch, and start it. Ports are leased
-            automatically; live logs and status stream to the instance page.
+            automatically; live logs and status stream to the server's page.
           </li>
           <li>
             <strong>Open the ports.</strong> For internet players, forward each running
@@ -520,11 +521,22 @@ const faq = [
         </p>
         <ul class="mb-0">
           <li class="mb-2">
-            <strong>Lifecycle:</strong> start, stop and restart from the UI; live server
-            logs stream into the instance page, alongside players, FPS, CPU (a real
-            0–100% of the whole machine) and memory. The Connect line shows the address
-            players use — auto-detected from the server log unless
-            <code>PUBLIC_ADDRESS</code> is set.
+            <strong>Lifecycle:</strong> start, stop and restart from the UI. The header of a
+            server's page shows its state and the address players join on — auto-detected
+            from the server log unless <code>PUBLIC_ADDRESS</code> is set — with a Copy button.
+          </li>
+          <li class="mb-2">
+            <strong>A server's page:</strong> every server stays listed down the left, so
+            switching is one click and keeps you on the same tab. The page has five tabs:
+            <em>Overview</em> (players, FPS, CPU — a real 0–100% of the whole machine — and
+            memory, each with a line for the last hour; the latest console lines; restart
+            schedule and last backup), <em>Console</em> (the live log with an errors-only
+            filter, and the log and crash files to download), <em>Players</em>,
+            <em>Saves</em> (backups and the saved game on disk) and <em>Settings</em> (name,
+            game version, template, ports, restart behaviour and schedule, clearing mods and
+            logs, and deleting the server). Anything the server needs from you — a restart
+            after a template edit, missing server files — sits under the header with its
+            button.
           </li>
           <li class="mb-2">
             <strong>The Servers page:</strong> the whole host at a glance — how many
@@ -537,14 +549,14 @@ const faq = [
             running</em> asks before it disconnects everyone.
           </li>
           <li class="mb-2">
-            <strong>Who's online:</strong> the instance page lists the connected players
+            <strong>Who's online:</strong> the Players tab lists the connected players
             by name, read from the server's own join/leave log lines. The player count
             stays the source of truth for how many are on; the named list depends on the
             server build actually logging names, so on builds that don't, you still get
             the count.
           </li>
           <li class="mb-2">
-            <strong>Reliability:</strong> per instance you can toggle
+            <strong>Reliability:</strong> on a server's Settings tab you can toggle
             <em>auto-restart on crash</em> (brings the server back only if its process
             exits, not after a planned reboot), <em>auto-start on host/Docker restart</em>
             (the one that brings it back after a reboot), and scheduled daily restarts at

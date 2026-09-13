@@ -1,0 +1,107 @@
+/* Pieces more than one page draws the same way (#189). Everything else stays in its
+   component's scoped style. Colours come from Bootstrap's variables so both themes
+   hold. */
+
+/* A status dot in the colour of the matching bg-* class it is paired with. */
+.rsm-dot {
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  flex: none;
+}
+
+/* Beside a line of text, sit on that line rather than the top of the box. */
+.rsm-dot-text {
+  margin-top: 0.5rem;
+}
+
+/* Figures that line up in columns or tick over while you watch. */
+.rsm-num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* A strip of figures read as one object: hairline dividers from the gap, not a row
+   of separate cards. */
+.rsm-tiles {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--bs-border-color);
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--bs-border-radius);
+  overflow: hidden;
+}
+
+.rsm-tile {
+  background: var(--bs-body-bg);
+  padding: 0.7rem 0.9rem 0.5rem;
+  min-width: 0;
+}
+
+.rsm-tile-value {
+  font-size: 1.45rem;
+  font-weight: 600;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.rsm-tile-unit {
+  font-size: 0.85rem;
+  font-weight: 400;
+  color: var(--bs-secondary-color);
+}
+
+@media (max-width: 991.98px) {
+  .rsm-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* A row of underline tabs: only the page you are on is emphasised, the underline
+   sits on the row's own border, and a row too wide for the screen scrolls sideways
+   without a scrollbar drawn through it. */
+.rsm-tabs {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-bottom: 1px solid var(--bs-border-color);
+}
+
+.rsm-tabs .nav-link {
+  margin-bottom: -1px;
+  white-space: nowrap;
+}
+
+.rsm-tabs .nav-link:not(.active) {
+  color: var(--bs-secondary-color);
+}
+
+.rsm-tabs .nav-link:not(.active):hover,
+.rsm-tabs .nav-link:not(.active):focus-visible {
+  color: var(--bs-emphasis-color);
+}
+
+/* A terminal, not a paragraph (#108): monospace stack (Cascadia ships with Windows
+   Terminal, the rest cover macOS/Linux), tight lines, long lines wrapped at any
+   character like a real console. */
+.rsm-log {
+  background: #000;
+  font-family: 'Cascadia Mono', Consolas, 'Ubuntu Mono', 'DejaVu Sans Mono', 'Liberation Mono',
+    Menlo, monospace;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: #d4d4d4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-y: auto;
+}
+
+.rsm-log .log-error {
+  color: #ff6e6e;
+}
+
+.rsm-log .log-muted {
+  color: #8a8a8a;
+}

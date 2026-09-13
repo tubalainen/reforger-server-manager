@@ -232,7 +232,7 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="card mt-3">
+  <div class="card">
     <div class="card-header d-flex justify-content-between align-items-center py-2">
       <span class="fw-semibold small">Saved game backups</span>
       <button class="btn btn-sm btn-outline-secondary" @click="load">Refresh</button>

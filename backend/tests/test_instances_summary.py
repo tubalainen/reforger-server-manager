@@ -153,6 +153,10 @@ def test_summary_serves_the_recorded_history(fleet):
     assert len(history) == 2
     assert history[-1]["running"] == 1
     assert history[-1]["players"] == 12
+    # Each running server's own figures ride along for its page; a stopped one has none.
+    assert history[-1]["servers"]["1"]["players"] == 12
+    assert history[-1]["servers"]["1"]["server_fps"] == 59.9
+    assert "2" not in history[-1]["servers"]
 
 
 def test_history_keeps_only_the_last_hour_of_points():
