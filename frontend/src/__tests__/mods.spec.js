@@ -13,9 +13,9 @@ import {
   movedMods,
   neededSet,
   normalizeMod,
+  normalizeMods,
   orderedMods,
   orphansAfterRemoving,
-  partitionOrder,
   pruneOrphans,
   reorderMods,
   requiredBy,
@@ -175,19 +175,14 @@ describe('orderedMods', () => {
   })
 })
 
-describe('partitionOrder (#164 migration)', () => {
-  it('reproduces the pre-#164 render order: picks first, dependencies after', () => {
-    expect(partitionOrder(graph()).map((m) => m.modId)).toEqual(['A', 'D', 'B', 'C'])
-  })
-
-  it('is what keeps an untouched old template rendering the same config.json', () => {
-    // Whatever order the array was stored in, the list used to render (and
-    // export) partitioned — so loading through partitionOrder is a no-op change.
-    const stored = [
-      mod('DEP', { explicit: false }),
-      mod('PICK', { explicit: true }),
-    ]
-    expect(partitionOrder(stored).map((m) => m.modId)).toEqual(['PICK', 'DEP'])
+describe('loading a stored list (#197)', () => {
+  it('normalizing a saved list keeps its order, dependencies above picks and all', () => {
+    // The wizard used to re-sort here (picks first, dependencies after), which
+    // silently undid "Fix order", a drag or an AI order on the next open.
+    const saved = topoOrder(graph())
+    expect(saved.map((m) => m.modId)).toEqual(['C', 'B', 'D', 'A']) // deps above picks
+    expect(normalizeMods(saved).map((m) => m.modId)).toEqual(saved.map((m) => m.modId))
+    expect(dependencyViolations(normalizeMods(saved))).toEqual([])
   })
 })
 

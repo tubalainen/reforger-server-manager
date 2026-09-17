@@ -163,6 +163,32 @@ def test_mods_dependency_metadata_persists(logged_in):
     ]
 
 
+def test_hand_made_mod_order_survives_an_edit(logged_in):
+    # The order of the list IS the load order (#164), so a dependency the user
+    # put above the mod that requires it — by dragging, by "Fix order" or by an
+    # AI order — has to come back exactly as saved, both in the spec the wizard
+    # re-opens and in the config.json the server runs (#197).
+    spec = _spec("Ordered")
+    spec["mods"] = [
+        {"modId": "BBBBBBBBBBBBBBBB", "name": "ACE Core", "explicit": False,
+         "dependencies": []},
+        {"modId": "AAAAAAAAAAAAAAAA", "name": "ACE", "explicit": True,
+         "dependencies": ["BBBBBBBBBBBBBBBB"]},
+    ]
+    tid = logged_in.post("/api/templates", json=spec).json()["id"]
+
+    # save it again untouched, the way the wizard does on "Save template"
+    assert logged_in.put(f"/api/templates/{tid}", json=spec).status_code == 200
+
+    got = logged_in.get(f"/api/templates/{tid}").json()["spec"]["mods"]
+    assert [m["modId"] for m in got] == ["BBBBBBBBBBBBBBBB", "AAAAAAAAAAAAAAAA"]
+    cfg = logged_in.get(f"/api/templates/{tid}/config.json").json()
+    assert [m["modId"] for m in cfg["game"]["mods"]] == [
+        "BBBBBBBBBBBBBBBB",
+        "AAAAAAAAAAAAAAAA",
+    ]
+
+
 def test_scenario_name_persists_and_roundtrips(logged_in):
     # The scenario display name survives save+load so the edit wizard can show
     # the current scenario (#59), but stays out of the server's config.json.
