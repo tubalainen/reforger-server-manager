@@ -23,7 +23,6 @@ import {
   clearScenarioMods,
   mergeResolved,
   orderedMods,
-  partitionOrder,
   sortModsByAdded,
   sortModsByName,
   applyOrderIds,
@@ -616,6 +615,10 @@ const byModId = (id) => spec.mods.find((m) => m.modId === id)
 // pointed out, never corrected behind their back.
 const depOrderWarnings = computed(() => dependencyViolations(spec.mods))
 
+// The banner counts MODS, not violated pairs: one mod sitting above two of its
+// dependencies is one mod to move, not two (#197).
+const depOrderModCount = computed(() => new Set(depOrderWarnings.value.map((v) => v.mod)).size)
+
 // Is `m` required (transitively) by the mod backing the selected scenario?
 function requiredByScenario(m) {
   return requiredBy(spec.mods, m.modId).some((r) => r.from_scenario)
@@ -1161,11 +1164,10 @@ async function importMods(event) {
     ) {
       return
     }
-    // A file written before #164 carries no meaningful order of its own — it was
-    // always picks-then-dependencies — so it is re-partitioned. A @2 file was
-    // saved from a list the user ordered themselves: take it exactly as it is.
-    const loaded = normalizeMods(list)
-    spec.mods = parsed.format === MODS_FILE_FORMAT ? loaded : partitionOrder(loaded)
+    // Taken exactly as written: a @2 file was saved from a list the user ordered
+    // themselves, and an older file's array already is the picks-then-
+    // dependencies order it was rendered in (#197).
+    spec.mods = normalizeMods(list)
     modNotice.value = `Loaded ${spec.mods.length} mod(s) from ${file.name}.`
     hydrateVersionHistories()
   } catch (e) {
@@ -1418,11 +1420,13 @@ onMounted(async () => {
       Object.assign(spec, t.spec)
       // merge launch onto defaults so older templates (empty launch) keep keys
       spec.launch = { ...launchDefaults, ...(t.spec.launch || {}) }
-      // normalise mods so older templates (flat mods[]) gain the metadata
-      // fields, and put them in the order this template has been rendering with
-      // — before #164 that was always "picks first, dependencies after",
-      // whatever order the array itself was stored in (#164).
-      spec.mods = partitionOrder(normalizeMods(t.spec.mods))
+      // Normalise mods so older templates (flat mods[]) gain the metadata
+      // fields — and nothing else. The stored order IS the load order (#164),
+      // so it opens exactly as saved: re-sorting here (picks first, then
+      // dependencies, as the list was rendered before #164) threw away every
+      // hand-made order — "Fix order", a drag, an AI order — on the next open,
+      // which looked like the save had not worked at all (#197).
+      spec.mods = normalizeMods(t.spec.mods)
       spec.name = t.name
       spec.description = t.description
       extrasPaths.value = t.extras_paths || []
@@ -1819,7 +1823,7 @@ onBeforeUnmount(() => {
             class="alert alert-warning d-flex flex-wrap align-items-center gap-2 py-1 px-2 small mb-2"
           >
             <span class="me-auto">
-              {{ depOrderWarnings.length }} mod(s) are listed before something they require.
+              {{ depOrderModCount }} mod(s) are listed before something they require.
             </span>
             <button class="btn btn-sm btn-warning py-0" @click="sortByDependencies">Fix order</button>
           </div>

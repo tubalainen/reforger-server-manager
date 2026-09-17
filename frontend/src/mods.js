@@ -9,9 +9,10 @@
 // These live only in the manager; the server's config.json gets the flat
 // modId/name list, plus version only where the user locked one.
 
-// @2 (#164) differs from @1 in one way: the array order IS the load order. In an
-// @1 file the order was only ever "picks, then dependencies", so an @1 file is
-// re-partitioned on import to land exactly where it left off.
+// @2 (#164) differs from @1 in one way: the array order IS the load order. An @1
+// file was written from a list that was always rendered "picks, then
+// dependencies", so its array already is that order and it loads as it stands —
+// nothing re-sorts a list on the way in any more (#197).
 export const MODS_FILE_FORMAT = 'reforger-server-manager/mods@2'
 export const MODS_FILE_FORMAT_V1 = 'reforger-server-manager/mods@1'
 
@@ -205,15 +206,6 @@ export function sortModsByAdded(mods) {
 // the list, because the list is now fully reorderable (drag, AI, sorts).
 export function orderedMods(mods) {
   return [...mods]
-}
-
-// Explicit picks first, dependencies after: how the list was ALWAYS rendered
-// before #164, whatever order the array happened to be stored in. Applied once
-// when an existing template or a mods file is loaded, so opening a template in
-// the new list shows exactly the order it has been running with — and saving it
-// untouched writes back the same config.json.
-export function partitionOrder(mods) {
-  return [...mods.filter((m) => m.explicit), ...mods.filter((m) => !m.explicit)]
 }
 
 // ---- Manual reordering (#164) ----------------------------------------------
