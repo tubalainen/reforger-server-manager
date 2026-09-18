@@ -51,6 +51,13 @@ services:
       - reforger-net
       # Private link to the socket proxy; game containers are NOT on this one.
       - docker-api
+      # Private link to the optional Ollama service below (#199).
+      - reforger-ai
+    # Lets AI_ORDER_URL reach an Ollama installed on this host rather than in
+    # Docker (http://host.docker.internal:11434). Docker Desktop has this name
+    # built in; Linux needs it spelled out. Harmless when unused.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   # Least-privilege gateway to the host Docker daemon. Mounting
   # /var/run/docker.sock straight into the manager gives that container (and
@@ -87,6 +94,34 @@ services:
       # network-reachable Docker API would hand them a container escape.
       - docker-api
 
+  # OPTIONAL local AI for the template wizard's "AI order" button (#199). Not
+  # started unless the 'ollama' profile is on: add COMPOSE_PROFILES=ollama to
+  # .env, then `docker compose up -d` and download a model once:
+  #   docker exec reforger-ollama ollama pull qwen2.5:3b
+  # and point the manager at it in .env: AI_ORDER_URL=http://ollama:11434
+  # Nothing is published: only the manager can reach it, over reforger-ai.
+  ollama:
+    image: ${OLLAMA_IMAGE:-ollama/ollama:latest}
+    container_name: reforger-ollama
+    restart: unless-stopped
+    profiles: [ollama]
+    volumes:
+      # Downloaded models (a few GB each).
+      - ./ollama:/root/.ollama
+    # Use the NVIDIA GPU. Needs the NVIDIA driver and the NVIDIA Container Toolkit
+    # on the host (https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/).
+    # No NVIDIA GPU? Delete this 'deploy:' block and Ollama runs on the CPU —
+    # it works, but ordering a long mod list then takes minutes.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - reforger-ai
+
 # Explicit name so the manager can attach sibling server containers
 # without depending on the compose project name.
 networks:
@@ -98,3 +133,8 @@ networks:
   docker-api:
     name: reforger-docker-api
     internal: true
+  # Manager <-> the optional Ollama service only. Game servers are never on
+  # it (they run untrusted Workshop mods), and it is not 'internal' because
+  # Ollama has to reach the internet to download models.
+  reforger-ai:
+    name: reforger-ai

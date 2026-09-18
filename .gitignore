@@ -12,6 +12,8 @@ frontend/dist/
 # Runtime data
 data/
 serverfiles/
+# Models of the optional Ollama service (docker-compose.yaml, #199)
+ollama/
 .env
 
 # Local reference material (never push)

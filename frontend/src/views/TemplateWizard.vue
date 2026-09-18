@@ -965,6 +965,8 @@ const aiOrder = reactive({
   loading: false, // fetching the prompt
   busy: false, // waiting on the AI service
   available: false, // a provider is configured on this manager
+  provider: '', // 'ollama' | 'openai' — what the one-click button talks to (#199)
+  configuredModel: '',
   prompt: '',
   reply: '',
   model: '',
@@ -986,7 +988,7 @@ function modsForPrompt() {
 async function openAiOrder() {
   Object.assign(aiOrder, {
     open: true, loading: true, busy: false, prompt: '', reply: '', model: '',
-    error: '', copied: false, fixDeps: true,
+    error: '', copied: false, fixDeps: true, provider: '', configuredModel: '',
   })
   try {
     const res = await api('/api/mods/order/prompt', {
@@ -995,12 +997,19 @@ async function openAiOrder() {
     })
     aiOrder.prompt = res.prompt
     aiOrder.available = res.ai_available
+    aiOrder.provider = res.ai_provider || ''
+    aiOrder.configuredModel = res.ai_model || ''
   } catch (e) {
     aiOrder.error = e.message
   } finally {
     aiOrder.loading = false
   }
 }
+
+const aiAskLabel = computed(() => {
+  const who = aiOrder.provider === 'ollama' ? 'Ask Ollama' : 'Ask the AI service'
+  return aiOrder.configuredModel ? `${who} (${aiOrder.configuredModel})` : who
+})
 
 async function askAi() {
   aiOrder.busy = true
@@ -2061,10 +2070,13 @@ onBeforeUnmount(() => {
                   <div v-if="aiOrder.available" class="mb-3">
                     <button class="btn btn-primary btn-sm" :disabled="aiOrder.busy" @click="askAi">
                       <span v-if="aiOrder.busy" class="spinner-border spinner-border-sm me-1"></span>
-                      {{ aiOrder.busy ? 'Asking…' : 'Ask the AI service' }}
+                      {{ aiOrder.busy ? 'Asking…' : aiAskLabel }}
                     </button>
                     <span v-if="aiOrder.model" class="small text-secondary ms-2">
                       answered by {{ aiOrder.model }}
+                    </span>
+                    <span v-else-if="aiOrder.busy && aiOrder.provider === 'ollama'" class="small text-secondary ms-2">
+                      A local model can take a minute or two, longer the first time it loads.
                     </span>
                   </div>
 

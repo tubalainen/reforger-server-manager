@@ -55,6 +55,8 @@ services:
       - reforger-net
       # Private link to the socket proxy; game containers are NOT on this one.
       - docker-api
+      # Private link to the optional Ollama service below (#199).
+      - reforger-ai
 
   # Least-privilege gateway to the host Docker daemon (Docker Desktop / WSL2).
   # The manager reaches the daemon through this proxy instead of mounting the
@@ -81,6 +83,34 @@ services:
       # servers, which run untrusted Workshop mods as root.
       - docker-api
 
+  # OPTIONAL local AI for the template wizard's "AI order" button (#199). Not
+  # started unless the 'ollama' profile is on: add COMPOSE_PROFILES=ollama to
+  # .env, then `docker compose up -d` and download a model once:
+  #   docker exec reforger-ollama ollama pull qwen2.5:3b
+  # and point the manager at it in .env: AI_ORDER_URL=http://ollama:11434
+  # Nothing is published: only the manager can reach it, over reforger-ai.
+  ollama:
+    image: ${OLLAMA_IMAGE:-ollama/ollama:latest}
+    container_name: reforger-ollama
+    restart: unless-stopped
+    profiles: [ollama]
+    volumes:
+      # Downloaded models (a few GB each).
+      - reforger-ollama:/root/.ollama
+    # Use the NVIDIA GPU. Needs the NVIDIA driver on Windows; Docker Desktop's WSL2 backend
+    # passes an NVIDIA GPU through without anything else installed.
+    # No NVIDIA GPU? Delete this 'deploy:' block and Ollama runs on the CPU —
+    # it works, but ordering a long mod list then takes minutes.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - reforger-ai
+
 # Explicit names so the manager can attach sibling server containers and so the
 # volumes survive a rename of the folder this file sits in.
 networks:
@@ -90,6 +120,11 @@ networks:
   docker-api:
     name: reforger-docker-api
     internal: true
+  # Manager <-> the optional Ollama service only. Game servers are never on
+  # it (they run untrusted Workshop mods), and it is not 'internal' because
+  # Ollama has to reach the internet to download models.
+  reforger-ai:
+    name: reforger-ai
 
 volumes:
   reforger-data:
@@ -98,3 +133,5 @@ volumes:
     name: reforger-serverfiles-stable
   reforger-serverfiles-experimental:
     name: reforger-serverfiles-experimental
+  reforger-ollama:
+    name: reforger-ollama

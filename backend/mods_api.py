@@ -136,7 +136,14 @@ async def order_prompt(
     to offer the one-click button at all.
     """
     _, prompt = _prompt_for(payload)
-    return {"prompt": prompt, "ai_available": mod_order.configured()}
+    chosen = mod_order.provider()
+    return {
+        "prompt": prompt,
+        "ai_available": bool(chosen),
+        # Named so the button can say what it will ask ("Ollama · qwen2.5:3b").
+        "ai_provider": chosen.get("name", ""),
+        "ai_model": chosen.get("model", ""),
+    }
 
 
 @router.post("/order/ai")
@@ -151,13 +158,14 @@ async def order_ai(payload: dict = Body(...), _user: str = Depends(auth.require_
             status_code=503,
             detail=(
                 "No AI service is configured on this manager. Set AI_ORDER_URL "
-                "(and AI_ORDER_KEY) in .env for one-click ordering — or use "
+                "in .env for one-click ordering (a local Ollama, or an online "
+                "service with AI_ORDER_KEY) — or use "
                 "'Copy the prompt' and paste it into ChatGPT, Gemini or Claude."
             ),
         )
-    _, prompt = _prompt_for(payload)
+    mods, prompt = _prompt_for(payload)
     try:
-        result = await asyncio.to_thread(mod_order.ask, prompt)
+        result = await asyncio.to_thread(mod_order.ask, prompt, len(mods))
     except RuntimeError as exc:
         # 502: the manager is fine, the service it called is not — and the
         # wizard offers the copy-and-paste route instead.

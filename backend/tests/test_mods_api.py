@@ -408,3 +408,144 @@ def test_order_ai_rejects_an_empty_answer(logged_in, monkeypatch):
 
     monkeypatch.setattr(mod_order.httpx, "post", lambda *a, **k: _Response())
     assert logged_in.post("/api/mods/order/ai", json={"mods": ORDER_MODS}).status_code == 502
+
+
+# --- Ollama (#199) -----------------------------------------------------------
+
+
+def test_ollama_is_recognised_from_its_url(monkeypatch):
+    monkeypatch.setattr(config.settings, "ai_order_model", "")
+    for url in (
+        "http://ollama:11434",
+        "http://ollama:11434/",
+        "http://host.docker.internal:11434/api/chat",
+        # What the v0.50 notes suggested: Ollama's OpenAI route, on its port.
+        "http://host.docker.internal:11434/v1/chat/completions",
+        "http://gpu-box:8000/api/chat",
+    ):
+        monkeypatch.setattr(config.settings, "ai_order_url", url)
+        assert mod_order.provider() == {"name": "ollama", "model": mod_order.OLLAMA_DEFAULT_MODEL}, url
+    for url in (
+        "https://openrouter.ai/api/v1/chat/completions",
+        "http://localhost:8000/v1/chat/completions",  # LM Studio, vLLM, ...
+    ):
+        monkeypatch.setattr(config.settings, "ai_order_url", url)
+        assert mod_order.provider()["name"] == "openai", url
+    monkeypatch.setattr(config.settings, "ai_order_url", "")
+    assert mod_order.provider() == {}
+
+
+def test_order_prompt_names_the_configured_model(logged_in, monkeypatch):
+    monkeypatch.setattr(config.settings, "ai_order_url", "http://ollama:11434")
+    monkeypatch.setattr(config.settings, "ai_order_model", "llama3.2:3b")
+    body = logged_in.post("/api/mods/order/prompt", json={"mods": ORDER_MODS}).json()
+    assert body["ai_available"] is True
+    assert body["ai_provider"] == "ollama"
+    assert body["ai_model"] == "llama3.2:3b"
+
+
+def _ollama_ok(sent, content="AAAAAAAAAAAAAAAA\nBBBBBBBBBBBBBBBB"):
+    class _Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"model": "qwen2.5:3b", "message": {"role": "assistant", "content": content}}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        sent.update(url=url, body=json, headers=headers, timeout=timeout)
+        return _Response()
+
+    return fake_post
+
+
+def test_order_ai_talks_to_ollama_through_its_own_api(logged_in, monkeypatch):
+    monkeypatch.setattr(config.settings, "ai_order_url", "http://ollama:11434/v1/chat/completions")
+    monkeypatch.setattr(config.settings, "ai_order_model", "")
+    monkeypatch.setattr(config.settings, "ai_order_key", "")
+    sent = {}
+    monkeypatch.setattr(mod_order.httpx, "post", _ollama_ok(sent))
+    r = logged_in.post("/api/mods/order/ai", json={"mods": ORDER_MODS})
+    assert r.status_code == 200, r.text
+    assert r.json()["reply"].startswith("AAAAAAAAAAAAAAAA")
+    assert r.json()["model"] == "qwen2.5:3b"
+    # /api/chat, not the OpenAI route: only this one takes a context size.
+    assert sent["url"] == "http://ollama:11434/api/chat"
+    body = sent["body"]
+    assert body["model"] == mod_order.OLLAMA_DEFAULT_MODEL
+    assert body["stream"] is False
+    assert body["options"]["num_ctx"] >= 4096
+    assert "Authorization" not in sent["headers"]
+    assert sent["timeout"] == mod_order.OLLAMA_TIMEOUT
+
+
+def test_ollama_context_grows_with_the_mod_list():
+    """Ollama silently drops the START of an over-long prompt — the rules."""
+    few = [{"modId": f"{i:016X}", "name": f"Mod {i}", "explicit": True, "requires": []} for i in range(3)]
+    many = [
+        {"modId": f"{i:016X}", "name": f"A fairly long Workshop mod name {i}", "explicit": True, "requires": []}
+        for i in range(150)
+    ]
+    small_ctx, _ = mod_order._ollama_budget(mod_order.build_prompt(few), len(few))
+    big_prompt = mod_order.build_prompt(many)
+    big_ctx, big_answer = mod_order._ollama_budget(big_prompt, len(many))
+    assert small_ctx == 4096
+    assert big_ctx > 4096 and big_ctx % 1024 == 0
+    # Room for the whole prompt (qwen2.5 measured ~2.7 chars a token) plus the answer.
+    assert big_ctx >= len(big_prompt) * 2 // 5 + big_answer
+    huge = [{"modId": f"{i:016X}", "name": "x" * 80, "explicit": True, "requires": []} for i in range(200)]
+    assert mod_order._ollama_budget(mod_order.build_prompt(huge), 200)[0] <= 32768
+
+
+def test_order_ai_drops_a_reasoning_models_thinking(logged_in, monkeypatch):
+    monkeypatch.setattr(config.settings, "ai_order_url", "http://ollama:11434")
+    sent = {}
+    content = (
+        "<think>BBBBBBBBBBBBBBBB first? no, AAAAAAAAAAAAAAAA needs it</think>\n"
+        "BBBBBBBBBBBBBBBB | Framework | first\nAAAAAAAAAAAAAAAA | Pack | after"
+    )
+    monkeypatch.setattr(mod_order.httpx, "post", _ollama_ok(sent, content))
+    reply = logged_in.post("/api/mods/order/ai", json={"mods": ORDER_MODS}).json()["reply"]
+    assert "<think>" not in reply
+    assert reply.startswith("BBBBBBBBBBBBBBBB")
+    # Cut off mid-thought: nothing usable, so it is an empty answer, not ids.
+    monkeypatch.setattr(mod_order.httpx, "post", _ollama_ok(sent, "<think>AAAAAAAAAAAAAAAA hmm"))
+    assert logged_in.post("/api/mods/order/ai", json={"mods": ORDER_MODS}).status_code == 502
+
+
+def test_ollama_missing_model_says_how_to_pull_it(logged_in, monkeypatch):
+    monkeypatch.setattr(config.settings, "ai_order_url", "http://ollama:11434")
+    monkeypatch.setattr(config.settings, "ai_order_model", "qwen2.5:3b")
+
+    class _Response:
+        status_code = 404
+        text = '{"error":"model \\"qwen2.5:3b\\" not found, try pulling it first"}'
+        reason_phrase = "Not Found"
+
+    monkeypatch.setattr(mod_order.httpx, "post", lambda *a, **k: _Response())
+    r = logged_in.post("/api/mods/order/ai", json={"mods": ORDER_MODS})
+    assert r.status_code == 502
+    assert "ollama pull qwen2.5:3b" in r.json()["detail"]
+
+
+def test_ollama_unreachable_explains_the_listen_address(logged_in, monkeypatch):
+    monkeypatch.setattr(config.settings, "ai_order_url", "http://host.docker.internal:11434")
+
+    def boom(*a, **k):
+        raise mod_order.httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(mod_order.httpx, "post", boom)
+    detail = logged_in.post("/api/mods/order/ai", json={"mods": ORDER_MODS}).json()["detail"]
+    assert "Could not reach" in detail
+    assert "OLLAMA_HOST=0.0.0.0" in detail
+
+
+def test_ai_timeout_is_reported_as_a_timeout(logged_in, monkeypatch):
+    monkeypatch.setattr(config.settings, "ai_order_url", "http://ollama:11434")
+
+    def slow(*a, **k):
+        raise mod_order.httpx.ReadTimeout("timed out")
+
+    monkeypatch.setattr(mod_order.httpx, "post", slow)
+    detail = logged_in.post("/api/mods/order/ai", json={"mods": ORDER_MODS}).json()["detail"]
+    assert "did not answer within 300 seconds" in detail

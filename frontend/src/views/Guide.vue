@@ -142,7 +142,8 @@ const faq = [
        itself — so treat ordering as something that can help and cannot hurt, not as a fix
        for a broken server. Sort › Order with an AI… writes the question for you: copy the prompt into
        ChatGPT, Gemini or Claude (all free) and paste the answer back, or press one button
-       if your admin has configured an AI service in .env. Nothing is sent anywhere until
+       if your admin has configured an AI service in .env — a local Ollama on the same machine
+       works too, so the list never leaves it. Nothing is sent anywhere until
        you press the button, the prompt contains only mod ids, names and which mod needs
        which, and no answer is applied until you have seen exactly what it would move.`,
   },
