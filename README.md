@@ -18,7 +18,7 @@ It runs on Linux, a public VPS, or Windows 10/11 through Docker Desktop. The pro
 
 - Run multiple isolated stable or experimental servers.
 - Build reusable templates for scenarios, mods, admins, bans, whitelist, and server settings.
-- Search the Workshop, resolve dependencies, lock versions, and control mod order.
+- Search the Workshop, resolve dependencies, lock versions, and control mod order — optionally with an AI, including a local [Ollama](docs/installation.md#ai-mod-ordering-with-ollama-optional) on a 4 GB GPU.
 - Download and update server files through SteamCMD with live progress.
 - Start, stop, restart, monitor, and inspect live logs from the browser.
 - Schedule restarts and optionally update or restart servers when new builds are detected.

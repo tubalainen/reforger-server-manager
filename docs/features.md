@@ -22,6 +22,9 @@ Key template capabilities include:
 - Start each new template with a distinguishable in-game server name instead of one
   every server shares, re-rollable in the wizard.
 - Search the Workshop, fetch metadata, resolve dependencies, and preserve dependency order.
+- Drag mods into a load order, or ask an AI for one: paste the prompt into any free web
+  assistant, or answer it in one click with a local Ollama on your own GPU or any
+  OpenAI-compatible service.
 - Lock mod versions or follow current releases.
 - Import an existing server `config.json` or export a generated configuration.
 - Create reusable mod lists and apply them to server templates.

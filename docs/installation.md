@@ -177,6 +177,27 @@ After signing in:
 
 Multiple users can use the GUI simultaneously. Lists refresh automatically, and template editing uses temporary locks to prevent conflicting changes. Live logs and download progress use WebSockets, which standard nginx and Caddy configurations pass through.
 
+## AI mod ordering with Ollama (optional)
+
+The template wizard's **Sort › Order with an AI…** always works by copy and paste. To answer it in one click without sending the mod list anywhere, run [Ollama](https://ollama.com) — the compose files carry it as an optional service with NVIDIA GPU access (on Linux this needs the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/); Docker Desktop on Windows needs nothing extra). Add to `.env`:
+
+```bash
+COMPOSE_PROFILES=ollama
+AI_ORDER_URL=http://ollama:11434
+AI_ORDER_MODEL=qwen2.5:3b
+```
+
+Then start the stack again and download the model once:
+
+```bash
+docker compose up -d
+docker exec reforger-ollama ollama pull qwen2.5:3b
+```
+
+**Which model:** `qwen2.5:3b` (~1.9 GB) is the recommendation for a GPU with **4 GB** of memory and the default when `AI_ORDER_MODEL` is empty — it follows the answer format reliably and leaves room for the context a 100+ mod list needs. `llama3.2:3b` also fits. With 8 GB or more, `qwen2.5:7b` orders better. Avoid "thinking" models such as `qwen3` or `deepseek-r1` on a small GPU: they reason for minutes before answering.
+
+No NVIDIA GPU? Delete the `deploy:` block of the `ollama` service and it runs on the CPU, slowly. Already running Ollama on the host? Skip the profile, start Ollama with `OLLAMA_HOST=0.0.0.0` (keep port 11434 firewalled from the internet) and set `AI_ORDER_URL=http://host.docker.internal:11434`. A reverse proxy in front of the manager must allow a request to take a few minutes (nginx's default `proxy_read_timeout` is 60s).
+
 ## Updating setup files
 
 Pulling a new container image does not update `docker-compose.yaml`, `.env.example`, or local helper scripts. Check each release's **Breaking changes** section:
