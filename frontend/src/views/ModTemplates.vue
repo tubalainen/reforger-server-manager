@@ -59,6 +59,10 @@ onMounted(load)
           settings. Build the set once here, then load it into the <strong>Mods</strong>
           step of any server template, in the order you arranged it.
         </p>
+        <p>
+          To start from a server template you already like, press <em>To mod list</em>
+          on its row under Server templates — its scenario mods are left out.
+        </p>
         <p>Every change is recorded in the list's own change log.</p>
       </HelpTip>
     </p>
