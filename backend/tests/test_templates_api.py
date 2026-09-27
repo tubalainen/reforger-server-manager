@@ -648,3 +648,62 @@ def test_a_template_without_a_header_is_unchanged_by_the_feature(logged_in):
     props = _config_of(logged_in, tid)["game"]["gameProperties"]
     assert "missionHeader" not in props
     assert logged_in.get(f"/api/templates/{tid}").json()["extras_paths"] == []
+
+
+# --- Mod list from a server template (#201) ---------------------------------
+
+SCEN = "5CE0000000000001"   # the mod backing the scenario
+SCEN_DEP = "5CE0000000000002"  # needed only by the scenario mod
+SHARED = "5CE0000000000003"  # needed by the scenario mod AND by a kept addon
+ADDON = "ADD0000000000001"
+EXTRA_SCEN = "ADD0000000000002"  # an addon that publishes scenarios of its own
+
+
+def _scenario_spec(name="Happy"):
+    return _spec(name) | {"mods": [
+        {"modId": SCEN, "name": "Mission", "from_scenario": True,
+         "provides_scenarios": True, "dependencies": [SCEN_DEP, SHARED]},
+        {"modId": ADDON, "name": "Addon", "version": "2.0", "dependencies": [SHARED]},
+        {"modId": EXTRA_SCEN, "name": "Other missions", "provides_scenarios": True},
+        {"modId": SCEN_DEP, "name": "Mission dep", "explicit": False},
+        {"modId": SHARED, "name": "Shared dep", "explicit": False},
+    ]}
+
+
+def test_mod_list_from_template_leaves_out_scenario_mods(logged_in):
+    tid = logged_in.post("/api/templates", json=_scenario_spec()).json()["id"]
+    r = logged_in.post(f"/api/templates/{tid}/mod-list")
+    assert r.status_code == 201
+    body = r.json()
+    assert body["name"] == "Happy mods"
+    assert {m["modId"] for m in body["left_out"]} == {SCEN, SCEN_DEP, EXTRA_SCEN}
+
+    ml = logged_in.get(f"/api/mod-templates/{body['id']}").json()
+    # template load order kept; the shared dependency survives for the addon
+    assert [m["modId"] for m in ml["mods"]] == [ADDON, SHARED]
+    assert ml["mods"][0]["version"] == "2.0"
+    assert "Happy" in ml["description"] and "Mission" in ml["description"]
+    # the template itself is untouched
+    assert len(logged_in.get(f"/api/templates/{tid}").json()["spec"]["mods"]) == 5
+
+
+def test_mod_list_from_template_picks_a_free_name(logged_in):
+    tid = logged_in.post("/api/templates", json=_scenario_spec("Twice")).json()["id"]
+    first = logged_in.post(f"/api/templates/{tid}/mod-list").json()
+    second = logged_in.post(f"/api/templates/{tid}/mod-list").json()
+    assert (first["name"], second["name"]) == ("Twice mods", "Twice mods (2)")
+
+
+def test_mod_list_from_template_with_only_scenario_mods_is_refused(logged_in):
+    spec = _spec("Bare") | {"mods": [{"modId": SCEN, "from_scenario": True}]}
+    tid = logged_in.post("/api/templates", json=spec).json()["id"]
+    assert logged_in.post(f"/api/templates/{tid}/mod-list").status_code == 400
+    assert logged_in.get("/api/mod-templates").json() == []
+
+
+def test_mod_list_from_missing_template_404s(logged_in):
+    assert logged_in.post("/api/templates/999999/mod-list").status_code == 404
+
+
+def test_mod_list_from_template_requires_auth(client):
+    assert client.post("/api/templates/1/mod-list").status_code == 401

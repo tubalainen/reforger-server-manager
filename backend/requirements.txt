@@ -5,7 +5,9 @@
 fastapi~=0.136.1
 uvicorn[standard]~=0.47.0
 itsdangerous~=2.2.0
-sqlmodel~=0.0.39
+# 0.0.47 is the floor: it is the first that maps pydantic's NaiveDatetime to a
+# column, which Instance.last_scheduled_restart relies on.
+sqlmodel~=0.0.47
 docker~=7.1.0
 httpx~=0.28.1
 # multipart/form-data parsing, which FastAPI needs for the one upload in the app:

@@ -55,6 +55,23 @@ async function copy(t) {
   }
 }
 
+// Save a template's mods as a new mod list (#201). The backend leaves out the
+// scenario's mod and anything only it needed, names the list "<template> mods",
+// and we open it in the mod-list editor so it can be renamed or trimmed.
+const makingList = ref(0)
+async function makeModList(t) {
+  makingList.value = t.id
+  error.value = ''
+  try {
+    const created = await api(`/api/templates/${t.id}/mod-list`, { method: 'POST' })
+    router.push({ name: 'mod-template-edit', params: { id: created.id } })
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    makingList.value = 0
+  }
+}
+
 const anyLocked = computed(() => templates.value.some((t) => t.locked))
 
 // Stuck locks (a crashed tab, a closed laptop) expire on their own within
@@ -140,6 +157,14 @@ onUnmounted(() => clearInterval(poll))
             @click="copy(t)"
           >
             {{ copying === t.id ? 'Copying…' : 'Copy' }}
+          </button>
+          <button
+            class="btn btn-sm btn-outline-secondary"
+            :disabled="makingList === t.id"
+            title="Save this template's mods as a new mod list. The scenario's mod, and mods only it needs, are left out."
+            @click="makeModList(t)"
+          >
+            {{ makingList === t.id ? 'Saving…' : 'To mod list' }}
           </button>
           <button
             class="btn btn-sm btn-outline-primary"

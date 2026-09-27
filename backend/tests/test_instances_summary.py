@@ -53,7 +53,7 @@ def fleet(monkeypatch, tmp_path):
         session.add(models.Template(
             id=1, name="Conflict Everon", scenario_name="Conflict – Everon",
             config_json='{"game": {"maxPlayers": 64}}',
-            updated_at=datetime(2026, 7, 14, 11, 0, 0),  # after StartedAt 10:00 UTC
+            updated_at=datetime(2026, 7, 14, 11, 0, 0, tzinfo=UTC),  # after StartedAt 10:00 UTC
         ))
         for i, branch in ((1, "stable"), (2, "experimental")):
             session.add(models.Instance(

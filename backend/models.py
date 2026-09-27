@@ -2,6 +2,7 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
+from pydantic import NaiveDatetime
 from sqlmodel import Field, SQLModel, create_engine
 
 import config
@@ -124,7 +125,11 @@ class Instance(SQLModel, table=True):
     # in the container's local time; "" disables. last_scheduled_restart tracks
     # the most recently serviced occurrence so a restart fires once per window.
     restart_schedule_json: str = ""
-    last_scheduled_restart: datetime | None = None
+    # Naive on purpose: local wall-clock time, compared with a naive
+    # datetime.now(). sqlmodel >= 0.0.47 refuses naive values in a plain
+    # `datetime` column and would store an aware one as UTC, which would shift
+    # the schedule by the timezone offset.
+    last_scheduled_restart: NaiveDatetime | None = None
     created_at: datetime = Field(default_factory=_utcnow)
 
 

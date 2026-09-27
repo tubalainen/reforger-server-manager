@@ -8,7 +8,8 @@ from pydantic import ValidationError
 from sqlmodel import Session, select
 
 import auth
-from models import Template, get_engine
+from mod_templates_api import ModTemplateSpec
+from models import ModTemplate, Template, get_engine
 from services import (
     change_log,
     config_validator,
@@ -272,6 +273,101 @@ async def copy_template(template_id: int, _user: str = Depends(auth.require_sess
         session.commit()
         session.refresh(t)
         return _out(t)
+
+
+def _mods_without_scenarios(mods: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Split a template's mods into (keep, left_out) for a mod list (#201).
+
+    A mod list holds no scenario, so the mod backing the template's scenario —
+    and any other mod that publishes scenarios of its own — is left out, along
+    with the dependencies only those mods needed. A dependency that a kept mod
+    still requires stays: dropping it would leave that mod broken. The kept mods
+    keep the template's load order (#164).
+    """
+    by_id = {m["modId"]: m for m in mods}
+
+    def is_scenario(m: dict) -> bool:
+        return bool(m.get("from_scenario") or m.get("provides_scenarios"))
+
+    needed: set[str] = set()
+    stack = [m["modId"] for m in mods if m.get("explicit", True) and not is_scenario(m)]
+    while stack:
+        mod_id = stack.pop()
+        if mod_id in needed:
+            continue
+        needed.add(mod_id)
+        for dep in (by_id.get(mod_id) or {}).get("dependencies") or []:
+            if dep in by_id and dep not in needed:
+                stack.append(dep)
+    keep = [m for m in mods if m["modId"] in needed]
+    left_out = [m for m in mods if m["modId"] not in needed]
+    return keep, left_out
+
+
+def _unique_mod_list_name(session: Session, source_name: str) -> str:
+    """A free "<template> mods" name, then "… (2)", "(3)", … (names are unique)."""
+    taken = set(session.exec(select(ModTemplate.name)).all())
+    n = 1
+    while True:
+        suffix = " mods" if n == 1 else f" mods ({n})"
+        candidate = source_name[: 100 - len(suffix)] + suffix
+        if candidate not in taken:
+            return candidate
+        n += 1
+
+
+@router.post("/{template_id}/mod-list", status_code=201)
+async def make_mod_list(template_id: int, _user: str = Depends(auth.require_session)):
+    """Save a template's mods as a new mod list (#201), minus its scenario mods.
+
+    The mod list gets a free "<template> mods" name and a description naming the
+    source and what was left out; the frontend opens it in the editor straight
+    away so it can be renamed or tweaked. The template itself is not touched.
+    """
+    with Session(get_engine()) as session:
+        t = session.get(Template, template_id)
+        if not t:
+            raise HTTPException(status_code=404, detail="Template not found")
+        try:
+            mods = json.loads(t.mods_json or "[]")
+        except (ValueError, TypeError):
+            mods = []
+        mods = [m for m in mods if isinstance(m, dict) and m.get("modId")]
+        keep, left_out = _mods_without_scenarios(mods)
+        if not keep:
+            raise HTTPException(
+                status_code=400,
+                detail="This template has no mods besides its scenario's, "
+                "so there is nothing to put in a mod list",
+            )
+        description = f"Made from the server template “{t.name}”."
+        if left_out:
+            names = ", ".join(m.get("name") or m["modId"] for m in left_out)
+            description += f" Scenario mods left out: {names}."
+        spec = ModTemplateSpec(
+            name=_unique_mod_list_name(session, t.name),
+            description=description,
+            mods=keep,
+        )
+        mt = ModTemplate(
+            name=spec.name,
+            description=spec.description,
+            mods_json=json.dumps([m.model_dump() for m in spec.mods]),
+        )
+        session.add(mt)
+        session.flush()  # assign the id before the log references it
+        change_log.record_mod_template_creation(session, mt)
+        mod_registry.register_mods(session, [m.model_dump() for m in spec.mods])
+        session.commit()
+        session.refresh(mt)
+        return {
+            "id": mt.id,
+            "name": mt.name,
+            "mod_count": len(spec.mods),
+            "left_out": [
+                {"modId": m["modId"], "name": m.get("name")} for m in left_out
+            ],
+        }
 
 
 @router.get("/{template_id}")

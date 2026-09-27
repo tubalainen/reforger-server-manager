@@ -489,6 +489,15 @@ const faq = [
             <em>latest</em>. Drag the rows (or use their ↑ ↓) to set the order.
           </li>
           <li class="mb-2">
+            <strong>Or take it from a server template:</strong> happy with a template's mods?
+            Press <em>To mod list</em> on its row under
+            <router-link :to="{ name: 'templates' }">Library › Server templates</router-link>. You get a
+            new mod list named "&lt;template&gt; mods" with the same mods in the same order — minus
+            the scenario's own mod, any other mod that carries scenarios, and the dependencies
+            only those needed. It opens in the editor so you can rename or trim it; the template
+            itself is not changed.
+          </li>
+          <li class="mb-2">
             <strong>Load it into a server template:</strong> open a template's
             <strong>Mods</strong> step and press <em>From a mod list…</em> beside the
             search box. Choose a list: <em>Add to this template</em> appends its mods to
