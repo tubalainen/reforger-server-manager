@@ -51,6 +51,8 @@ powershell -ExecutionPolicy Bypass -File $installer
 
 Linux needs Docker Engine 26 or newer (Windows: Docker Desktop 4.29 or newer); the Linux installers check it and offer to upgrade.
 
+**Another manager on the same machine** — for a second team, with its own login, servers and data — is set up by hand next to the first: see [Several installs on one machine](docs/installation.md#several-installs-on-one-machine).
+
 Players connect through UDP game ports, not the web UI. The default ranges are `2001-2020` and `17777-17796`; forward only the ports assigned to your servers. Never forward the GUI or RCON ports. See [Networking and firewalls](docs/installation.md#networking-and-firewalls).
 
 ### First run
