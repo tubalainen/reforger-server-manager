@@ -42,6 +42,11 @@ jobs:
           frontend = json.loads(pathlib.Path("frontend/package.json").read_text())["version"]
           if backend != frontend:
               sys.exit(f"version drift: backend/config.py={backend} frontend/package.json={frontend}")
+          # The image's version label is what the Server Supervisor shows (#204).
+          image = re.search(r'LABEL reforger-manager.version="([^"]+)"',
+                            pathlib.Path("Dockerfile").read_text()).group(1)
+          if image != backend:
+              sys.exit(f"version drift: backend/config.py={backend} Dockerfile label={image}")
           print(f"version {backend} — consistent")
           EOF
 
@@ -163,6 +168,47 @@ jobs:
           check 7781 e2e-password-one
           check 7782 e2e-password-two
 
+      # The Server Supervisor (v0.67.0) next to both stacks: it sees each one,
+      # its manager, gate and servers, and nothing of the teams' secrets.
+      - name: Start the Server Supervisor
+        run: |
+          set -eu
+          dir="$RUNNER_TEMP/supervisor"
+          mkdir -p "$dir"
+          cp docker-compose.supervisor.yaml "$dir/"
+          printf 'MANAGER_VERSION=e2e\nADMIN_USERNAME=admin\nADMIN_PASSWORD=e2e-supervisor-pw\nSESSION_SECRET=%s\nWEB_PORT=7090\n' \
+            "$(openssl rand -hex 32)" > "$dir/.env"
+          (cd "$dir" && docker compose -f docker-compose.supervisor.yaml up -d)
+          for _ in $(seq 60); do
+            curl -fsS http://127.0.0.1:7090/api/health >/dev/null && break
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:7090/api/health
+          # Only the observer holds the Docker socket, and it has no network.
+          test "$(docker inspect -f '{{.HostConfig.NetworkMode}}' rsm-supervisor-observer)" = none
+          if docker inspect -f '{{range .Mounts}}{{.Source}} {{end}}' rsm-supervisor | grep -q docker.sock; then
+            echo "the Supervisor mounts the Docker socket"; exit 1
+          fi
+
+      - name: The Supervisor sees both stacks and their servers
+        run: |
+          set -eu
+          # A stand-in game server in each stack, made through that stack's gate.
+          for s in reforger team2; do
+            docker exec -i -u app "$s-manager" python - < scripts/ci/fake_server_inside.py
+          done
+          sleep 3
+          python3 scripts/ci/supervisor_e2e.py http://127.0.0.1:7090 e2e-supervisor-pw healthy
+
+      - name: One stack's shutdown leaves the other's servers running
+        run: |
+          set -eu
+          docker stop team2-manager
+          sleep 5  # past the few seconds the Supervisor shares one overview
+          python3 scripts/ci/supervisor_e2e.py http://127.0.0.1:7090 e2e-supervisor-pw team2-manager-down
+          test "$(docker inspect -f '{{.State.Running}}' reforger-instance-99)" = true
+          docker start team2-manager
+
       - name: Logs
         if: always()
         run: |
@@ -171,6 +217,9 @@ jobs:
             (cd "$RUNNER_TEMP/$s" && docker compose logs --no-color --tail 200) || true
             echo "::endgroup::"
           done
+          echo "::group::supervisor"
+          (cd "$RUNNER_TEMP/supervisor" && docker compose -f docker-compose.supervisor.yaml logs --no-color --tail 200) || true
+          echo "::endgroup::"
 
   # The host administrator's side of several stacks (#204): the real Linux
   # installer, then rsm adding, listing, checking and removing a second stack,
@@ -247,6 +296,27 @@ jobs:
           if sudo rsm ports; then echo "overlap not reported"; exit 1; fi
           sudo sed -i 's/^WEB_PORT=7780$/WEB_PORT=7781/' /opt/rsm-team2/.env
 
+      - name: rsm sets up the Server Supervisor next to the stacks
+        run: |
+          set -eux
+          # The published images predate the Supervisor until this is released:
+          # run this commit's image, which is also what --version is for.
+          docker build -t ghcr.io/tubalainen/reforger-server-manager:e2e .
+          sudo -E rsm supervisor install --version e2e | tee sup.log
+          grep -q 'The Server Supervisor is up' sup.log
+          sudo test -f /opt/rsm-supervisor/.env
+          test -f /etc/reforger-server-manager/supervisor.conf
+          # It is no stack, but its port is taken.
+          ! sudo rsm stacks | grep -q supervisor
+          sudo rsm ports | grep -q '^(supervisor) *7090'
+          for _ in $(seq 60); do
+            curl -fsS http://127.0.0.1:7090/api/health >/dev/null && break
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:7090/api/health
+          sudo rsm supervisor status
+          if sudo rsm supervisor install; then echo "installed twice"; exit 1; fi
+
       - name: rsm remove-stack takes the second team away again
         run: |
           set -eux
@@ -255,6 +325,15 @@ jobs:
           test ! -e /opt/rsm-team2
           ! docker ps -a --format '{{.Names}}' | grep -q '^team2-'
           sudo rsm stacks | grep -q '^reforger'
+          curl -fsS http://127.0.0.1:7780/api/health
+
+      - name: rsm removes the Supervisor and leaves the stack alone
+        run: |
+          set -eux
+          sudo -E rsm supervisor remove
+          test ! -e /etc/reforger-server-manager/supervisor.conf
+          test ! -e /opt/rsm-supervisor
+          ! docker ps -a --format '{{.Names}}' | grep -q '^rsm-supervisor'
           curl -fsS http://127.0.0.1:7780/api/health
 
       - name: Logs

@@ -24,8 +24,23 @@ from docker.errors import DockerException, ImageNotFound, NotFound
 from sqlmodel import Session, select
 
 import config
+import stacks
 from models import Instance, Template, get_engine
 from services import docker_service, fleet_history, ports, template_service
+
+# Reading a container's log, uptime and load lives in container_reading, shared
+# with the Supervisor's observer gate (#204). Re-exported like server_log below.
+from services.container_reading import (  # noqa: F401
+    STATS_LOG_TAIL,
+    _container_uptime_seconds,
+    _docker_cpu_mem,
+    _online_runs,
+    _split_log_timestamp,
+    _started_at,
+    current_run_log,
+    forget_run,
+    server_state,
+)
 
 # Pure log parsing lives in server_log (#88). Re-exported so callers and tests keep
 # using instance_service.parse_* unchanged.
@@ -93,38 +108,6 @@ def forget_cpu_sample(instance_id: int) -> None:
     _cpu_cache.pop(instance_id, None)
 
 
-def _docker_cpu_mem(container) -> dict:
-    """One-shot CPU%/memory from docker stats (best-effort; {} on failure).
-
-    Slow by construction — see _CPU_SAMPLE_TTL. Call it through cpu_mem_for(),
-    not from a request.
-    """
-    try:
-        s = container.stats(stream=False)
-    except (DockerException, KeyError, ValueError):
-        return {}
-    try:
-        cpu = s["cpu_stats"]
-        pre = s["precpu_stats"]
-        cpu_delta = cpu["cpu_usage"]["total_usage"] - pre["cpu_usage"]["total_usage"]
-        sys_delta = cpu.get("system_cpu_usage", 0) - pre.get("system_cpu_usage", 0)
-        # Share of the WHOLE machine: system_cpu_usage is the host's total CPU
-        # time summed over every core, so cpu_delta/sys_delta is 0-1 and *100 is
-        # a real 0-100% where 100% = every core/thread maxed. The Docker CLI
-        # multiplies this by the core count to get a per-core figure (100% = one
-        # core), which is what showed ~291% for ~3 busy cores and read as "over
-        # max" to users. Clamp for sampling jitter between the two counters.
-        cpu_pct = (cpu_delta / sys_delta) * 100 if sys_delta > 0 else 0.0
-        cpu_pct = min(100.0, max(0.0, cpu_pct))
-        mem = s["memory_stats"]
-        return {
-            "cpu_percent": round(cpu_pct, 1),
-            "mem_bytes": mem.get("usage", 0),
-            "mem_limit_bytes": mem.get("limit", 0),
-        }
-    except (KeyError, ZeroDivisionError, TypeError):
-        return {}
-
 # Ports are published 1:1 — the host port equals the container bind port equals
 # the advertised public port, which is what Reforger's networking (and the A2S
 # server-browser query) requires. The server binds these exact ports inside the
@@ -137,9 +120,6 @@ CONFIG_FILENAME = "server.json"
 # tail we read, at the cost of slightly noisier logs.
 STATS_LOG_INTERVAL_MS = 10000
 STATS_LOG_ARG = "-logStats"
-# Reforger logs are chatty, so read a generous tail to be sure a periodic stats
-# line (emitted every STATS_LOG_INTERVAL_MS) is inside the window we parse.
-STATS_LOG_TAIL = 400
 # The roster (#126) is folded from join/leave lines that, unlike the periodic
 # stats line, appear once and never repeat — so a player who joined early scrolls
 # out of a 400-line tail on a busy server. Read a wider window when building the
@@ -734,6 +714,8 @@ def start_instance(instance_id: int) -> None:
                 # Adopted from before stacks existed: give it this stack's label
                 # and name, so the Docker gate lets this manager keep managing it.
                 reason = "created before stacks (v0.65.0, #204)"
+            elif not _container_labels_match(container, _display_labels(inst, template_config)):
+                reason = "name, player limit or ports changed (as the Server Supervisor shows them)"
             if reason:
                 logger.info("Recreating container for %s: %s", inst.name, reason)
                 try:
@@ -744,7 +726,8 @@ def start_instance(instance_id: int) -> None:
         if container is None:
             self_config_path = _write_config(inst, template_config)
             try:
-                container = _create_container(inst, self_config_path, launch)
+                container = _create_container(inst, self_config_path, launch,
+                                              template_config)
             except ImageNotFound as exc:
                 raise InstanceError(
                     f"Server image '{config.settings.reforger_server_image}' not found — "
@@ -812,7 +795,46 @@ def _container_mounts_match(container, inst: Instance) -> bool:
     return have == sorted(_mount_key(m) for m in _desired_mounts(inst))
 
 
-def _create_container(inst: Instance, config_path: Path, launch: "LaunchParams | None" = None):
+def _display_labels(inst: Instance, template_config: str | None) -> dict:
+    """What the Server Supervisor shows for this server, as container labels (#204).
+
+    The Supervisor sees every stack on the machine but none of their databases,
+    so a server carries its own name, player limit and ports. The player limit
+    is the template's at the time the server was started, which is also the one
+    the running server has.
+    """
+    labels = {
+        stacks.LABEL_NAME: inst.name,
+        stacks.LABEL_GAME_PORT: str(inst.game_port),
+        stacks.LABEL_A2S_PORT: str(inst.a2s_port),
+        stacks.LABEL_RCON_PORT: str(inst.rcon_port),
+    }
+    limit = _max_players(template_config) if template_config is not None else None
+    if limit is not None:
+        labels[stacks.LABEL_MAX_PLAYERS] = str(limit)
+    return labels
+
+
+_DISPLAY_LABELS = (stacks.LABEL_NAME, stacks.LABEL_MAX_PLAYERS, stacks.LABEL_GAME_PORT,
+                   stacks.LABEL_A2S_PORT, stacks.LABEL_RCON_PORT)
+
+
+def _container_labels_match(container, desired: dict) -> bool:
+    """True if the container carries the display labels it would be given now.
+
+    Labels are fixed at creation, so a renamed server or a changed player limit
+    would otherwise show its old values in the Supervisor for good. On any read
+    failure return True — never destroy a container we cannot inspect.
+    """
+    try:
+        labels = container.labels or {}
+    except (KeyError, AttributeError):
+        return True
+    return all(labels.get(key) == desired.get(key) for key in _DISPLAY_LABELS)
+
+
+def _create_container(inst: Instance, config_path: Path, launch: "LaunchParams | None" = None,
+                      template_config: str | None = None):
     """Create (not start) the sibling server container for an instance."""
     Path(f"{config.settings.serverfiles_dir}/{inst.branch}").mkdir(parents=True, exist_ok=True)
     mounts = _desired_mounts(inst)
@@ -850,6 +872,7 @@ def _create_container(inst: Instance, config_path: Path, launch: "LaunchParams |
             docker_service.LABEL_ROLE: docker_service.ROLE_INSTANCE,
             docker_service.LABEL_BRANCH: inst.branch,
             docker_service.LABEL_INSTANCE_ID: str(inst.id),
+            **_display_labels(inst, template_config),
         }),
         **net_kwargs,
         restart_policy={"Name": _restart_policy(inst)},
@@ -1064,109 +1087,6 @@ def running_instance_names_for_branch(branch: str) -> list[str]:
         if container_status(inst.id) == "running":
             names.append(inst.name)
     return names
-
-
-def _started_at(container) -> datetime | None:
-    """When the container's current run began, from its Docker StartedAt."""
-    try:
-        started = (container.attrs.get("State") or {}).get("StartedAt")
-    except AttributeError:
-        return None
-    if not started or started.startswith("0001-01-01"):  # never started
-        return None
-    # Docker stamps nanoseconds (up to 9 digits); trim to microseconds for fromisoformat
-    m = re.match(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?", started)
-    if not m:
-        return None
-    iso = m.group(1) + (("." + m.group(2)[:6]) if m.group(2) else "") + "+00:00"
-    try:
-        return datetime.fromisoformat(iso)
-    except ValueError:
-        return None
-
-
-def _container_uptime_seconds(container) -> int | None:
-    """How long the container has been running, from its Docker StartedAt."""
-    started_dt = _started_at(container)
-    if started_dt is None:
-        return None
-    return max(0, int((datetime.now(UTC) - started_dt).total_seconds()))
-
-
-_LOG_TS_RE = re.compile(
-    r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?Z?\s(.*)$", re.DOTALL
-)
-
-
-def _split_log_timestamp(line: str) -> tuple[datetime | None, str]:
-    """Split docker's RFC3339 timestamp prefix off a log line."""
-    m = _LOG_TS_RE.match(line)
-    if not m:
-        return None, line
-    iso = m.group(1) + (("." + m.group(2)[:6]) if m.group(2) else "") + "+00:00"
-    try:
-        return datetime.fromisoformat(iso), m.group(3)
-    except ValueError:
-        return None, line
-
-
-def current_run_log(container, tail: int = STATS_LOG_TAIL) -> str:
-    """The tail of the log for the container's CURRENT run only.
-
-    Docker keeps a container's log across restarts, so a plain tail serves up the
-    previous run's output too — which would report a restarting server as still
-    online (#76) and its old FPS/player numbers as current.
-
-    Docker's own `since` filter is passed, but it is NOT trusted on its own: the
-    SDK truncates it to whole seconds (docker.utils.datetime_to_timestamp), so a
-    line the previous run wrote in the same second the new run began still comes
-    through — and on a fast restart that is exactly where the last stats line
-    lands. Each line therefore carries its timestamp and is checked against
-    StartedAt at full precision; the prefix is stripped again so the parsers see
-    an ordinary log.
-    """
-    started_dt = _started_at(container)
-    if started_dt is None:
-        # Unknown start time: no honest way to draw the boundary, so read as before.
-        return container.logs(tail=tail).decode("utf-8", errors="replace")
-
-    raw = container.logs(tail=tail, since=started_dt, timestamps=True)
-    kept = []
-    for line in raw.decode("utf-8", errors="replace").splitlines():
-        ts, text = _split_log_timestamp(line)
-        if ts is not None and ts < started_dt:
-            continue  # belongs to a previous run of this container
-        kept.append(text)
-    return "\n".join(kept)
-
-
-# Runs already seen online: {container id: StartedAt}. Once a server has come up
-# it stays up until its container restarts, so remember it rather than re-deriving
-# it from a log window that will eventually scroll past the evidence. Keyed by
-# StartedAt so a restart of the same container is a fresh run.
-_online_runs: dict[str, str] = {}
-
-
-def forget_run(container_id: str | None) -> None:
-    """Drop the remembered 'this run is online' fact for a container.
-
-    Called whenever the manager stops or starts one: the next run has to prove
-    itself from its own log again, no matter what the previous one did (#76).
-    """
-    if container_id:
-        _online_runs.pop(container_id, None)
-
-
-def server_state(container, log_text: str) -> str:
-    """STATE_STARTING while the game server loads, STATE_ONLINE once it is up."""
-    cid = getattr(container, "id", "") or ""
-    started = str((container.attrs.get("State") or {}).get("StartedAt", ""))
-    if cid and _online_runs.get(cid) == started:
-        return STATE_ONLINE
-    state = parse_server_state(log_text)
-    if state == STATE_ONLINE and cid:
-        _online_runs[cid] = started
-    return state
 
 
 def instance_stats(instance_id: int) -> dict:

@@ -24,6 +24,11 @@
     goes into its own folder (ReforgerServerManager-team2) with its own GUI port,
     UDP port ranges, firewall rule and Desktop shortcut, picked so they do not
     overlap the installs already here.
+
+    The Server Supervisor (#204, v0.67.0) - one read-only page showing every
+    install on this PC - is installed with -Supervisor. It goes into its own
+    folder (ReforgerSupervisor) with its own login and a Desktop shortcut of its
+    own, and its page is on port 7090.
 #>
 [CmdletBinding()]
 param(
@@ -50,6 +55,10 @@ param(
     # Do not start the manager at the end.
     [switch] $NoStart,
 
+    # Install the Server Supervisor instead of a manager: one read-only page
+    # showing every install on this PC. -WebPort defaults to 7090 for it.
+    [switch] $Supervisor,
+
     # Set when the script resumes itself after the reboot it asked for.
     [switch] $Resumed
 )
@@ -64,6 +73,8 @@ if ($Stack -cnotmatch '^[a-z0-9][a-z0-9_]{0,30}$') {
 }
 if (-not $InstallDir) {
     $folder = if ($Stack -eq 'reforger') { 'ReforgerServerManager' } else { "ReforgerServerManager-$Stack" }
+    # Not ReforgerServerManager-*: that is where installs look for each other's ports.
+    if ($Supervisor) { $folder = 'ReforgerSupervisor' }
     $InstallDir = Join-Path $env:USERPROFILE $folder
 }
 
@@ -90,6 +101,17 @@ function New-RandomString {
     return $out
 }
 
+function Read-EnvFile {
+    param([string] $Path, [string] $Key, [string] $Default)
+    if (-not (Test-Path $Path)) { return $Default }
+    $line = Select-String -Path $Path -Pattern "^$Key=(.*)$" -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+    if ($line -and $line.Matches[0].Groups[1].Value.Trim()) {
+        return $line.Matches[0].Groups[1].Value.Trim()
+    }
+    return $Default
+}
+
 function Register-Resume {
     <#
     Continue this installer automatically after the reboot WSL2 needs, so the user
@@ -105,6 +127,7 @@ function Register-Resume {
 
     $cmd = ('powershell -NoProfile -ExecutionPolicy Bypass -File "{0}" -Stack {1} -InstallDir "{2}" -WebPort {3} -Ref "{4}" -Resumed' -f
             $resumeScript, $Stack, $InstallDir, $WebPort, $Ref)
+    if ($Supervisor) { $cmd += ' -Supervisor' }
     Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce' `
                      -Name 'ReforgerServerManagerInstall' -Value $cmd
 }
@@ -178,6 +201,91 @@ if (-not $SkipPrereqs) {
     }
 }
 
+# --- The Server Supervisor instead of a manager (#204) -----------------------
+if ($Supervisor) {
+    Write-Step "Setting up the Server Supervisor in $InstallDir"
+    New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+    $files = @{
+        'docker-compose.supervisor.yaml' = "$RepoRaw/docker-compose.supervisor.yaml"
+        '.env.supervisor.example'        = "$RepoRaw/.env.supervisor.example"
+        'supervisor.ps1'                 = "$RepoRaw/scripts/windows/supervisor.ps1"
+        'common.ps1'                     = "$RepoRaw/scripts/windows/common.ps1"
+    }
+    foreach ($name in $files.Keys) {
+        Invoke-WebRequest -Uri $files[$name] -OutFile (Join-Path $InstallDir $name) -UseBasicParsing
+        Write-Ok $name
+    }
+
+    $envPath = Join-Path $InstallDir '.env'
+    $generatedPassword = $null
+    if (Test-Path $envPath) {
+        Write-Step 'Keeping the existing .env'
+    } else {
+        Write-Step 'Creating .env'
+        Write-Host ''
+        Write-Host '    Choose the password for the Supervisor (user: admin) - its own, not a team''s.' -ForegroundColor White
+        Write-Host '    Press Enter to have a strong one generated for you.' -ForegroundColor Gray
+        $secure = Read-Host '    Supervisor password' -AsSecureString
+        $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+            [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
+        if ([string]::IsNullOrWhiteSpace($plain)) {
+            $plain = New-RandomString -Length 18 -Charset 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+            $generatedPassword = $plain
+        }
+        if ($WebPort -eq 0) { $WebPort = 7090 }
+        $content = Get-Content (Join-Path $InstallDir '.env.supervisor.example') -Raw
+        # '$' doubled for Docker Compose, emitted literally (see the manager's .env below).
+        $envPass = $plain -replace '\$', '$$$$'
+        $content = [regex]::Replace($content, '(?m)^ADMIN_PASSWORD=.*$', { "ADMIN_PASSWORD=$envPass" })
+        $content = $content -replace '(?m)^SESSION_SECRET=.*$', ('SESSION_SECRET=' + (New-RandomString -Length 64 -Charset '0123456789abcdef'))
+        $content = $content -replace '(?m)^WEB_PORT=.*$', ('WEB_PORT=' + $WebPort)
+        Set-Content -Path $envPath -Value $content -Encoding ASCII
+        Write-Ok ".env written (page on port $WebPort)"
+    }
+    $WebPort = [int](Read-EnvFile -Path $envPath -Key 'WEB_PORT' -Default '7090')
+
+    Write-Step 'Creating the Desktop shortcut'
+    $lnkPath = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Reforger Server Supervisor.lnk'
+    $shell = New-Object -ComObject WScript.Shell
+    $lnk = $shell.CreateShortcut($lnkPath)
+    $lnk.TargetPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $lnk.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $InstallDir 'supervisor.ps1')`""
+    $lnk.WorkingDirectory = $InstallDir
+    $lnk.Description = 'Start Docker and the Reforger Server Supervisor, then open its page'
+    $lnk.IconLocation = "$(Join-Path $env:SystemRoot 'System32\shell32.dll'),22"
+    $lnk.Save()
+    Write-Ok (Split-Path -Leaf $lnkPath)
+
+    Write-Host ''
+    Write-Host '  Installed.' -ForegroundColor Green
+    Write-Host ''
+    Write-Host "  Folder      : $InstallDir"
+    Write-Host "  Supervisor  : http://localhost:$WebPort"
+    Write-Host '  Username    : admin'
+    if ($generatedPassword) {
+        Write-Host "  Password    : $generatedPassword" -ForegroundColor Yellow
+        Write-Host '                ^ save this now - it is only shown here (it is also in .env).' -ForegroundColor Yellow
+    } else {
+        Write-Host "  Password    : the one you chose (stored in $envPath)"
+    }
+    Write-Host ''
+    Write-Host '  It shows every install on this PC, read-only. Start it from the'
+    Write-Host '  "Reforger Server Supervisor" shortcut on your Desktop.'
+    Write-Host "  To remove it:  powershell -ExecutionPolicy Bypass -File `"$(Join-Path $InstallDir 'supervisor.ps1')`" -Action uninstall"
+    Write-Host ''
+    if (-not $NoStart) {
+        $answer = Read-Host '  Start the Supervisor now? [Y/n]'
+        if ([string]::IsNullOrWhiteSpace($answer) -or $answer -match '^[Yy]') {
+            & (Join-Path $InstallDir 'supervisor.ps1') -NoSelfUpdate
+        }
+    }
+    if ($Resumed) {
+        Write-Host ''
+        Read-Host '  Press Enter to close this window'
+    }
+    return
+}
+
 # --- 2. Install folder + files ----------------------------------------------
 Write-Step "Setting up $InstallDir"
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
@@ -199,17 +307,6 @@ foreach ($name in $files.Keys) {
 # --- 3. .env (never clobber an existing one) --------------------------------
 $envPath = Join-Path $InstallDir '.env'
 $generatedPassword = $null
-
-function Read-EnvFile {
-    param([string] $Path, [string] $Key, [string] $Default)
-    if (-not (Test-Path $Path)) { return $Default }
-    $line = Select-String -Path $Path -Pattern "^$Key=(.*)$" -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-    if ($line -and $line.Matches[0].Groups[1].Value.Trim()) {
-        return $line.Matches[0].Groups[1].Value.Trim()
-    }
-    return $Default
-}
 
 # Ports the other installs on this PC already use (#204): their .env files, in
 # the folders this installer puts them in.

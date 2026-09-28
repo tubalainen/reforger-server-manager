@@ -62,7 +62,7 @@ async def image_events(websocket: WebSocket):
     if not auth.request_origin_ok(websocket):
         await websocket.close(code=4403)  # cross-site WebSocket hijacking (R12)
         return
-    if not auth.session_username(websocket.cookies.get(auth.COOKIE_NAME)):
+    if not auth.session_username(websocket.cookies.get(auth.cookie_name())):
         await websocket.close(code=4401)
         return
     await websocket.accept()
@@ -148,7 +148,7 @@ async def download_events(websocket: WebSocket, branch: str):
     if not auth.request_origin_ok(websocket):
         await websocket.close(code=4403)  # cross-site WebSocket hijacking (R12)
         return
-    if not auth.session_username(websocket.cookies.get(auth.COOKIE_NAME)):
+    if not auth.session_username(websocket.cookies.get(auth.cookie_name())):
         await websocket.close(code=4401)
         return
     if branch not in config.BRANCHES:

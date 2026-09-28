@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 import stacks
 
 APP_NAME = "Reforger Server Manager"
-APP_VERSION = "0.66.0"
+APP_VERSION = "0.67.0"
 
 # The password shipped in .env.example. Refusing to start with it (when exposed)
 # is what stops a "just ran docker compose up" box from facing the internet on
@@ -144,6 +144,8 @@ class Settings:
     # volume of this install starts with, and the label its containers carry.
     # 'reforger' — the default — keeps every name an install had before stacks.
     rsm_stack: str = stacks.DEFAULT_STACK
+    # Set for the Server Supervisor; a manager derives its own (auth.cookie_name).
+    session_cookie_name: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -160,6 +162,7 @@ class Settings:
         stack = os.environ.get("RSM_STACK", "").strip() or stacks.DEFAULT_STACK
         return cls(
             rsm_stack=stack,
+            session_cookie_name=os.environ.get("SESSION_COOKIE_NAME", "").strip(),
             trusted_proxies=trusted,
             trusted_proxies_invalid=trusted_bad,
             api_docs=_env_bool("API_DOCS", False),

@@ -27,10 +27,26 @@ from sqlmodel import Session
 
 import config
 import models
+import stacks
 
 logger = logging.getLogger("manager.auth")
 
 COOKIE_NAME = "rsm_session"
+
+
+def cookie_name() -> str:
+    """This install's session cookie.
+
+    Browsers keep cookies per host name, not per port. Every install reached by
+    the same name — several stacks on one machine (#204), or a stack and the
+    Server Supervisor — would overwrite the others' session cookie and log them
+    out on every sign-in. The default stack keeps the name it always had, so an
+    upgrade logs nobody out.
+    """
+    s = config.settings
+    if s.session_cookie_name:
+        return s.session_cookie_name
+    return COOKIE_NAME if s.rsm_stack == stacks.DEFAULT_STACK else f"{COOKIE_NAME}_{s.rsm_stack}"
 
 # Username attributed to requests when the built-in login is disabled
 # (AUTH_ENABLED=false) and a reverse proxy is expected to enforce auth (#37).
@@ -384,7 +400,7 @@ def request_origin_ok(request) -> bool:
 
 def require_session(request: Request) -> str:
     """FastAPI dependency: returns the logged-in username or raises 401."""
-    username = session_username(request.cookies.get(COOKIE_NAME))
+    username = session_username(request.cookies.get(cookie_name()))
     if not username:
         raise HTTPException(status_code=401, detail="Not authenticated")
     return username
@@ -393,7 +409,7 @@ def require_session(request: Request) -> str:
 def _issue_session(request: Request, response: Response) -> None:
     cfg = config.settings
     response.set_cookie(
-        COOKIE_NAME,
+        cookie_name(),
         _serializer().dumps(cfg.admin_username),
         max_age=cfg.session_ttl_hours * 3600,
         httponly=True,
@@ -436,7 +452,7 @@ async def login(body: LoginRequest, request: Request, response: Response):
 
 @router.post("/logout")
 async def logout(response: Response):
-    response.delete_cookie(COOKIE_NAME)
+    response.delete_cookie(cookie_name())
     return {"ok": True}
 
 
@@ -451,7 +467,7 @@ async def logout_all(response: Response, _user: str = Depends(require_session)):
     the only remedy was changing SESSION_SECRET and restarting.
     """
     rotate_session_salt()
-    response.delete_cookie(COOKIE_NAME)
+    response.delete_cookie(cookie_name())
     logger.warning("All sessions invalidated by an explicit logout-all request")
     return {"ok": True}
 

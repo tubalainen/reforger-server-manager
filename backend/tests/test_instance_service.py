@@ -766,6 +766,48 @@ def test_create_container_uses_acemod_contract(tmp_path, monkeypatch):
     assert captured["restart_policy"] == {"Name": "unless-stopped"}
 
 
+def test_a_server_carries_what_the_supervisor_shows(tmp_path, monkeypatch):
+    """The Server Supervisor sees no database: each server labels itself (#204)."""
+    import json
+
+    import stacks
+
+    kw = _create_with(monkeypatch, tmp_path, host_network=True)
+    assert kw["labels"][stacks.LABEL_NAME] == "srv"
+    assert kw["labels"][stacks.LABEL_GAME_PORT] == "2005"
+    assert kw["labels"][stacks.LABEL_A2S_PORT] == "17780"
+    assert kw["labels"][stacks.LABEL_RCON_PORT] == "20002"
+    # No template config, no player limit to state.
+    assert stacks.LABEL_MAX_PLAYERS not in kw["labels"]
+
+    labels = instance_service._display_labels(
+        _inst(), json.dumps({"game": {"maxPlayers": 64}}))
+    assert labels[stacks.LABEL_MAX_PLAYERS] == "64"
+
+
+def test_a_server_whose_labels_drifted_is_recreated():
+    """A renamed server or a new player limit reaches the Supervisor on the next start."""
+    import stacks
+
+    class C:
+        labels = {stacks.LABEL_NAME: "old", stacks.LABEL_GAME_PORT: "2005"}
+
+    desired = instance_service._display_labels(_inst(name="new"), None)
+    assert instance_service._container_labels_match(C(), desired) is False
+    C.labels = dict(desired)
+    assert instance_service._container_labels_match(C(), desired) is True
+    # A limit the server did not have before is drift too.
+    assert instance_service._container_labels_match(
+        C(), {**desired, stacks.LABEL_MAX_PLAYERS: "32"}) is False
+
+    class Unreadable:
+        @property
+        def labels(self):
+            raise KeyError("Config")
+
+    assert instance_service._container_labels_match(Unreadable(), desired) is True
+
+
 # --------------------------------------------------------------------------- #
 # Scheduled restarts
 # --------------------------------------------------------------------------- #
