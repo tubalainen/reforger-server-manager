@@ -69,6 +69,26 @@ function Get-StackName {
     return 'reforger'
 }
 
+function Get-StackLabel {
+    <# '' for the first install ('reforger'); ' (team2)' for any other stack. #>
+    param([Parameter(Mandatory)][string] $Stack)
+    if ($Stack -eq 'reforger') { return '' }
+    return " ($Stack)"
+}
+
+function Get-FirewallRuleName {
+    <# Each stack opens its own UDP ranges under its own rule name (#204). #>
+    param([Parameter(Mandatory)][string] $Stack)
+    return 'Arma Reforger (game + A2S)' + (Get-StackLabel -Stack $Stack)
+}
+
+function Get-ShortcutPath {
+    <# The Desktop shortcut that starts this stack. #>
+    param([Parameter(Mandatory)][string] $Stack)
+    $name = 'Reforger Server Manager' + (Get-StackLabel -Stack $Stack) + '.lnk'
+    return Join-Path ([Environment]::GetFolderPath('Desktop')) $name
+}
+
 function Get-StackContainerIds {
     <#
     Ids of the containers matching a label filter that belong to this stack: the
