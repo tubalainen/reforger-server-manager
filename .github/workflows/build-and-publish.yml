@@ -213,11 +213,11 @@ jobs:
           set -eux
           sudo -E rsm add-stack team2 | tee add.log
           grep -q 'Stack .team2. is up' add.log
-          test -f /opt/rsm-team2/.env
-          grep -q '^RSM_STACK=team2$' /opt/rsm-team2/.env
-          grep -q '^COMPOSE_PROJECT_NAME=team2$' /opt/rsm-team2/.env
-          grep -q '^WEB_PORT=7781$' /opt/rsm-team2/.env
-          grep -q '^GAME_PORT_RANGE=2021-2040$' /opt/rsm-team2/.env
+          sudo test -f /opt/rsm-team2/.env
+          sudo grep -q '^RSM_STACK=team2$' /opt/rsm-team2/.env
+          sudo grep -q '^COMPOSE_PROJECT_NAME=team2$' /opt/rsm-team2/.env
+          sudo grep -q '^WEB_PORT=7781$' /opt/rsm-team2/.env
+          sudo grep -q '^GAME_PORT_RANGE=2021-2040$' /opt/rsm-team2/.env
           for port in 7780 7781; do
             for _ in $(seq 60); do
               curl -fsS "http://127.0.0.1:$port/api/health" >/dev/null && break

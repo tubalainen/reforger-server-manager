@@ -52,8 +52,9 @@ def test_a_port_outside_the_managers_range_is_refused(logged_in):
 
 
 def test_a_port_set_before_the_ranges_were_enforced_keeps_working(logged_in):
-    import models
     from sqlmodel import Session
+
+    import models
 
     tid = _template(logged_in)
     iid = logged_in.post("/api/instances", json={"name": "old", "template_id": tid}).json()["id"]
