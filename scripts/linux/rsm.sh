@@ -19,6 +19,8 @@ REGISTRY=${RSM_REGISTRY:-/etc/reforger-server-manager/stacks}
 # stack its .env names ('reforger' unless RSM_STACK says otherwise) and moves
 # into the registry the first time rsm runs as root.
 LEGACY_CONF=${RSM_LEGACY_CONF:-/etc/reforger-server-manager.conf}
+# The Server Supervisor (v0.67.0): RSM_DIR, its folder. Not a stack.
+SUPERVISOR_CONF=${RSM_SUPERVISOR_CONF:-/etc/reforger-server-manager/supervisor.conf}
 
 die() { echo "rsm: $*" >&2; exit 1; }
 
@@ -151,7 +153,15 @@ Reforger Server Manager — for whoever manages this machine
   rsm remove-stack NAME   remove one (asks before deleting its data)
 
   With more than one stack, name it: rsm --stack NAME <command>.
-  start, stop, restart, status, update and check also take --all.
+  start, stop, restart, status, update and check also take --all
+  (update --all updates the Server Supervisor too).
+
+  The Server Supervisor: every stack on one read-only page (port 7090):
+  rsm supervisor install  set it up  [--dir DIR] [--web-port N] [--bind local|lan]
+                                      [--version vX.Y.Z]
+  rsm supervisor start | stop | restart | status | logs [observer]
+  rsm supervisor update   pull the newest image and check its compose file
+  rsm supervisor remove   remove it (the stacks are not touched)
 EOF
     _names=$(stack_names)
     if [ -n "$_names" ]; then
@@ -332,8 +342,13 @@ self_update() {
 # --------------------------------------------------------------------------- #
 # Ports across every stack (#204)
 # --------------------------------------------------------------------------- #
-# Lines "stack kind lo hi" — kind is web (TCP) or game/a2s/rcon (UDP).
+# Lines "stack kind lo hi" — kind is web (TCP) or game/a2s/rcon (UDP). The
+# Server Supervisor's page is a web port too, listed as "(supervisor)".
 port_table() {
+    if supervisor_installed; then
+        _sp=$(env_value_in "$(supervisor_dir)/.env" WEB_PORT)
+        echo "(supervisor) web ${_sp:-7090} ${_sp:-7090}"
+    fi
     for _s in $(stack_names); do
         _env="$(stack_dir "$_s")/.env"
         _web=$(env_value_in "$_env" WEB_PORT)
@@ -369,12 +384,13 @@ cmd_ports() {
     [ -n "$(stack_names)" ] || die "no install found — run one of the Linux installers first"
     printf '%-12s %-8s %-14s %-14s %s\n' STACK GUI/TCP GAME/UDP A2S/UDP RCON/UDP
     port_table | awk '
+        function d(x) { return x == "" ? "-" : x }
         !($1 in order) { order[$1] = ++n; name[n] = $1 }
         { v[$1, $2] = ($3 == $4) ? $3 : $3 "-" $4 }
         END {
             for (i = 1; i <= n; i++) {
                 s = name[i]
-                printf "%-12s %-8s %-14s %-14s %s\n", s, v[s,"web"], v[s,"game"], v[s,"a2s"], v[s,"rcon"]
+                printf "%-12s %-8s %-14s %-14s %s\n", s, v[s,"web"], d(v[s,"game"]), d(v[s,"a2s"]), d(v[s,"rcon"])
             }
         }'
     _clash=$(port_overlaps)
@@ -594,10 +610,182 @@ cmd_remove_stack() {
         echo "  ufw delete allow $(printf '%s' "$_a2s" | tr - :)/udp"
     fi
     if [ -z "$(stack_names)" ]; then
-        rm -f /usr/local/bin/rsm
         rmdir "$REGISTRY" 2>/dev/null || true
-        echo "That was the last stack: the rsm command was removed too."
+        if supervisor_installed; then
+            echo "That was the last stack. The Server Supervisor is still installed: sudo rsm supervisor remove"
+        else
+            rm -f /usr/local/bin/rsm
+            echo "That was the last stack: the rsm command was removed too."
+        fi
     fi
+}
+
+# --------------------------------------------------------------------------- #
+# The Server Supervisor (v0.67.0): every stack on one read-only page
+# --------------------------------------------------------------------------- #
+SUPERVISOR_COMPOSE=docker-compose.supervisor.yaml
+
+supervisor_installed() { [ -r "$SUPERVISOR_CONF" ]; }
+
+supervisor_dir() { ( RSM_DIR=''; . "$SUPERVISOR_CONF"; printf '%s' "$RSM_DIR" ); }
+
+use_supervisor() {
+    supervisor_installed || die "the Server Supervisor is not installed here (sudo rsm supervisor install)"
+    RSM_DIR=$(supervisor_dir)
+    [ -d "$RSM_DIR" ] || die "the Supervisor's folder '$RSM_DIR' is missing (from $SUPERVISOR_CONF)"
+    cd "$RSM_DIR"
+    RAW="https://raw.githubusercontent.com/$REPO/$(files_ref)"
+}
+
+sdc() { docker compose -f "$SUPERVISOR_COMPOSE" "$@"; }
+
+supervisor_url() {
+    _port=$(env_value WEB_PORT); _port=${_port:-7090}
+    if [ "$(env_value WEB_BIND)" = "0.0.0.0" ]; then
+        _ip=$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -1)
+        printf 'http://%s:%s' "${_ip:-<this-machine-ip>}" "$_port"
+    else
+        printf 'http://localhost:%s   (from another machine: ssh -L %s:localhost:%s you@this-machine)' \
+            "$_port" "$_port" "$_port"
+    fi
+}
+
+cmd_supervisor_install() {
+    _dir=/opt/rsm-supervisor; _web=7090; _bind=local; _version=latest
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --version) [ $# -ge 2 ] || die "--version needs an image tag (e.g. v0.67.0)"; _version=$2; shift 2 ;;
+            --dir) [ $# -ge 2 ] || die "--dir needs a folder"; _dir=$2; shift 2 ;;
+            --web-port) [ $# -ge 2 ] || die "--web-port needs a number"; _web=$2; shift 2 ;;
+            --bind) [ $# -ge 2 ] || die "--bind needs local or lan"; _bind=$2; shift 2 ;;
+            *) die "supervisor install: unknown option '$1'" ;;
+        esac
+    done
+    [ "$(id -u)" = "0" ] || die "this needs root: sudo rsm supervisor install"
+    supervisor_installed && die "the Server Supervisor is already installed in $(supervisor_dir)"
+    case "$_web" in ''|*[!0-9]*) die "--web-port needs a number" ;; esac
+    case "$_version" in ''|*[!A-Za-z0-9._-]*) die "--version needs an image tag (e.g. v0.67.0)" ;; esac
+    case "$_bind" in
+        lan) _web_bind=0.0.0.0 ;;
+        local) _web_bind=127.0.0.1 ;;
+        *) die "--bind is local or lan" ;;
+    esac
+    if ! port_table | awk -v w="$_web" '$2 == "web" && $3 + 0 == w + 0 { found = 1 } END { exit found }'; then
+        die "port $_web is already a stack's GUI port; choose another with --web-port"
+    fi
+    if [ -e "$_dir" ] && [ -n "$(ls -A "$_dir" 2>/dev/null)" ]; then
+        die "$_dir already exists and is not empty; choose another with --dir"
+    fi
+    check_docker_engine
+
+    echo "Setting up the Server Supervisor in $_dir (page on port $_web, $_bind)"
+    confirm "Go ahead?" y || { echo "Cancelled."; return 0; }
+    _raw="https://raw.githubusercontent.com/$REPO/${RSM_REF:-main}"
+    mkdir -p "$_dir"
+    curl -fsSL "$_raw/$SUPERVISOR_COMPOSE" -o "$_dir/$SUPERVISOR_COMPOSE" ||
+        die "could not download the compose file"
+    curl -fsSL "$_raw/.env.supervisor.example" -o "$_dir/.env.supervisor.example" ||
+        die "could not download .env.supervisor.example"
+    _pass=$(rand 20 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789')
+    _secret=$(rand 64 '0-9a-f')
+    [ -n "$_pass" ] && [ -n "$_secret" ] || die "could not generate credentials"
+    cp "$_dir/.env.supervisor.example" "$_dir/.env"
+    sed -i \
+        -e "s|^WEB_BIND=.*|WEB_BIND=$_web_bind|" \
+        -e "s|^WEB_PORT=.*|WEB_PORT=$_web|" \
+        -e "s|^ADMIN_PASSWORD=.*|ADMIN_PASSWORD=$_pass|" \
+        -e "s|^SESSION_SECRET=.*|SESSION_SECRET=$_secret|" \
+        -e "s|^MANAGER_VERSION=.*|MANAGER_VERSION=$_version|" \
+        "$_dir/.env"
+    # Same time zone as the first stack, when there is one.
+    _first=$(stack_names | head -1)
+    if [ -n "$_first" ]; then
+        _tz=$(env_value_in "$(stack_dir "$_first")/.env" TZ)
+        [ -z "$_tz" ] || sed -i "s|^TZ=.*|TZ=$_tz|" "$_dir/.env"
+    fi
+    chmod 600 "$_dir/.env"
+    mkdir -p "$(dirname "$SUPERVISOR_CONF")"
+    printf 'RSM_DIR=%s\n' "$_dir" > "$SUPERVISOR_CONF"
+    chmod 644 "$SUPERVISOR_CONF"
+
+    if [ "$_bind" = lan ] && command -v ufw >/dev/null 2>&1; then
+        echo "Firewall rule for its page on your LAN:  ufw allow $_web/tcp"
+        confirm "Apply it now?" y && ufw allow "$_web/tcp" >/dev/null
+    fi
+
+    # A failed pull is not fatal: the image may already be here (a pinned or a
+    # locally built tag). If it is not, `up` says so.
+    ( cd "$_dir" && { sdc pull -q 2>/dev/null || echo "Could not pull the image; using the one on this machine."; } &&
+      sdc up -d )
+    use_supervisor
+    echo
+    echo "The Server Supervisor is up."
+    echo "  Page     : $(supervisor_url)"
+    echo "  Username : admin"
+    echo "  Password : $_pass"
+    echo "             ^ its own login, not a team's (in $_dir/.env)."
+}
+
+cmd_supervisor_remove() {
+    use_supervisor
+    [ "$(id -u)" = "0" ] || die "this needs root: sudo rsm supervisor remove"
+    echo "This removes the Server Supervisor. The stacks and their servers are not touched."
+    confirm "Continue?" n || { echo "Cancelled."; return 0; }
+    sdc down --volumes --remove-orphans || true
+    cd /
+    rm -rf "$RSM_DIR"
+    rm -f "$SUPERVISOR_CONF"
+    echo "Removed the Server Supervisor and $RSM_DIR."
+    if [ -z "$(stack_names)" ]; then
+        rm -f /usr/local/bin/rsm
+        echo "No stack is left either: the rsm command was removed too."
+    fi
+}
+
+# A newer compose file for the Supervisor, offered like a stack's.
+check_supervisor_compose() {
+    tmp=$(mktemp) || return 0
+    if curl -fsSL "$RAW/$SUPERVISOR_COMPOSE" -o "$tmp" 2>/dev/null && ! cmp -s "$tmp" "$SUPERVISOR_COMPOSE"; then
+        echo
+        echo "  Your $SUPERVISOR_COMPOSE differs from this release's:"
+        command -v diff >/dev/null 2>&1 &&
+            diff -u "$SUPERVISOR_COMPOSE" "$tmp" | sed -n '3,25p' | sed 's/^/    /'
+        if confirm "  Replace it (a backup is kept) and apply it?" n; then
+            cp "$SUPERVISOR_COMPOSE" "$SUPERVISOR_COMPOSE.bak-$(date +%Y%m%d%H%M%S)"
+            cp "$tmp" "$SUPERVISOR_COMPOSE"
+            sdc up -d --remove-orphans
+            echo "  Replaced and applied."
+        else
+            echo "  Left as-is. Refresh it later with:"
+            echo "    curl -fsSL $RAW/$SUPERVISOR_COMPOSE -o $RSM_DIR/$SUPERVISOR_COMPOSE"
+        fi
+    fi
+    rm -f "$tmp"
+}
+
+cmd_supervisor() {
+    _sub=${1:-status}
+    [ $# -eq 0 ] || shift
+    case "$_sub" in
+        install) cmd_supervisor_install "$@"; return ;;
+        remove|uninstall) cmd_supervisor_remove; return ;;
+    esac
+    use_supervisor
+    case "$_sub" in
+        start)   sdc up -d; echo "Page: $(supervisor_url)" ;;
+        stop)    sdc stop ;;
+        restart) sdc down && sdc up -d ;;
+        status)  sdc ps; echo; echo "Page: $(supervisor_url)" ;;
+        logs)
+            if [ $# -eq 0 ]; then sdc logs -f --tail 200 supervisor; else sdc logs -f --tail 200 "$@"; fi
+            ;;
+        update)
+            sdc pull
+            sdc up -d
+            check_supervisor_compose
+            ;;
+        *) die "rsm supervisor: unknown command '$_sub' (install, start, stop, restart, status, logs, update, remove)" ;;
+    esac
 }
 
 # --------------------------------------------------------------------------- #
@@ -704,6 +892,7 @@ case "$CMD" in
     ports) cmd_ports; exit $? ;;
     add-stack) cmd_add_stack "$@"; exit 0 ;;
     remove-stack) cmd_remove_stack "$@"; exit 0 ;;
+    supervisor) cmd_supervisor "$@"; exit 0 ;;
     start|stop|restart|status|update|check) ALLOWS_ALL=1 ;;
     logs|config|reset-password|uninstall)
         [ "$ALL" = 0 ] || die "'$CMD' works on one stack at a time: use --stack NAME" ;;
@@ -723,6 +912,12 @@ if [ "$ALL" = 1 ]; then
         ( use_stack "$_s" && stack_cmd "$CMD" "$@" ) || _failed="$_failed $_s"
         echo
     done
+    if [ "$CMD" = update ] && supervisor_installed; then
+        echo "== the Server Supervisor"
+        ( use_supervisor && sdc pull && sdc up -d && check_supervisor_compose ) ||
+            _failed="$_failed supervisor"
+        echo
+    fi
     [ "$CMD" != update ] || self_update
     [ -z "$_failed" ] || die "failed for:$_failed"
     exit 0

@@ -27,6 +27,7 @@ It runs on Linux, a public VPS, or Windows 10/11 through Docker Desktop. The pro
 - Import or export `config.json` while preserving settings the UI does not know about.
 - Keep Docker access behind the manager's own Docker gate, which lets it see and touch only its own containers and folders; managed containers run with `no-new-privileges`.
 - Run several independent installs on one machine — one per team, say — each with its own name, ports and data ([how](docs/installation.md#several-installs-on-one-machine)).
+- See every install on the machine on one read-only page, the [Server Supervisor](docs/installation.md#the-server-supervisor): each team's servers, players, CPU and memory, and what needs attention.
 
 See the [feature tour](docs/features.md) for screenshots and the complete capability list.
 
@@ -51,7 +52,7 @@ powershell -ExecutionPolicy Bypass -File $installer
 
 Linux needs Docker Engine 26 or newer (Windows: Docker Desktop 4.29 or newer); the Linux installers check it and offer to upgrade.
 
-**Another manager on the same machine** — for a second team, with its own login, servers and data: `sudo rsm add-stack team2` on Linux, or the Windows installer with `-Stack team2`. See [Several installs on one machine](docs/installation.md#several-installs-on-one-machine).
+**Another manager on the same machine** — for a second team, with its own login, servers and data: `sudo rsm add-stack team2` on Linux, or the Windows installer with `-Stack team2`. See [Several installs on one machine](docs/installation.md#several-installs-on-one-machine). To watch all of them on one page: `sudo rsm supervisor install`, or the Windows installer with `-Supervisor` ([The Server Supervisor](docs/installation.md#the-server-supervisor)).
 
 Players connect through UDP game ports, not the web UI. The default ranges are `2001-2020` and `17777-17796`; forward only the ports assigned to your servers. Never forward the GUI or RCON ports. See [Networking and firewalls](docs/installation.md#networking-and-firewalls).
 

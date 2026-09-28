@@ -12,6 +12,7 @@ This guide covers Linux, public VPS, and Windows installations, plus networking,
 | [Linux on a public VPS](#linux-on-a-public-vps) | A rented server with a domain | `https://your-domain` |
 | [Windows 10 or 11](#windows-10-or-11) | Docker Desktop on a PC | `http://localhost:7780` |
 | [A second manager on the same machine](#several-installs-on-one-machine) | Another team, next to an install that already runs | `http://localhost:7781` |
+| [The Server Supervisor](#the-server-supervisor) | Whoever manages a machine with several installs: all of them on one read-only page | `http://localhost:7090` |
 
 ## Security
 
@@ -238,6 +239,72 @@ RSM_COMPOSE=docker-compose.yaml' | sudo tee /etc/reforger-server-manager/stacks/
 
 - The stacks share the machine's network. On Linux the game servers use host networking, so port ranges must not overlap, and a game server can reach whatever listens on the host, including the other stacks' GUI login pages on `localhost`. Keep every GUI password strong.
 - Whoever administers the machine (shell or `sudo` access) still controls every stack; the separation is between the teams' GUIs.
+- A browser keeps one set of cookies per host name, whatever the port. Since v0.67.0 each stack's login uses a cookie of its own, so signing in to one team's GUI no longer signs you out of another's on the same machine.
+
+## The Server Supervisor
+
+**One read-only page for whoever manages the machine**, showing every stack on it (v0.67.0). It is for the host administrator, not for the teams: each team keeps its own manager and never needs this page.
+
+For each stack it shows:
+
+- whether its manager and Docker gate are running, the manager's version and uptime;
+- the ports it takes: GUI, game, A2S and RCON ranges;
+- each game server with its status, players and player limit, FPS, CPU, memory, uptime and game and A2S ports.
+
+Across the machine it shows the totals (servers running, players, CPU and memory, each with the last hour as a small graph) and a **Needs attention** list: a manager or gate that is down, a stack without a Docker gate, two stacks whose ports overlap, a port two servers share, a server outside its stack's range, a server that keeps restarting or ran out of memory, a Docker Engine too old for game servers, a machine whose CPU or memory is nearly full, and managers older than the Supervisor.
+
+It changes nothing. There is no start, stop or edit button on the page. Each team's servers are run from its own manager.
+
+### How it is kept read-only
+
+The Supervisor is its own install, with its own compose file (`docker-compose.supervisor.yaml`), `.env` and login. It is two containers, built like a stack's manager and gate:
+
+- **`rsm-supervisor`** serves the page on port 7090. It has no access to Docker at all.
+- **`rsm-supervisor-observer`** holds the Docker socket. It has no network, and the Supervisor reaches it over a socket in a volume only the two of them share. It is not a Docker proxy: it answers a few questions of its own, all read-only, and builds each answer itself. It passes on only the stacks' containers, and of each only its name, image, state, ports and the manager's own labels. It never passes on a container's environment (a manager's holds its team's password), its command line or its mounts. Of a game server's log it passes on only the figures (players, FPS, whether it is online), never the text, which names the players.
+
+The page is bound to `127.0.0.1` by default. From another computer, use an SSH tunnel: `ssh -L 7090:localhost:7090 you@the-machine`, then open `http://localhost:7090`. `WEB_BIND=0.0.0.0` in its `.env` puts it on your network; it then refuses to start with the example password. Its password is `ADMIN_PASSWORD` in its own `.env`: change it there and restart it.
+
+### Linux: `rsm supervisor`
+
+```bash
+sudo rsm supervisor install          # into /opt/rsm-supervisor; prints the page's address and password
+sudo rsm supervisor status
+sudo rsm supervisor logs             # logs observer: the observer's
+sudo rsm supervisor update           # also done by: sudo rsm update --all
+sudo rsm supervisor stop | start | restart
+sudo rsm supervisor remove           # the stacks are not touched
+```
+
+`install` takes `--bind lan` (put the page on your network, and offer a `ufw` rule for it), `--web-port N`, `--dir DIR` and `--version vX.Y.Z` (pin the image; the default follows `latest`). `rsm ports` lists the Supervisor's port with the stacks', and `rsm add-stack` never hands it to a stack.
+
+### Windows: `install.ps1 -Supervisor`
+
+```powershell
+$installer = "$env:TEMP\reforger-install.ps1"
+Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/scripts/windows/install.ps1 -OutFile $installer
+powershell -ExecutionPolicy Bypass -File $installer -Supervisor
+```
+
+It installs into `%USERPROFILE%\ReforgerSupervisor` and puts a **Reforger Server Supervisor** shortcut on the Desktop, which starts it and opens the page. In that folder, `supervisor.ps1 -Action stop` stops it and `supervisor.ps1 -Action uninstall` removes it.
+
+### By hand
+
+```bash
+sudo mkdir -p /opt/rsm-supervisor && cd /opt/rsm-supervisor
+sudo curl -fsSLO https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/docker-compose.supervisor.yaml
+sudo curl -fsSL https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/.env.supervisor.example -o .env
+sudo nano .env        # set ADMIN_PASSWORD and SESSION_SECRET (openssl rand -hex 32)
+sudo docker compose -f docker-compose.supervisor.yaml up -d
+```
+
+To let `rsm` drive it too: `echo 'RSM_DIR=/opt/rsm-supervisor' | sudo tee /etc/reforger-server-manager/supervisor.conf`.
+
+### Good to know
+
+- A stack is found from the labels its compose file gives its manager. Stacks older than v0.65.0 have none and do not show up. Update every stack to v0.67.0 for the full picture: an older manager shows no version, and its gate is found by its name only.
+- A game server shows its name and player limit once it has been started by a v0.67.0 manager. Until then it is listed as *Server 3* and so on.
+- A server that has no container, because it was never started or its manager removed it on the way down, is not listed.
+- A reverse proxy in front of the Supervisor is up to you for now. A shared HTTPS front for the teams and the Supervisor on a VPS is the next phase of [#204](https://github.com/tubalainen/reforger-server-manager/issues/204).
 
 ## Networking and firewalls
 

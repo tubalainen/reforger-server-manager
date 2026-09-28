@@ -89,7 +89,8 @@ try:
     helper = client.containers.create(
         HELPER, ["test", "-d", "/d"], name=docker_service.container_name("e2e-helper"),
         mounts=[docker_service.mount_for(f"{work}/sub", "/d", read_only=True)],
-        labels={"reforger-manager.role": "e2e"},  # no stack label: the gate adds it
+        # No stack label: the gate adds it.
+        labels={"reforger-manager.role": docker_service.ROLE_STEAMCMD},
     )
     labels = helper.labels
     check("create a helper that mounts one folder of this stack's data", True)
@@ -184,6 +185,8 @@ refused("the host's process namespace",
 refused("an added capability", lambda: client.containers.create(HELPER, cap_add=["SYS_ADMIN"]))
 refused("an image this stack does not run", lambda: client.containers.create(NOT_OURS))
 refused("pull an image this stack does not run", lambda: client.images.pull(NOT_OURS))
+refused("a container posing as a manager", lambda: client.containers.create(
+    HELPER, labels={"reforger-manager.role": "manager"}))
 refused("a name in another stack", lambda: client.containers.create(
     HELPER, name=f"{OTHER}-sneaky"))
 refused("join another stack's network", lambda: client.containers.create(

@@ -30,6 +30,12 @@ if [ "$(id -u)" = "0" ]; then
     #     than v0.65.0. No local socket, so no group to join.
     #   * otherwise — a directly mounted /var/run/docker.sock (legacy / custom
     #     setups). Grant the app user access to it, whatever GID the host uses.
+    #   * RSM_OBSERVER_SOCKET set — this is the Server Supervisor (v0.67.0),
+    #     which never talks to Docker itself: its observer does.
+    if [ -n "${RSM_OBSERVER_SOCKET:-}" ]; then
+        echo "Server Supervisor: reading Docker through its observer" >&2
+        exec gosu app "$@"
+    fi
     case "$DOCKER_HOST" in
         unix:///run/rsm-gate/*)
             echo "Using Docker through this stack's Docker gate" >&2

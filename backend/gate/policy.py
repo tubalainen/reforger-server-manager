@@ -262,6 +262,10 @@ def _check_network(body: dict, host: dict, image: str, scope: Scope) -> None:
             raise Denied(f"network {name!r} is not this stack's")
 
 
+# The roles of the containers a manager creates itself.
+_CREATABLE_ROLES = frozenset({stacks.ROLE_INSTANCE, stacks.ROLE_STEAMCMD})
+
+
 def check_create(body: dict, name: str | None, scope: Scope) -> dict:
     """Validate a container-create request; return the body to send on.
 
@@ -310,6 +314,11 @@ def check_create(body: dict, name: str | None, scope: Scope) -> dict:
     labels = body.get("Labels") or {}
     if not isinstance(labels, dict):
         raise Denied("Labels must be an object")
+    role = labels.get(stacks.LABEL_ROLE)
+    if role is not None and role not in _CREATABLE_ROLES:
+        # A manager and its gate come from the compose file, never from here: a
+        # container claiming to be one would mislead the Supervisor (v0.67.0).
+        raise Denied(f"a container may not be created with the role {role!r}")
     return {
         **body,
         # Always sent, even when the client left it out: an older daemon that

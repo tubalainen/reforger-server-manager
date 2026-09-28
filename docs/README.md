@@ -6,7 +6,7 @@
 
 | Page | What it covers |
 |---|---|
-| [Installation and operations](installation.md) | Linux, VPS and Windows setups, a second manager on the same machine, networking and firewalls, updates, uninstalling |
+| [Installation and operations](installation.md) | Linux, VPS and Windows setups, a second manager on the same machine, the Server Supervisor, networking and firewalls, updates, uninstalling |
 | [Feature tour](features.md) | What the manager does, with screenshots |
 | [Security review](security-review.md) | The July 2026 security review: every finding, ranked, with what was done about it and what was deliberately left |
 

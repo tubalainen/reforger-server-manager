@@ -1,0 +1,87 @@
+# Reforger Server Supervisor — one read-only view of every stack on this machine.
+#
+# For whoever manages the machine (#204, v0.67.0). It shows each stack — each
+# team's install — with its manager and Docker gate, its ports and its game
+# servers (status, players, CPU, memory, uptime), the totals, and whatever
+# needs attention: a manager that is down, two stacks that share ports, a
+# machine running out of memory. It changes nothing: every control stays in
+# each team's own manager.
+#
+# It is its own install, in a folder of its own with its own .env (from
+# .env.supervisor.example), and works on Linux and on Windows (Docker Desktop):
+#   docker compose -f docker-compose.supervisor.yaml up -d
+# or, on Linux, `sudo rsm supervisor install`. The page is on port 7090.
+name: rsm-supervisor
+
+services:
+  supervisor:
+    image: ghcr.io/tubalainen/reforger-server-manager:${MANAGER_VERSION:-latest}
+    # build: .
+    container_name: rsm-supervisor
+    restart: unless-stopped
+    command: ["uvicorn", "supervisor.main:app", "--host", "0.0.0.0", "--port", "8080",
+              "--timeout-graceful-shutdown", "5"]
+    env_file: .env
+    environment:
+      # Where its observer answers. Its presence is also how the image's
+      # entrypoint knows this is the Supervisor, not a manager.
+      RSM_OBSERVER_SOCKET: /run/rsm-observer/observer.sock
+      # Browsers keep cookies per host name, not per port: a cookie of its own
+      # keeps a sign-in here from logging you out of a manager on this machine.
+      SESSION_COOKIE_NAME: rsm_supervisor
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      # 127.0.0.1 by default: reach it on this machine, or through an SSH tunnel
+      # (ssh -L 7090:localhost:7090 you@this-machine). WEB_BIND=0.0.0.0 in .env
+      # puts it on your network — then with a strong ADMIN_PASSWORD, which it
+      # insists on.
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-7090}:8080"
+    volumes:
+      # Its login state: a password changed on its page, the session key.
+      - supervisor-data:/data
+      # The observer's socket. The Docker socket is deliberately NOT mounted
+      # here: only the observer holds it.
+      - observer:/run/rsm-observer
+    networks:
+      - supervisor
+    depends_on:
+      - observer
+
+  # The observer: the only one of the two that can reach Docker. It has no
+  # network at all and answers the Supervisor only, over a unix socket in the
+  # volume they share. It is not a Docker API proxy: it answers a few questions
+  # of its own, all read-only, and builds every answer itself:
+  #   * only the stacks' containers — never anyone else's;
+  #   * of each, its name, image, state, ports and our own labels — never its
+  #     environment (a manager's holds its team's password), command or mounts;
+  #   * of a game server's log, only the figures in it — players, FPS, whether
+  #     it is online — never the text, which names the players.
+  # The rules are in backend/gate/observer.py.
+  observer:
+    image: ghcr.io/tubalainen/reforger-server-manager:${MANAGER_VERSION:-latest}
+    # build: .
+    container_name: rsm-supervisor-observer
+    restart: unless-stopped
+    entrypoint: ["python", "-m", "gate.observer"]
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    # Nothing from .env: it needs none of it.
+    environment:
+      RSM_OBSERVER_SOCKET: /run/rsm-observer/observer.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - observer:/run/rsm-observer
+
+networks:
+  supervisor:
+    name: rsm-supervisor-net
+
+volumes:
+  supervisor-data:
+    name: rsm-supervisor-data
+  observer:
+    name: rsm-supervisor-observer

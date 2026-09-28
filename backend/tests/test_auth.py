@@ -513,3 +513,26 @@ def test_the_reset_refuses_to_run_as_root(monkeypatch, capsys):
     monkeypatch.setattr(manage.os, "geteuid", lambda: 0, raising=False)
     assert manage.main(["reset-password"]) == 2
     assert "-u app" in capsys.readouterr().err
+
+
+def test_each_install_has_its_own_session_cookie(monkeypatch):
+    """Cookies are per host name, not per port: two installs reached as
+    localhost:7780 and localhost:7781 must not overwrite each other's (#204)."""
+    import auth
+    import config
+
+    assert auth.cookie_name() == "rsm_session"  # the default stack keeps its name
+    monkeypatch.setattr(config.settings, "rsm_stack", "team2")
+    assert auth.cookie_name() == "rsm_session_team2"
+    monkeypatch.setattr(config.settings, "session_cookie_name", "rsm_supervisor")
+    assert auth.cookie_name() == "rsm_supervisor"
+
+
+def test_a_second_stack_signs_in_with_its_own_cookie(client, monkeypatch):
+    import config
+
+    monkeypatch.setattr(config.settings, "rsm_stack", "team2")
+    r = client.post("/api/auth/login", json={"username": "testadmin", "password": "testpass-123"})
+    assert r.status_code == 200
+    assert "rsm_session_team2=" in r.headers["set-cookie"]
+    assert client.get("/api/auth/me").status_code == 200

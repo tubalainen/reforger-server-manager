@@ -291,14 +291,15 @@ function Update-ManagerScripts {
     #>
     param(
         [Parameter(Mandatory)][string] $InstallDir,
-        [string] $Ref = 'main'
+        [string] $Ref = 'main',
+        # The Server Supervisor's folder holds other scripts than a manager's (#204).
+        [string[]] $Names = @('start.ps1', 'stop.ps1', 'firewall.ps1', 'common.ps1', 'uninstall.ps1')
     )
     $repoRaw = "https://raw.githubusercontent.com/tubalainen/reforger-server-manager/$Ref/scripts/windows"
-    $names = @('start.ps1', 'stop.ps1', 'firewall.ps1', 'common.ps1', 'uninstall.ps1')
 
     # Phase 1: fetch every script to a temp file; abandon quietly if any fails.
     $temps = @{}
-    foreach ($name in $names) {
+    foreach ($name in $Names) {
         $tmp = Join-Path $InstallDir ($name + '.new')
         try {
             Invoke-WebRequest -Uri "$repoRaw/$name" -OutFile $tmp -UseBasicParsing -TimeoutSec 20
@@ -312,7 +313,7 @@ function Update-ManagerScripts {
 
     # Phase 2: swap in only the ones whose contents actually changed.
     $changed = @()
-    foreach ($name in $names) {
+    foreach ($name in $Names) {
         $dest = Join-Path $InstallDir $name
         $tmp = $temps[$name]
         $newHash = (Get-FileHash -Path $tmp -Algorithm SHA256).Hash

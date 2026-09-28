@@ -110,6 +110,11 @@ services:
     container_name: ${RSM_STACK:-reforger}-docker-gate
     restart: unless-stopped
     entrypoint: ["python", "-m", "gate"]
+    # So the Server Supervisor knows it as a gate (v0.67.0); its name says whose.
+    # No stack label: that would make it one of the stack's own containers,
+    # which the manager could then see.
+    labels:
+      reforger-manager.role: gate
     network_mode: none
     read_only: true
     cap_drop: [ALL]

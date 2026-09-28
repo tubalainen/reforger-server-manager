@@ -117,6 +117,21 @@ def test_a_client_cannot_claim_another_stack():
     assert body["Labels"][stacks.LABEL_MANAGED] == "true"
 
 
+@pytest.mark.parametrize("role", ["manager", "gate", "supervisor", ""])
+def test_a_client_cannot_pose_as_a_manager_or_gate(role):
+    body = _instance_body()
+    body["Labels"] = {stacks.LABEL_ROLE: role}
+    with pytest.raises(Denied, match="role"):
+        policy.check_create(body, "team2-instance-1", SCOPE)
+
+
+@pytest.mark.parametrize("role", [stacks.ROLE_INSTANCE, stacks.ROLE_STEAMCMD])
+def test_the_roles_a_manager_creates_pass(role):
+    body = _instance_body()
+    body["Labels"] = {stacks.LABEL_ROLE: role}
+    assert policy.check_create(body, "team2-x", SCOPE)["Labels"][stacks.LABEL_ROLE] == role
+
+
 def test_unnamed_helper_containers_are_fine():
     helper = {
         "Image": HELPER,

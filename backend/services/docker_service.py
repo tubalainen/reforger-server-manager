@@ -21,12 +21,12 @@ logger = logging.getLogger("manager.docker")
 
 LABEL_MANAGED = stacks.LABEL_MANAGED
 LABEL_STACK = stacks.LABEL_STACK
-LABEL_ROLE = "reforger-manager.role"
-LABEL_BRANCH = "reforger-manager.branch"
-LABEL_INSTANCE_ID = "reforger-manager.instance_id"
+LABEL_ROLE = stacks.LABEL_ROLE
+LABEL_BRANCH = stacks.LABEL_BRANCH
+LABEL_INSTANCE_ID = stacks.LABEL_INSTANCE_ID
 
-ROLE_STEAMCMD = "steamcmd"
-ROLE_INSTANCE = "instance"
+ROLE_STEAMCMD = stacks.ROLE_STEAMCMD
+ROLE_INSTANCE = stacks.ROLE_INSTANCE
 
 # Applied to every container this manager creates. Blocks a process inside from
 # gaining privileges through setuid binaries, so a compromised Workshop mod (the
