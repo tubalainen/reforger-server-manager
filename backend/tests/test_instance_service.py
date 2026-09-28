@@ -528,7 +528,6 @@ def test_clear_instance_data_wipes_only_the_chosen_targets(tmp_path, monkeypatch
         instance_service.docker_service, "get_client",
         lambda: type("C", (), {"containers": FakeContainers()})(),
     )
-    monkeypatch.setattr(instance_service.docker_service, "host_path_for", lambda p: p)
 
     out = instance_service.clear_instance_data(1, ["mods", "saves"])
 
@@ -581,7 +580,6 @@ def _fake_purge_client(idir, monkeypatch, calls):
         instance_service.docker_service, "get_client",
         lambda: type("C", (), {"containers": FakeContainers()})(),
     )
-    monkeypatch.setattr(instance_service.docker_service, "host_path_for", lambda p: p)
     monkeypatch.setattr(instance_service.docker_service, "find_instance_container", lambda _id: None)
 
 
@@ -718,8 +716,6 @@ def test_create_container_uses_acemod_contract(tmp_path, monkeypatch):
     monkeypatch.setattr(config.settings, "serverfiles_dir", str(tmp_path / "sf"))
     monkeypatch.setattr(config.settings, "reforger_server_image", "test/image:1")
     monkeypatch.setattr(config.settings, "public_address", "203.0.113.5")
-    # host_path_for is identity outside a container
-    monkeypatch.setattr(docker_service, "host_path_for", lambda p: p)
     # This test pins the published-port contract, which only exists in bridge
     # mode (Docker Desktop). Host mode is asserted separately below (#150).
     monkeypatch.setattr(docker_service, "use_host_network", lambda: False)
@@ -760,9 +756,9 @@ def test_create_container_uses_acemod_contract(tmp_path, monkeypatch):
     assert captured["ports"]["2005/udp"] == 2005
     assert captured["ports"]["17780/udp"] == 17780
     assert captured["ports"]["20002/udp"] == 20002
-    # volumes: shared serverfiles at /reforger + per-instance dirs
-    binds = {v["bind"] for v in captured["volumes"].values()}
-    assert binds == {"/reforger", "/reforger/Configs", "/home/profile", "/reforger/workshop"}
+    # mounts: shared serverfiles at /reforger + per-instance dirs
+    targets = {m["Target"] for m in captured["mounts"]}
+    assert targets == {"/reforger", "/reforger/Configs", "/home/profile", "/reforger/workshop"}
     # labels let us rediscover the container after a restart
     assert captured["labels"][docker_service.LABEL_INSTANCE_ID] == "1"
     assert captured["labels"][docker_service.LABEL_ROLE] == docker_service.ROLE_INSTANCE
@@ -914,7 +910,6 @@ def test_create_container_applies_launch_params(tmp_path, monkeypatch):
 
     monkeypatch.setattr(config.settings, "data_dir", str(tmp_path))
     monkeypatch.setattr(config.settings, "serverfiles_dir", str(tmp_path / "sf"))
-    monkeypatch.setattr(docker_service, "host_path_for", lambda p: p)
 
     captured = {}
 
@@ -1243,7 +1238,6 @@ def _capture_create(monkeypatch):
                 return object()
 
     monkeypatch.setattr(instance_service.docker_service, "get_client", lambda: _Client)
-    monkeypatch.setattr(instance_service.docker_service, "host_path_for", lambda p: p)
     return captured
 
 
@@ -1310,7 +1304,6 @@ def _create_with(monkeypatch, tmp_path, host_network):
 
     monkeypatch.setattr(config.settings, "data_dir", str(tmp_path))
     monkeypatch.setattr(config.settings, "serverfiles_dir", str(tmp_path / "sf"))
-    monkeypatch.setattr(docker_service, "host_path_for", lambda p: p)
     monkeypatch.setattr(docker_service, "use_host_network", lambda: host_network)
 
     captured = {}
@@ -1478,3 +1471,37 @@ def test_the_instance_is_not_created_if_the_leftovers_cannot_be_moved(tmp_path, 
         instance_service.create_instance("doomed", tid, "stable")
     with Session(models.get_engine()) as session:
         assert session.exec(select(models.Instance)).all() == []
+
+
+# --------------------------------------------------------------------------- #
+# Mounts (#206): a server made before volume subpaths is recreated
+# --------------------------------------------------------------------------- #
+def test_mounts_match_only_what_would_be_mounted_now(monkeypatch, tmp_path):
+    import config
+    from services import docker_service, instance_service
+
+    monkeypatch.setattr(config.settings, "data_dir", "/data")
+    monkeypatch.setattr(config.settings, "serverfiles_dir", "/serverfiles")
+    monkeypatch.setattr(docker_service, "_self_mounts", [
+        {"Type": "volume", "Name": "reforger-data", "Destination": "/data", "Source": "/v/d"},
+        {"Type": "volume", "Name": "reforger-serverfiles-stable",
+         "Destination": "/serverfiles/stable", "Source": "/v/s"},
+    ])
+    inst = _inst(branch="stable")
+    wanted = instance_service._desired_mounts(inst)
+
+    current = _FakeSecOptContainer()
+    # Docker hands back ReadOnly only when it is set.
+    current.attrs = {"HostConfig": {"Mounts": [
+        {k: v for k, v in m.items() if k != "ReadOnly"} for m in wanted
+    ]}}
+    assert instance_service._container_mounts_match(current, inst) is True
+
+    legacy = _FakeSecOptContainer()
+    legacy.attrs = {"HostConfig": {"Binds": ["/opt/rsm/data/instances/1/profile:/home/profile:rw"]}}
+    assert instance_service._container_mounts_match(legacy, inst) is False
+
+    moved = _FakeSecOptContainer()
+    moved.attrs = {"HostConfig": {"Mounts": [dict(wanted[0], Source="team2-serverfiles-stable")]
+                                  + wanted[1:]}}
+    assert instance_service._container_mounts_match(moved, inst) is False

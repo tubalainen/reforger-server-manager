@@ -21,10 +21,12 @@ Set-Location $here
 $Compose = Join-Path $here 'docker-compose.windows.yaml'
 
 $docker = Get-DockerCli
+# Only this install's servers: another team's stack may share the machine (#204).
+$stack = Get-StackName -EnvFile (Join-Path $here '.env')
 
 if ($All) {
     Write-Host 'Stopping the Arma server instances...' -ForegroundColor Cyan
-    $ids = & $docker ps -q --filter 'label=reforger-manager.role=instance'
+    $ids = Get-StackContainerIds -Cli $docker -Stack $stack -Filter 'label=reforger-manager.role=instance'
     foreach ($id in $ids) { & $docker stop $id | Out-Null }
     if ($ids) { Write-Host "    stopped $($ids.Count) instance container(s)" -ForegroundColor Green }
 }

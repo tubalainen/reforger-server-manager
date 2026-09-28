@@ -309,9 +309,32 @@ const faq = [
        v0.64.1 (or Docker Engine older than 28) that lets them — and any Workshop mod in
        them — reach the Docker proxy, which can create containers on the host. The banner
        names the exact cause. The fix is on the machine, not in the GUI: whoever manages it
-       runs sudo rsm update, accepts the new compose file and recreates the stack (sudo rsm
-       restart); by hand, download the new compose file, then docker compose down and
-       docker compose up -d. The banner goes away on its own once the stack is fixed.`,
+       runs sudo rsm update and accepts the new compose file and the restart it offers; by
+       hand, download the new compose file, then docker compose down and docker compose
+       up -d. Since v0.65.0 the compose file gives Docker access no network at all. The
+       banner goes away on its own once the stack is fixed.`,
+  },
+  {
+    q: 'What does the yellow "compose file is older than v0.65.0" banner mean?',
+    a: `Since v0.65.0 every install reaches Docker through its own Docker gate: a small
+       container with no network that lets this manager see and touch only its own servers,
+       images and folders. It is what lets several installs share one machine safely. The
+       manager has been updated, but the compose file that wires the gate in has not — an
+       update only replaces the image, never that file. Whoever manages the machine applies
+       it the same way as any compose change: sudo rsm update (accept the new compose file
+       and the restart), or by hand docker compose down and docker compose up -d with the
+       new file; on Windows, re-run the installer. The banner clears once it is done.`,
+  },
+  {
+    q: 'What does the red "Docker Engine … is too old" banner mean?',
+    a: `Since v0.65.0 each server mounts only its own folder of this install's data volume —
+       a volume subpath, which Docker opens with symbolic links refused, so nothing can
+       steer a server's mount into the rest of the machine. Docker Engine 26 (Docker
+       Desktop 4.29) is the first that can do that; an older one would mount the whole
+       volume, so the manager's Docker gate refuses and servers, downloads and clean-ups
+       fail until Docker is updated. Whoever manages the machine updates it: on Linux
+       curl -fsSL https://get.docker.com | sudo sh upgrades an existing install; on
+       Windows, update Docker Desktop.`,
   },
   {
     q: 'Why is the web GUI only reachable on localhost?',
@@ -333,7 +356,8 @@ const faq = [
        rather than handed to the new server — so nothing is lost and nothing is inherited.
        Back up the data folder to keep your setup. On
        Windows the same content lives in Docker named volumes (reforger-data,
-       reforger-serverfiles-*) — browse them in Docker Desktop → Volumes — because the
+       reforger-serverfiles-*, or <stack>-… when RSM_STACK is set) — browse them in Docker
+       Desktop → Volumes — because the
        Linux-owned server files are far faster and permission-clean there than in an
        Explorer folder.`,
   },

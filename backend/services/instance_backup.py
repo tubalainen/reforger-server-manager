@@ -751,15 +751,14 @@ def restore_backup(
         " ".join(f"rm -rf '/idata/{r}';" for r in rel)
         + f" tar xzf '/idata/backups/{archive.name}' -C /idata"
     )
-    host_dir = docker_service.host_path_for(str(idir))
     try:
         docker_service.get_client().containers.run(
             config.settings.steamcmd_image,
             entrypoint="/bin/sh",
             command=["-c", script],
             remove=True,
-            volumes={host_dir: {"bind": "/idata", "mode": "rw"}},
-            labels={docker_service.LABEL_MANAGED: "true"},
+            mounts=[docker_service.mount_for(str(idir), "/idata")],
+            labels=docker_service.managed_labels(),
             security_opt=docker_service.SECURITY_OPT,
         )
     except DockerException as exc:

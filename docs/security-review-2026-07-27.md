@@ -170,6 +170,50 @@ This is *inherent* to what the tool does, so it cannot be removed — but it can
 > older than 28 unless upgraded, and `rsm check`/`rsm update` warn about one and offer to
 > recreate the stack after replacing the compose file. The structural fix — a Docker gate on a
 > unix socket with no network at all — is planned with #204.
+>
+> **Follow-up fix — 2026-09-28 (v0.65.0, #204; request bodies are now checked).** The socket
+> proxy is replaced by the **Docker gate** (`backend/gate/`): the manager's own image run as a
+> second container with `network_mode: none`, a read-only root, `cap_drop: ALL` and
+> `no-new-privileges`. It alone holds the socket; the manager reaches it over a unix socket in a
+> volume only the two of them share (`DOCKER_HOST=unix:///run/rsm-gate/docker.sock`). No network
+> path leads to the Docker API at all, on any engine version, so the Engine 28 requirement of
+> v0.64.1 is gone. Unlike the path-filtering proxy, the gate reads what it forwards: a
+> default-deny route table; a label check on every container-scoped call
+> (`reforger-manager.stack`), so a manager sees and controls only its own stack's containers;
+> `containers/create` held to the two configured images, the stack's name prefix, forced
+> stack labels, no `Privileged`/`CapAdd`/devices/host or container namespaces/sysctls/other
+> runtimes, host networking for the game-server image only, mounts only of the stack's own
+> named volumes (see #206 below), never a host folder by path;
+> `update` held to the restart policy; `docker info` stripped of host-wide counts. Every
+> object it checks is first held to exact field spellings from an allowlist, because the
+> daemon decodes JSON field names case-insensitively (`privileged` is `Privileged` to it). It
+> always sends an explicit `HostConfig`, since older daemons fall back to host settings at the
+> top level of the body without one. It strips the body from start/stop/remove requests, and
+> it refuses API versions below 1.24, which still let a start request carry its own
+> `HostConfig`. That closes the residual risk above for everything that merely *reaches* the
+> Docker API.
+>
+> **Mounts — #206, in the same release.** A first cut checked bind mounts by path. The daemon
+> resolves a bind source later — at container start, and again on its own restarts — and
+> follows symbolic links, so code running inside a manager could plant a link in its own
+> folder and have the daemon follow it out. Nothing mounts a host folder any more: the data
+> and server files are named volumes (on Linux bound to the same `data/` and `serverfiles/`
+> folders), and a server mounts just its own folder of one as a **volume subpath**. The daemon
+> opens a subpath with `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)` and bind-mounts the
+> descriptor it opened (moby `daemon/volume/safepath`), so there is nothing to race. The gate
+> allows only the stack's own volumes (named after the stack), a plain relative subpath, no
+> `DriverConfig` (a missing volume named in a mount is *created* with it, and the local
+> driver's options can bind any folder), and subpaths only on a daemon with API 1.45 or newer
+> (Docker Engine 26) — an older daemon ignores the field and mounts the whole volume. A
+> container made before v0.65.0 that mounts host folders is not started, restarted, killed
+> or updated through the gate again; the manager recreates it. The CI job `gate-e2e` shows
+> the daemon refusing a subpath that is a symbolic link to `/`.
+>
+> **Residual risk:** a manager that has been taken over is kept to its own containers,
+> images and volumes, but it can run code in its own game servers, and on Linux those use
+> host networking (#150) — so it reaches whatever listens on the host's network, as a local
+> process would. It can also fill the disk its volumes live on. The GUI login therefore
+> stays sensitive, and R2/R3 still apply.
 
 ---
 

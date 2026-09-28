@@ -1,9 +1,9 @@
 """Thin wrapper around the Docker SDK for managing sibling containers.
 
 The manager runs inside a container but talks to the HOST's Docker daemon
-through the mounted socket. Containers it creates are therefore siblings,
-not children: they attach to the shared compose network, and every bind
-mount handed to the daemon must be expressed as a host path (host_path_for).
+(through its stack's Docker gate). Containers it creates are therefore
+siblings, not children: they attach to the shared compose network, and every
+folder they mount must be named the way the daemon sees it (mount_for).
 """
 import ipaddress
 import logging
@@ -15,10 +15,12 @@ import docker
 from docker.errors import DockerException
 
 import config
+import stacks
 
 logger = logging.getLogger("manager.docker")
 
-LABEL_MANAGED = "reforger-manager.managed"
+LABEL_MANAGED = stacks.LABEL_MANAGED
+LABEL_STACK = stacks.LABEL_STACK
 LABEL_ROLE = "reforger-manager.role"
 LABEL_BRANCH = "reforger-manager.branch"
 LABEL_INSTANCE_ID = "reforger-manager.instance_id"
@@ -100,27 +102,133 @@ def _own_mounts() -> list:
     return _self_mounts
 
 
-def host_path_for(container_path: str) -> str:
-    """Translate a path inside this container to the host path backing it.
-
-    Sibling containers can only mount host paths. Outside a container
-    (local development) the path is returned unchanged.
-    """
+def _own_mount(container_path: str) -> tuple[dict, str] | None:
+    """(the manager's own mount holding this path, the path inside it)."""
     for mount in _own_mounts():
         dest = (mount.get("Destination") or "").rstrip("/")
         if dest and (container_path == dest or container_path.startswith(dest + "/")):
-            return mount["Source"].rstrip("/") + container_path[len(dest):]
-    return container_path
+            return mount, container_path[len(dest):].strip("/")
+    return None
+
+
+def mount_for(container_path: str, target: str, read_only: bool = False) -> dict:
+    """A mount of one of this manager's folders into a sibling container.
+
+    Since v0.65.0 the data and server-file folders are named volumes, and a
+    folder inside one is mounted as the volume plus a subpath (#206). The daemon
+    opens every part of a subpath with symbolic links refused and mounts what it
+    opened, so a link planted in the folder cannot lead the mount anywhere else
+    — which a host path, resolved by the daemon later, could not promise. The
+    Docker gate accepts nothing else.
+
+    On a compose file from before v0.65.0 the folders are host folders, and so
+    is the mount. Outside a container (development) the path is used as it is.
+    Returned in the Docker API's shape, for the SDK's `mounts=[...]`.
+    """
+    found = _own_mount(container_path)
+    if found is None:
+        return {"Type": "bind", "Source": container_path, "Target": target,
+                "ReadOnly": read_only}
+    mount, inside = found
+    if mount.get("Type") == "volume" and mount.get("Name"):
+        spec = {"Type": "volume", "Source": mount["Name"], "Target": target,
+                "ReadOnly": read_only}
+        if inside:
+            spec["VolumeOptions"] = {"Subpath": inside}
+        return spec
+    source = mount["Source"].rstrip("/") + (f"/{inside}" if inside else "")
+    return {"Type": "bind", "Source": source, "Target": target, "ReadOnly": read_only}
+
+
+_volume_dirs: dict[str, str] = {}
+
+
+def _volume_dir(mount: dict) -> str:
+    """Where a volume's files are on the host: the folder a bind volume points
+    at (Linux: ./data next to the compose file), else Docker's own directory."""
+    name = mount["Name"]
+    if name not in _volume_dirs:
+        try:
+            attrs = get_client().volumes.get(name).attrs
+        except DockerException as exc:
+            logger.info("Could not inspect volume %s: %s", name, exc)
+            return mount["Source"].rstrip("/")  # not cached: ask again next time
+        options = attrs.get("Options") or {}
+        device = options.get("device") if "bind" in str(options.get("o", "")).split(",") else ""
+        _volume_dirs[name] = str(device or attrs.get("Mountpoint") or mount["Source"]).rstrip("/")
+    return _volume_dirs[name]
+
+
+def host_path_for(container_path: str) -> str:
+    """Where a path inside this container lives on the host — for showing it.
+
+    Outside a container (local development) the path is returned unchanged.
+    """
+    found = _own_mount(container_path)
+    if found is None:
+        return container_path
+    mount, inside = found
+    if mount.get("Type") == "volume" and mount.get("Name"):
+        base = _volume_dir(mount)
+    else:
+        base = mount["Source"].rstrip("/")
+    return base + (f"/{inside}" if inside else "")
+
+
+# --------------------------------------------------------------------------- #
+# This manager's stack (#204)
+# --------------------------------------------------------------------------- #
+# Several managers can share one Docker host. Everything below only ever sees
+# and touches this stack's containers. Behind the Docker gate the daemon's
+# answers are already scoped; the filtering here is the second, independent
+# layer — and the only one for a manager still on an older compose file.
+
+def stack() -> str:
+    return config.settings.rsm_stack
+
+
+def container_name(suffix: str) -> str:
+    """This stack's name for a container: reforger-instance-3, team2-instance-3."""
+    return f"{stack()}-{suffix}"
+
+
+def managed_labels(**extra: str) -> dict:
+    """Labels for a container this manager creates: managed, and this stack's."""
+    return {LABEL_MANAGED: "true", LABEL_STACK: stack(), **extra}
+
+
+def is_mine(container) -> bool:
+    return stacks.owns(getattr(container, "labels", None) or {}, stack())
+
+
+def is_current_stack(container) -> bool:
+    """Carries this stack's label (not merely adopted from before stacks)."""
+    return (getattr(container, "labels", None) or {}).get(LABEL_STACK) == stack()
+
+
+def _scoped_list(label_filters: list[str], status: str | None = None) -> list:
+    """List containers matching the label filters, keeping only this stack's.
+
+    Docker cannot filter on a label being ABSENT, so the default stack — which
+    also adopts containers from before stacks — is filtered here; any other stack
+    asks the daemon for its own label directly and is filtered here too.
+    """
+    filters: dict = {"label": list(label_filters)}
+    if stack() != stacks.DEFAULT_STACK:
+        filters["label"].append(f"{LABEL_STACK}={stack()}")
+    if status:
+        filters["status"] = status
+    found = get_client().containers.list(all=True, filters=filters)
+    # A stack-labelled container sorts before an adopted one for the same thing.
+    return sorted((c for c in found if is_mine(c)), key=lambda c: not is_current_stack(c))
 
 
 def find_containers(role: str, status: str | None = None, branch: str | None = None) -> list:
-    filters = {"label": [f"{LABEL_ROLE}={role}"]}
-    if status:
-        filters["status"] = status
+    labels = [f"{LABEL_ROLE}={role}"]
     if branch:
-        filters["label"].append(f"{LABEL_BRANCH}={branch}")
+        labels.append(f"{LABEL_BRANCH}={branch}")
     try:
-        return get_client().containers.list(all=True, filters=filters)
+        return _scoped_list(labels, status)
     except DockerException as exc:
         logger.warning("Container lookup (%s) failed: %s", role, exc)
         return []
@@ -128,9 +236,8 @@ def find_containers(role: str, status: str | None = None, branch: str | None = N
 
 def find_instance_container(instance_id: int):
     """Return the single container for an instance id, or None."""
-    filters = {"label": [f"{LABEL_INSTANCE_ID}={instance_id}"]}
     try:
-        found = get_client().containers.list(all=True, filters=filters)
+        found = _scoped_list([f"{LABEL_INSTANCE_ID}={instance_id}"])
     except DockerException as exc:
         logger.warning("Instance container lookup (%s) failed: %s", instance_id, exc)
         return None
@@ -149,9 +256,7 @@ def instance_containers() -> dict[int, object]:
     handed back are already fresh and need no reload().
     """
     try:
-        containers = get_client().containers.list(
-            all=True, filters={"label": [f"{LABEL_ROLE}={ROLE_INSTANCE}"]}
-        )
+        containers = _scoped_list([f"{LABEL_ROLE}={ROLE_INSTANCE}"])
     except DockerException as exc:
         logger.warning("Instance container listing failed: %s", exc)
         return {}
@@ -159,7 +264,8 @@ def instance_containers() -> dict[int, object]:
     for container in containers:
         raw = (container.labels or {}).get(LABEL_INSTANCE_ID)
         try:
-            by_instance[int(raw)] = container
+            # setdefault: the stack-labelled one sorts first and wins.
+            by_instance.setdefault(int(raw), container)
         except (TypeError, ValueError):
             continue  # a managed container without a usable instance label
     return by_instance
@@ -204,8 +310,10 @@ def use_host_network() -> bool:
 # address ON THE HOST, and the host can reach every container on it. Game
 # servers use host networking (#150), so network-wise they are the host — and
 # they run untrusted Workshop mods as root. Gateway mode 'isolated' (Docker
-# Engine 28+) removes that address. Pulling the image never updates the compose
-# file that sets it, so the manager checks for itself and says so in the GUI.
+# Engine 28+) removes that address. Since v0.65.0 there is no such network at
+# all: the manager reaches Docker through its gate over a unix socket (#204).
+# Pulling the image never updates the compose file, so the manager checks for
+# itself and says so in the GUI.
 GW_MODE_IPV4 = "com.docker.network.bridge.gateway_mode_ipv4"
 GW_MODE_IPV6 = "com.docker.network.bridge.gateway_mode_ipv6"
 ISOLATED_MIN_ENGINE = 28
@@ -265,25 +373,13 @@ def _assess_exposure() -> tuple[dict | None, bool]:
 
     options = net.get("Options") or {}
     major = _engine_major(engine)
-    refresh = (
-        "Whoever manages this machine should refresh the compose file and recreate "
-        "the stack. With the Linux installer's rsm command: run 'sudo rsm update', "
-        "accept the new compose file, then run 'sudo rsm restart'. Manual installs: "
-        "download the new compose file, then run 'docker compose down' and "
-        "'docker compose up -d'. The v0.64.1 release notes have the details."
-    )
     if major is not None and major < ISOLATED_MIN_ENGINE:
         reason = (
-            f"This host runs Docker Engine {engine}; 28.0 is the first version that "
-            f"can take the Docker API network off the host."
-        )
-        action = (
-            "Whoever manages this machine should update Docker Engine to 28 or newer "
-            "first, then apply the v0.64.1 compose file as its release notes describe."
+            f"This host runs Docker Engine {engine}, which cannot take that network "
+            f"off the host (28.0 is the first that can)."
         )
     elif not net.get("Internal"):
         reason = f"The network the manager reaches Docker over ({name}) is not an internal network."
-        action = refresh
     elif options.get(GW_MODE_IPV4) != "isolated" or (
         net.get("EnableIPv6") and options.get(GW_MODE_IPV6) != "isolated"
     ):
@@ -291,7 +387,6 @@ def _assess_exposure() -> tuple[dict | None, bool]:
             f"The network {name} was created by a compose file older than v0.64.1, "
             f"which leaves it an address on the host."
         )
-        action = refresh
     else:
         return None, True
 
@@ -304,8 +399,157 @@ def _assess_exposure() -> tuple[dict | None, bool]:
             "in them — can reach the Docker socket proxy, which can create containers "
             "on this host. " + reason
         ),
-        "action": action,
+        # The v0.65.0 compose file replaces that network with a unix socket, on
+        # any Docker Engine, so every case has the same fix.
+        "action": (
+            "Whoever manages this machine should refresh the compose file and recreate "
+            "the stack. With the Linux installer's rsm command: run 'sudo rsm update' "
+            "and accept the new compose file and the restart it offers. Manual "
+            "installs: download the new compose file, then run 'docker compose down' "
+            "and 'docker compose up -d'. Windows: re-run the installer. The v0.65.0 "
+            "release notes have the details."
+        ),
     }, True
+
+
+# --------------------------------------------------------------------------- #
+# Is Docker reached through this stack's gate? (#204)
+# --------------------------------------------------------------------------- #
+# The gate answers GET /_rsm/gate with a description of itself. The older
+# socket proxy refuses that path and the Docker daemon does not know it, so any
+# other answer means this manager still runs on a pre-v0.65.0 compose file.
+GATE_PATH = "/_rsm/gate"
+
+_gate: dict | None = None
+_gate_known = False
+
+
+def gate_info() -> dict | None:
+    """The gate's description of itself ({"gate", "stack", "version"}), or None.
+
+    None when Docker is reached some other way — or when that is not known yet
+    (daemon unreachable), which is not cached and is asked again next time.
+    """
+    global _gate, _gate_known
+    if _gate_known:
+        return _gate
+    if not daemon_info():
+        return None
+    try:
+        api = get_client().api
+        resp = api.get(api.base_url + GATE_PATH, timeout=5)
+        body = resp.json() if resp.status_code == 200 else {}
+    except (DockerException, OSError, ValueError, AttributeError) as exc:
+        logger.info("Could not ask whether Docker is reached through the gate: %s", exc)
+        return None
+    _gate = body if isinstance(body, dict) and body.get("gate") == "rsm" else None
+    _gate_known = True
+    return _gate
+
+
+def gate_known() -> bool:
+    """True once gate_info() has a certain answer cached."""
+    return _gate_known
+
+
+def gate_warning() -> dict | None:
+    """A GUI warning when this manager is not behind its own stack's gate."""
+    info = gate_info()
+    if not _gate_known:
+        return None  # not known yet: never warn on a blind read
+    if info is None:
+        return {
+            "id": "docker_gate_missing",
+            "severity": "warning",
+            "title": "This manager's compose file is older than v0.65.0",
+            "detail": (
+                "It reaches Docker without its Docker gate, so nothing below the "
+                "manager itself keeps it to its own containers and folders. Since "
+                "v0.65.0 every install runs its own gate, which is also what lets "
+                "several managers share one machine safely."
+            ),
+            "action": (
+                "Whoever manages this machine should refresh the compose file and "
+                "recreate the stack. With the Linux installer's rsm command: run "
+                "'sudo rsm update' and accept the new compose file. Manual installs: "
+                "download the new compose file, then run 'docker compose down' and "
+                "'docker compose up -d'. Windows: re-run the installer. The v0.65.0 "
+                "release notes have the details."
+            ),
+        }
+    if info.get("stack") != stack():
+        return {
+            "id": "docker_gate_stack_mismatch",
+            "severity": "danger",
+            "title": "This manager and its Docker gate disagree about the stack",
+            "detail": (
+                f"The manager is stack '{stack()}' but its gate serves stack "
+                f"'{info.get('stack')}', so the gate stamps new servers with the "
+                f"other name and this manager will not find them again."
+            ),
+            "action": (
+                "Whoever manages this machine should make RSM_STACK the same for both "
+                "(it comes from .env; the compose file passes it to both containers), "
+                "then recreate the stack."
+            ),
+        }
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# Is Docker new enough to mount a folder of a volume? (#206)
+# --------------------------------------------------------------------------- #
+# VolumeOptions.Subpath arrived with API 1.45, Docker Engine 26.0. An older
+# daemon rejects nothing — it ignores the subpath and mounts the whole volume —
+# so the gate refuses such mounts there, and the GUI says why servers fail.
+SUBPATH_MIN_API = (1, 45)
+
+_engine: tuple[str, tuple[int, int]] | None = None
+
+
+def _engine_version() -> tuple[str, tuple[int, int]] | None:
+    """(engine version, API version) of the daemon, or None when unreadable."""
+    global _engine
+    if _engine is None:
+        try:
+            v = get_client().version()
+            major, minor = (int(p) for p in str(v.get("ApiVersion", "")).split(".")[:2])
+        except (DockerException, OSError, ValueError, AttributeError) as exc:
+            logger.info("Could not read the Docker version: %s", exc)
+            return None  # not cached: ask again next time
+        _engine = (str(v.get("Version", "")), (major, minor))
+    return _engine
+
+
+def uses_volumes() -> bool:
+    """Is this manager's data a named volume (the compose files since v0.65.0)?"""
+    found = _own_mount(config.settings.data_dir)
+    return found is not None and found[0].get("Type") == "volume"
+
+
+def engine_warning() -> dict | None:
+    """A GUI warning when Docker is too old for the volume mounts servers need."""
+    if not uses_volumes():
+        return None
+    engine = _engine_version()
+    if engine is None or engine[1] >= SUBPATH_MIN_API:
+        return None  # new enough — or not known yet, and never warn on a blind read
+    return {
+        "id": "docker_engine_too_old",
+        "severity": "danger",
+        "title": f"Docker Engine {engine[0]} is too old: servers cannot start",
+        "detail": (
+            "Since v0.65.0 each server mounts only its own folder of this install's "
+            "data volume, which needs Docker Engine 26.0 or newer. Until Docker is "
+            "updated, starting a server, downloading server files and the other "
+            "jobs that run in a container fail."
+        ),
+        "action": (
+            "Whoever manages this machine should update Docker. On Linux the official "
+            "installer upgrades an existing install: curl -fsSL https://get.docker.com "
+            "| sudo sh. On Windows, update Docker Desktop."
+        ),
+    }
 
 
 def exposure_known() -> bool:

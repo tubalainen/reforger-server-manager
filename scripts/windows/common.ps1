@@ -52,6 +52,56 @@ function Test-DockerEngine {
     return (Invoke-Quiet "`"$Cli`" info")
 }
 
+function Get-StackName {
+    <#
+    This install's stack name: RSM_STACK from its .env, or 'reforger' when that
+    is unset (#204). Every container, network and volume of the install starts
+    with it.
+    #>
+    param([Parameter(Mandatory)][string] $EnvFile)
+    if (Test-Path $EnvFile) {
+        $line = Select-String -Path $EnvFile -Pattern '^RSM_STACK=(.*)$' -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+        if ($line -and $line.Matches[0].Groups[1].Value.Trim()) {
+            return $line.Matches[0].Groups[1].Value.Trim()
+        }
+    }
+    return 'reforger'
+}
+
+function Get-StackContainerIds {
+    <#
+    Ids of the containers matching a label filter that belong to this stack: the
+    ones labelled with it, plus - for the default stack only - the ones created
+    before stacks existed, which carry no stack label at all. The same rule as
+    owns() in backend/stacks.py, so another team's servers on this machine are
+    never touched.
+
+    The labels come back as one 'k=v,k=v' string, which avoids passing a
+    double-quoted --format argument through PowerShell 5.1.
+    #>
+    param(
+        [Parameter(Mandatory)][string] $Cli,
+        [Parameter(Mandatory)][string] $Stack,
+        [Parameter(Mandatory)][string] $Filter,
+        [switch] $All
+    )
+    $psArgs = @('ps', '--filter', $Filter, '--format', '{{.ID}}|{{.Labels}}')
+    if ($All) { $psArgs += '-a' }
+    $ids = @()
+    foreach ($line in @(& $Cli @psArgs)) {
+        if (-not $line) { continue }
+        $id, $labels = "$line" -split '\|', 2
+        $owner = $null
+        foreach ($pair in ("$labels" -split ',')) {
+            $key, $value = $pair -split '=', 2
+            if ($key -eq 'reforger-manager.stack') { $owner = $value }
+        }
+        if ($owner -eq $Stack -or ($null -eq $owner -and $Stack -eq 'reforger')) { $ids += $id }
+    }
+    return ,$ids
+}
+
 function Test-WslInstalled {
     <#
     Is WSL actually installed?

@@ -23,11 +23,17 @@ if [ "$(id -u)" = "0" ]; then
     chmod 700 /data 2>/dev/null || true
 
     # How the app reaches the daemon:
-    #   * DOCKER_HOST=tcp://… — through the bundled docker-socket-proxy (the
-    #     default compose setup). No local socket, so no group to join.
+    #   * DOCKER_HOST=unix:///run/rsm-gate/… — through this stack's Docker gate
+    #     (the compose setup since v0.65.0). The gate makes its socket usable by
+    #     everyone who can see it, and only its own manager mounts it.
+    #   * DOCKER_HOST=tcp://… — through the socket proxy of a compose file older
+    #     than v0.65.0. No local socket, so no group to join.
     #   * otherwise — a directly mounted /var/run/docker.sock (legacy / custom
     #     setups). Grant the app user access to it, whatever GID the host uses.
     case "$DOCKER_HOST" in
+        unix:///run/rsm-gate/*)
+            echo "Using Docker through this stack's Docker gate" >&2
+            ;;
         tcp://*|http://*|https://*)
             echo "Using Docker daemon at $DOCKER_HOST (via socket proxy)" >&2
             ;;

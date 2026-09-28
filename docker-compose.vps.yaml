@@ -7,8 +7,11 @@
 #     real Let's Encrypt certificate automatically on first start.
 #   * The manager publishes NO port at all. It is reachable only through Caddy
 #     over an internal Docker network — there is no way to hit the GUI directly.
-#   * Three isolated networks instead of one, so neither Caddy nor the game
-#     servers can reach the Docker API (see the network notes at the bottom).
+#   * Caddy and the manager share a network of their own; the game servers are
+#     never on it (see the network notes at the bottom).
+#
+# Every name below starts with the STACK name, RSM_STACK in .env ('reforger'
+# when unset) — see docker-compose.yaml (#204).
 #
 # Start it with:
 #   docker compose -f docker-compose.vps.yaml up -d
@@ -22,7 +25,7 @@ services:
   # progress bars — are proxied natively with no extra configuration.
   caddy:
     image: ${CADDY_IMAGE:-caddy:2-alpine}
-    container_name: reforger-caddy
+    container_name: ${RSM_STACK:-reforger}-caddy
     restart: unless-stopped
     command: caddy reverse-proxy --from ${SITE_ADDRESS:?set SITE_ADDRESS in .env (a domain name, or ":80" for plain-HTTP IP-only testing)} --to manager:8080
     ports:
@@ -43,15 +46,20 @@ services:
   # --- The manager ------------------------------------------------------------
   manager:
     image: ghcr.io/tubalainen/reforger-server-manager:${MANAGER_VERSION:-latest}
-    container_name: reforger-manager
+    container_name: ${RSM_STACK:-reforger}-manager
     restart: unless-stopped
     # The manager stops every running game server on the way down; give it time
     # before compose SIGKILLs it (default is 10s).
     stop_grace_period: 2m
     env_file: .env
     environment:
-      # Reach the daemon through the least-privilege proxy, never the raw socket.
-      DOCKER_HOST: tcp://docker-socket-proxy:2375
+      # Set here, not only in .env, so the manager always agrees with the names
+      # this file gives the containers and the network.
+      RSM_STACK: ${RSM_STACK:-reforger}
+      DOCKER_NETWORK: ${RSM_STACK:-reforger}-net
+      # Reach Docker through this stack's gate below, over a unix socket in a
+      # volume only the two of them share — never the raw socket.
+      DOCKER_HOST: unix:///run/rsm-gate/docker.sock
       # Arms the startup security gate. The GUI has no published port here, so
       # the app cannot otherwise tell it is internet-facing — but it IS, via
       # Caddy. This makes it refuse to start on the example/empty password, the
@@ -70,55 +78,64 @@ services:
       TRUSTED_PROXIES: ${PROXY_SUBNET:-172.31.242.0/24}
     depends_on:
       - docker-socket-proxy
+    labels:
+      # Which stack this manager is. The gate lets a manager inspect its own
+      # container only when it carries this label.
+      reforger-manager.stack: ${RSM_STACK:-reforger}
+      reforger-manager.role: manager
+      reforger-manager.game_ports: ${GAME_PORT_RANGE:-2001-2020}
+      reforger-manager.a2s_ports: ${A2S_PORT_RANGE:-17777-17796}
+      reforger-manager.rcon_ports: ${RCON_PORT_RANGE:-19999-20018}
     # NOTE: deliberately no 'ports:'. The GUI is reachable only via Caddy.
     volumes:
-      - ./data:/data
-      - ./serverfiles/stable:/serverfiles/stable:ro
-      - ./serverfiles/experimental:/serverfiles/experimental:ro
+      # data/ and serverfiles/ next to this file (see 'volumes' at the bottom).
+      - reforger-data:/data
+      - docker-gate:/run/rsm-gate   # the gate's socket; never the raw one
+      - reforger-serverfiles-stable:/serverfiles/stable:ro
+      - reforger-serverfiles-experimental:/serverfiles/experimental:ro
     networks:
       - proxy          # inbound from Caddy
-      - docker-api     # outbound to the socket proxy
       - reforger-net   # shared with the game server containers
 
-  # --- Least-privilege gateway to the host Docker daemon ----------------------
-  # Holds the socket so the manager never has to. Only the API sections the
-  # manager actually uses are forwarded; exec, build, volume create, swarm,
-  # secrets, configs, plugins and system are denied.
+  # --- The Docker gate (v0.65.0) ----------------------------------------------
+  # The only container that holds the Docker socket. It passes on only what the
+  # manager needs, for this stack only, and has no network at all: nothing can
+  # reach it over one — not Caddy, not the game servers, not the host. See
+  # docker-compose.yaml for what it allows; the rules are in
+  # backend/gate/policy.py. The service keeps the old socket proxy's name so
+  # that compose replaces that container instead of orphaning it.
   docker-socket-proxy:
-    image: ${DOCKER_PROXY_IMAGE:-tecnativa/docker-socket-proxy:v0.4.1}
-    container_name: reforger-docker-proxy
+    # The gate is part of the manager's image; keep the two on the same tag.
+    image: ghcr.io/tubalainen/reforger-server-manager:${MANAGER_VERSION:-latest}
+    container_name: ${RSM_STACK:-reforger}-docker-gate
     restart: unless-stopped
+    entrypoint: ["python", "-m", "gate"]
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    # Only what the rules need — deliberately not .env, which holds passwords.
     environment:
-      CONTAINERS: 1   # create/list/inspect/start/stop/remove + logs + stats
-      IMAGES: 1       # pull the server image, check it is present
-      NETWORKS: 1     # inspect reforger-net for the attach self-heal (#113)
-      INFO: 1         # docker info
-      POST: 1         # allow write verbs (create/start/stop/remove/pull)
-      # Everything not listed stays denied (image default 0).
+      RSM_STACK: ${RSM_STACK:-reforger}
+      DOCKER_NETWORK: ${RSM_STACK:-reforger}-net
+      REFORGER_SERVER_IMAGE: ${REFORGER_SERVER_IMAGE:-ghcr.io/acemod/arma-reforger:latest}
+      STEAMCMD_IMAGE: ${STEAMCMD_IMAGE:-steamcmd/steamcmd:latest}
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    networks:
-      - docker-api
+      - /var/run/docker.sock:/var/run/docker.sock
+      - docker-gate:/run/rsm-gate
 
-# Three networks, so that every component can reach exactly what it needs and
-# nothing else:
+# Two networks, so that every component can reach exactly what it needs and
+# nothing else (the Docker gate has none at all):
 #
 #   proxy        Caddy <-> manager. Caddy is internet-facing, so it is kept off
-#                both other networks: a Caddy compromise reaches the GUI (which
+#                the other network: a Caddy compromise reaches the GUI (which
 #                still has its own login) and nothing else.
-#   docker-api   manager <-> socket proxy, and nobody else. 'internal' means it
-#                has no route off the host, and gateway mode 'isolated' takes
-#                away the address Docker would otherwise give its bridge ON the
-#                host. That second part matters: the game servers use host
-#                networking (#150), so they reach whatever the host reaches, and
-#                they run untrusted Workshop mods as root — a Docker API they
-#                could reach would be a container escape. Needs Docker Engine
-#                28.0 or newer (v0.64.1).
 #   reforger-net manager <-> the game server containers (the network the manager
 #                attaches each spawned server to).
 networks:
   proxy:
-    name: reforger-proxy
+    name: ${RSM_STACK:-reforger}-proxy
     # Pinned so TRUSTED_PROXIES above can name it: Docker would otherwise assign
     # this subnet dynamically and the manager could not know which source
     # addresses are really Caddy. Override PROXY_SUBNET in .env if it collides
@@ -126,17 +143,36 @@ networks:
     ipam:
       config:
         - subnet: ${PROXY_SUBNET:-172.31.242.0/24}
-  docker-api:
-    name: reforger-docker-api
-    internal: true
-    driver_opts:
-      com.docker.network.bridge.gateway_mode_ipv4: isolated
-      com.docker.network.bridge.gateway_mode_ipv6: isolated
   reforger-net:
-    name: reforger-net
+    name: ${RSM_STACK:-reforger}-net
 
 volumes:
   caddy-data:
-    name: reforger-caddy-data
+    name: ${RSM_STACK:-reforger}-caddy-data
   caddy-config:
-    name: reforger-caddy-config
+    name: ${RSM_STACK:-reforger}-caddy-config
+  # This stack's data and downloaded server files. On disk they are plain
+  # folders next to this file (data/ and serverfiles/), easy to inspect and back
+  # up; Docker knows them as named volumes bound to those folders. That lets a
+  # server mount just its own folder of one — a volume subpath, which Docker
+  # opens with symbolic links refused, so nothing planted in a folder can lead
+  # the mount anywhere else (#206). Needs Docker Engine 26 or newer.
+  #
+  # The folders must exist before `docker compose up`: create them with
+  #   mkdir -p data serverfiles/stable serverfiles/experimental
+  # (the installers do). The names are how the Docker gate knows them.
+  reforger-data:
+    name: ${RSM_STACK:-reforger}-data
+    driver: local
+    driver_opts: {type: none, o: bind, device: ./data}
+  reforger-serverfiles-stable:
+    name: ${RSM_STACK:-reforger}-serverfiles-stable
+    driver: local
+    driver_opts: {type: none, o: bind, device: ./serverfiles/stable}
+  reforger-serverfiles-experimental:
+    name: ${RSM_STACK:-reforger}-serverfiles-experimental
+    driver: local
+    driver_opts: {type: none, o: bind, device: ./serverfiles/experimental}
+  # Holds the gate's unix socket; shared by this stack's manager and gate only.
+  docker-gate:
+    name: ${RSM_STACK:-reforger}-docker-gate

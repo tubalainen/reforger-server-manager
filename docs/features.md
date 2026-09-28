@@ -91,7 +91,7 @@ Port values are assigned per server by the manager. Imported port settings there
 - Fail-closed defaults when the GUI is exposed beyond localhost.
 - A logout-all endpoint for invalidating every active session.
 - Support for trusted reverse proxies and delegated authentication.
-- A least-privilege Docker socket proxy instead of mounting the daemon socket into the manager.
+- A Docker gate instead of mounting the daemon socket into the manager: it has no network, passes on only the operations the manager needs, and keeps each install to its own containers, images and folders.
 - `no-new-privileges` on manager-created containers.
 - Edit locks that prevent two browser sessions from changing the same template simultaneously.
 

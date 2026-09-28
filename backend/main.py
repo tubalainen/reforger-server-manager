@@ -20,6 +20,7 @@ import mod_templates_api
 import models
 import mods_api
 import serverfiles_api
+import stacks
 import system_api
 import templates_api
 import workshop_api
@@ -38,6 +39,14 @@ async def lifespan(_app: FastAPI):
     logger.info("=" * 60)
     logger.info("%s v%s", config.APP_NAME, config.APP_VERSION)
     logger.info("=" * 60)
+    # The stack name becomes part of container, network and volume names; a bad
+    # one would only fail later, at the first container create (#204).
+    stack_error = stacks.stack_name_error(config.settings.rsm_stack)
+    if stack_error:
+        logger.error(stack_error)
+        raise RuntimeError(f"Refusing to start: {stack_error}")
+    if config.settings.rsm_stack != stacks.DEFAULT_STACK:
+        logger.info("Stack: %s", config.settings.rsm_stack)
     # Fail closed on an insecure, network-exposed configuration (security review
     # R2/R3). Fatal issues only fire when WEB_BIND publishes the GUI beyond
     # localhost, so a local run stays frictionless; an exposed one must either
@@ -92,6 +101,7 @@ async def _crash_monitor():
     ticks = 0
     steamcmd_cleaned = False
     exposure_checked = False
+    gate_checked = False
     while True:
         try:
             if await asyncio.to_thread(docker_service.ping):
@@ -108,6 +118,17 @@ async def _crash_monitor():
                     exposure_checked = docker_service.exposure_known()
                     if warning:
                         logger.error("SECURITY: %s %s", warning["detail"], warning["action"])
+                        gate_checked = True  # the same fix; one message is enough
+                if exposure_checked and not gate_checked:
+                    # A manager on a compose file older than v0.65.0 (#204).
+                    gate = await asyncio.to_thread(docker_service.gate_warning)
+                    gate_checked = docker_service.gate_known()
+                    if gate:
+                        logger.warning("%s. %s %s", gate["title"], gate["detail"], gate["action"])
+                    engine = await asyncio.to_thread(docker_service.engine_warning)
+                    if engine:
+                        logger.error("%s. %s %s", engine["title"], engine["detail"],
+                                     engine["action"])
                 # Recover crashed servers, and bring auto_start ones back after a
                 # reboot / the #113 shutdown that removed their containers.
                 await asyncio.to_thread(instance_service.reconcile_and_recover)

@@ -157,8 +157,8 @@ class SteamService:
                 config.settings.steamcmd_image,
                 command,
                 detach=True,
-                name=f"reforger-steamcheck-{branch}-{int(time.time())}",
-                labels={docker_service.LABEL_MANAGED: "true"},
+                name=docker_service.container_name(f"steamcheck-{branch}-{int(time.time())}"),
+                labels=docker_service.managed_labels(),
                 security_opt=docker_service.SECURITY_OPT,
             )
         except DockerException as exc:
@@ -184,18 +184,16 @@ class SteamService:
         container (steamcmd image, rw mount) does the delete. Raises
         RuntimeError on failure.
         """
-        host_dir = docker_service.host_path_for(
-            f"{config.settings.serverfiles_dir}/{branch}"
-        )
-        Path(f"{config.settings.serverfiles_dir}/{branch}").mkdir(parents=True, exist_ok=True)
+        files = f"{config.settings.serverfiles_dir}/{branch}"
+        Path(files).mkdir(parents=True, exist_ok=True)
         try:
             docker_service.get_client().containers.run(
                 config.settings.steamcmd_image,
                 entrypoint="/bin/sh",
                 command=["-c", "rm -rf /serverfiles/* /serverfiles/.[!.]* 2>/dev/null; true"],
                 remove=True,
-                volumes={host_dir: {"bind": "/serverfiles", "mode": "rw"}},
-                labels={docker_service.LABEL_MANAGED: "true"},
+                mounts=[docker_service.mount_for(files, "/serverfiles")],
+                labels=docker_service.managed_labels(),
                 security_opt=docker_service.SECURITY_OPT,
             )
         except DockerException as exc:
@@ -251,9 +249,7 @@ class SteamService:
     async def _run(self, job: DownloadJob) -> None:
         loop = asyncio.get_running_loop()
         app_id = config.BRANCHES[job.branch]["app_id"]
-        host_dir = docker_service.host_path_for(
-            f"{config.settings.serverfiles_dir}/{job.branch}"
-        )
+        files = f"{config.settings.serverfiles_dir}/{job.branch}"
         script = _build_download_script(app_id)
         try:
             container = await asyncio.to_thread(
@@ -262,13 +258,14 @@ class SteamService:
                 entrypoint="/bin/sh",
                 command=["-c", script],
                 detach=True,
-                name=f"reforger-steamcmd-{job.branch}-{int(job.started_at)}",
-                volumes={host_dir: {"bind": "/serverfiles", "mode": "rw"}},
-                labels={
-                    docker_service.LABEL_MANAGED: "true",
+                name=docker_service.container_name(
+                    f"steamcmd-{job.branch}-{int(job.started_at)}"
+                ),
+                mounts=[docker_service.mount_for(files, "/serverfiles")],
+                labels=docker_service.managed_labels(**{
                     docker_service.LABEL_ROLE: docker_service.ROLE_STEAMCMD,
                     docker_service.LABEL_BRANCH: job.branch,
-                },
+                }),
                 security_opt=docker_service.SECURITY_OPT,
             )
         except DockerException as exc:

@@ -692,6 +692,12 @@ def start_instance(instance_id: int) -> None:
                 reason = "container security options changed (#150)"
             elif not _container_network_mode_matches(container):
                 reason = "network mode changed (host vs bridge, #150)"
+            elif not _container_mounts_match(container, inst):
+                reason = "mounts changed (volume subpaths, v0.65.0, #206)"
+            elif not docker_service.is_current_stack(container):
+                # Adopted from before stacks existed: give it this stack's label
+                # and name, so the Docker gate lets this manager keep managing it.
+                reason = "created before stacks (v0.65.0, #204)"
             if reason:
                 logger.info("Recreating container for %s: %s", inst.name, reason)
                 try:
@@ -732,20 +738,48 @@ def start_instance(instance_id: int) -> None:
         logger.info("Started instance %s (container %s)", inst.name, container.id[:12])
 
 
+def _desired_mounts(inst: Instance) -> list[dict]:
+    """The folders a server container mounts: its branch's server files, and its
+    own configs, profile and Workshop folders (each created by _write_config)."""
+    idir = _instance_dir(inst)
+    return [
+        docker_service.mount_for(f"{config.settings.serverfiles_dir}/{inst.branch}", "/reforger"),
+        docker_service.mount_for(str(idir / "configs"), CONFIGS_DIR),
+        docker_service.mount_for(str(idir / "profile"), PROFILE_DIR),
+        docker_service.mount_for(str(idir / "workshop"), WORKSHOP_DIR),
+    ]
+
+
+def _mount_key(mount: dict) -> tuple:
+    return (
+        mount.get("Type"), str(mount.get("Source") or "").rstrip("/"), mount.get("Target"),
+        bool(mount.get("ReadOnly")), (mount.get("VolumeOptions") or {}).get("Subpath") or "",
+    )
+
+
+def _container_mounts_match(container, inst: Instance) -> bool:
+    """True if the container mounts exactly what this manager would mount now.
+
+    Mounts are fixed at creation. A server created before v0.65.0 mounts host
+    folders by path, which the Docker gate will no longer start (#206); one
+    whose volume names changed with the stack would mount someone else's. On any
+    read failure return True — never destroy a container we cannot inspect.
+    """
+    try:
+        container.reload()
+        host = container.attrs.get("HostConfig") or {}
+    except (DockerException, NotFound, AttributeError):
+        return True
+    if host.get("Binds"):
+        return False
+    have = sorted(_mount_key(m) for m in host.get("Mounts") or [])
+    return have == sorted(_mount_key(m) for m in _desired_mounts(inst))
+
+
 def _create_container(inst: Instance, config_path: Path, launch: "LaunchParams | None" = None):
     """Create (not start) the sibling server container for an instance."""
-    idir = _instance_dir(inst)
-    serverfiles_host = docker_service.host_path_for(
-        f"{config.settings.serverfiles_dir}/{inst.branch}"
-    )
     Path(f"{config.settings.serverfiles_dir}/{inst.branch}").mkdir(parents=True, exist_ok=True)
-
-    volumes = {
-        serverfiles_host: {"bind": "/reforger", "mode": "rw"},
-        docker_service.host_path_for(str(idir / "configs")): {"bind": CONFIGS_DIR, "mode": "rw"},
-        docker_service.host_path_for(str(idir / "profile")): {"bind": PROFILE_DIR, "mode": "rw"},
-        docker_service.host_path_for(str(idir / "workshop")): {"bind": WORKSHOP_DIR, "mode": "rw"},
-    }
+    mounts = _desired_mounts(inst)
     # Publish each UDP port unchanged (host == container). The game port used to
     # be remapped to a fixed internal 2001, but A2S/RCON had no matching override,
     # so the server bound the host port number inside the container while Docker
@@ -772,16 +806,15 @@ def _create_container(inst: Instance, config_path: Path, launch: "LaunchParams |
 
     return docker_service.get_client().containers.create(
         config.settings.reforger_server_image,
-        name=f"reforger-instance-{inst.id}",
+        name=docker_service.container_name(f"instance-{inst.id}"),
         detach=True,
         environment=environment,
-        volumes=volumes,
-        labels={
-            docker_service.LABEL_MANAGED: "true",
+        mounts=mounts,
+        labels=docker_service.managed_labels(**{
             docker_service.LABEL_ROLE: docker_service.ROLE_INSTANCE,
             docker_service.LABEL_BRANCH: inst.branch,
             docker_service.LABEL_INSTANCE_ID: str(inst.id),
-        },
+        }),
         **net_kwargs,
         restart_policy={"Name": _restart_policy(inst)},
         # Opt-in only. See config.instance_no_new_privileges: applying this to a
@@ -880,7 +913,6 @@ def _purge_instance_dir(instance_id: int) -> None:
     instances_root = Path(config.settings.data_dir) / "instances"
     if not (instances_root / str(instance_id)).exists():
         return
-    host_root = docker_service.host_path_for(str(instances_root))
     # instance_id is an int straight from the DB — it never reaches the shell as
     # free text, so there is nothing here for a caller to inject.
     script = f"rm -rf '/idata/{instance_id}'"
@@ -890,8 +922,8 @@ def _purge_instance_dir(instance_id: int) -> None:
             entrypoint="/bin/sh",
             command=["-c", script],
             remove=True,
-            volumes={host_root: {"bind": "/idata", "mode": "rw"}},
-            labels={docker_service.LABEL_MANAGED: "true"},
+            mounts=[docker_service.mount_for(str(instances_root), "/idata")],
+            labels=docker_service.managed_labels(),
             security_opt=docker_service.SECURITY_OPT,
         )
     except DockerException as exc:
@@ -1454,15 +1486,14 @@ def clear_instance_data(instance_id: int, targets: list[str]) -> dict:
         # reaches the shell.
         rel = [p.relative_to(idir).as_posix() for p in victims]
         script = " ".join(f"rm -rf '/idata/{r}';" for r in rel) + " true"
-        host_dir = docker_service.host_path_for(str(idir))
         try:
             docker_service.get_client().containers.run(
                 config.settings.steamcmd_image,
                 entrypoint="/bin/sh",
                 command=["-c", script],
                 remove=True,
-                volumes={host_dir: {"bind": "/idata", "mode": "rw"}},
-                labels={docker_service.LABEL_MANAGED: "true"},
+                mounts=[docker_service.mount_for(str(idir), "/idata")],
+                labels=docker_service.managed_labels(),
                 security_opt=docker_service.SECURITY_OPT,
             )
         except DockerException as exc:

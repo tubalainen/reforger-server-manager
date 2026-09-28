@@ -8,7 +8,6 @@ set -eu
 
 CONF=/etc/reforger-server-manager.conf
 REPO=tubalainen/reforger-server-manager
-RAW="https://raw.githubusercontent.com/$REPO/${RSM_REF:-main}"
 
 if [ ! -r "$CONF" ]; then
     echo "rsm: $CONF not found — is Reforger Server Manager installed?" >&2
@@ -24,6 +23,31 @@ fi
 cd "$RSM_DIR"
 
 dc() { docker compose -f "$RSM_COMPOSE" "$@"; }
+
+# A setting from .env, with the quotes and CR a hand edit may leave around it.
+env_value() {
+    [ -f .env ] || return 0
+    sed -n "s/^$1=//p" .env | tail -1 | tr -d "\"' \r"
+}
+
+# This install's stack name (#204): every container, network and volume it
+# creates starts with it.
+STACK=$(env_value RSM_STACK)
+STACK=${STACK:-reforger}
+
+# Where this install's setup files come from: the release it runs. A pinned
+# MANAGER_VERSION=vX.Y.Z gets that release's files — a newer compose file can
+# need a newer image (v0.65.0's Docker gate lives in the image). 'latest' is
+# built from main, so it gets main's. RSM_REF overrides both.
+files_ref() {
+    if [ -n "${RSM_REF:-}" ]; then printf '%s' "$RSM_REF"; return; fi
+    v=$(env_value MANAGER_VERSION)
+    case "$v" in
+        v[0-9]*) printf '%s' "$v" ;;
+        *) printf 'main' ;;
+    esac
+}
+RAW="https://raw.githubusercontent.com/$REPO/$(files_ref)"
 
 usage() {
     cat <<EOF
@@ -41,6 +65,7 @@ Reforger Server Manager
 
 Install folder : $RSM_DIR
 Compose file   : $RSM_COMPOSE
+Stack          : $STACK
 EOF
 }
 
@@ -123,19 +148,19 @@ check_setup_files() {
     rm -rf "$tmp"; trap - EXIT
 }
 
-# Docker Engine 28 is the first that can take the Docker API network off the
-# host (gateway mode 'isolated', v0.64.1). An older engine rejects the compose
-# file (27) or silently ignores the setting (26 and before).
+# Docker Engine 26 is the first that can mount one folder of a volume, which is
+# how each game server mounts its own folder since v0.65.0. An older engine
+# would mount the whole volume, so the Docker gate refuses and servers cannot
+# start. Unreadable version: say nothing rather than guess.
 check_docker_engine() {
     v=$(docker version --format '{{.Server.Version}}' 2>/dev/null) || v=''
     case "${v%%.*}" in
-        ''|*[!0-9]*) return 0 ;;  # unreadable: say nothing rather than guess
+        ''|*[!0-9]*) return 0 ;;
     esac
-    if [ "${v%%.*}" -lt 28 ]; then
+    if [ "${v%%.*}" -lt 26 ]; then
         echo
-        echo "  WARNING: Docker Engine $v is older than 28.0, the first version that"
-        echo "  can keep the Docker API off the host network. The compose file relies"
-        echo "  on it. Update Docker (then run 'rsm restart'):"
+        echo "  WARNING: Docker Engine $v is older than 26.0, which this release needs"
+        echo "  to start game servers. Update Docker (then run 'rsm restart'):"
         echo "    curl -fsSL https://get.docker.com | sh"
     fi
 }
@@ -147,10 +172,24 @@ apply_compose_change() {
     echo
     echo "  The new compose file takes effect when the stack is recreated."
     if have_tty && [ "$(ask_tty '  Recreate it now (game servers stop briefly; auto-start ones come back)? [y/N] ')" = "y" ]; then
-        dc down && dc up -d
+        # The compose file binds its volumes to these folders; they must exist.
+        mkdir -p data serverfiles/stable serverfiles/experimental
+        dc down && remove_legacy_network && dc up -d
     else
         echo "  Do it later with:  sudo rsm restart"
     fi
+}
+
+# Compose files before v0.65.0 put the manager and a socket proxy on a network
+# of their own. The Docker gate needs none, and `down` only removes networks the
+# current file names, so that one would linger. `rm` refuses while anything is
+# still attached, so this never pulls a network out from under a container.
+remove_legacy_network() {
+    if [ "$STACK" = "reforger" ] && docker network inspect reforger-docker-api >/dev/null 2>&1; then
+        docker network rm reforger-docker-api >/dev/null 2>&1 &&
+            echo "  Removed the old reforger-docker-api network (no longer used)."
+    fi
+    return 0
 }
 
 # `rsm` itself only ever arrived with an installer run, so a fix to it reached
@@ -186,7 +225,7 @@ case "${1:-}" in
     logs)
         shift
         # Default to the manager; the game servers are separate containers and
-        # are read through the GUI (or `docker logs reforger-instance-<id>`).
+        # are read through the GUI (or `docker logs <stack>-instance-<id>`).
         if [ $# -eq 0 ]; then dc logs -f --tail 200 manager; else dc logs -f --tail 200 "$@"; fi
         ;;
     update)
