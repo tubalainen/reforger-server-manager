@@ -64,8 +64,9 @@ services:
   # thus anyone who reaches the GUI) root-equivalent control of the host. This
   # proxy holds the socket instead and only forwards the API sections the
   # manager actually uses; everything else — exec, build, volume create, swarm,
-  # secrets, configs, plugins, system — is denied. It is never published, so it
-  # is reachable only by the manager over the internal reforger-net.
+  # secrets, configs, plugins, system — is denied. It is never published and
+  # sits only on the isolated docker-api network below, so nothing but the
+  # manager can reach it — not the host, and not the game servers.
   #
   # NOTE: this shrinks the socket's attack surface but does not remove the
   # daemon's inherent power to create containers with host bind mounts, so the
@@ -127,12 +128,19 @@ services:
 networks:
   reforger-net:
     name: reforger-net
-  # Manager <-> socket proxy only. 'internal' means no route off the host, so
-  # the Docker API endpoint is unreachable from anywhere else, including the
-  # game server containers that attach to reforger-net.
+  # Manager <-> socket proxy only. 'internal' alone is NOT enough: Docker still
+  # gives an internal network's bridge an address on the host, and the host can
+  # reach every container on it. The game servers run with host networking
+  # (#150), so network-wise they ARE the host — a Workshop mod could otherwise
+  # reach the Docker API through the proxy. Gateway mode 'isolated' removes
+  # that host-side address, so only the containers on this network can talk to
+  # each other. Needs Docker Engine 28.0 or newer (v0.64.1).
   docker-api:
     name: reforger-docker-api
     internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+      com.docker.network.bridge.gateway_mode_ipv6: isolated
   # Manager <-> the optional Ollama service only. Game servers are never on
   # it (they run untrusted Workshop mods), and it is not 'internal' because
   # Ollama has to reach the internet to download models.

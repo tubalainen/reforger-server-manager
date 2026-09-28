@@ -34,6 +34,19 @@ async function loadUpdates() {
   }
 }
 
+// Problems with the installation itself that everyone signed in should see, above
+// every page — e.g. a Docker API the game servers can reach (v0.64.1). Not
+// dismissible: each one goes away only when the machine is actually fixed.
+const warnings = ref([])
+async function loadWarnings() {
+  if (route.meta.public) return
+  try {
+    warnings.value = (await api('/api/system/warnings')).warnings
+  } catch {
+    /* transient; keep what we had */
+  }
+}
+
 let updatePoll = null
 onMounted(async () => {
   try {
@@ -42,8 +55,12 @@ onMounted(async () => {
     /* ignore */
   }
   loadUpdates()
+  loadWarnings()
   // The check itself runs once a day on the server; a minute is plenty to notice it.
-  updatePoll = setInterval(loadUpdates, 60000)
+  updatePoll = setInterval(() => {
+    loadUpdates()
+    loadWarnings()
+  }, 60000)
 })
 onUnmounted(() => clearInterval(updatePoll))
 </script>
@@ -108,6 +125,19 @@ onUnmounted(() => clearInterval(updatePoll))
     </nav>
 
     <main class="rsm-main">
+      <div v-if="warnings.length" class="container">
+        <div
+          v-for="w in warnings"
+          :key="w.id"
+          class="alert mb-3"
+          :class="`alert-${w.severity || 'warning'}`"
+          role="alert"
+        >
+          <div class="fw-semibold">{{ w.title }}</div>
+          <div class="small mt-1">{{ w.detail }}</div>
+          <div v-if="w.action" class="small mt-1">{{ w.action }}</div>
+        </div>
+      </div>
       <router-view />
     </main>
   </div>
