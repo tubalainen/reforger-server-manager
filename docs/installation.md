@@ -11,6 +11,7 @@ This guide covers Linux, public VPS, and Windows installations, plus networking,
 | [Linux at home or on a LAN](#linux-at-home-or-on-a-lan) | A machine on your own network | `http://localhost:7780` |
 | [Linux on a public VPS](#linux-on-a-public-vps) | A rented server with a domain | `https://your-domain` |
 | [Windows 10 or 11](#windows-10-or-11) | Docker Desktop on a PC | `http://localhost:7780` |
+| [A second manager on the same machine](#several-installs-on-one-machine) | Another team, next to an install that already runs (Linux) | `http://localhost:7781` |
 
 ## Security
 
@@ -157,37 +158,94 @@ Do not install Docker Engine inside a WSL distribution for this project. WSL NAT
 
 ## Several installs on one machine
 
-One machine can run several complete, independent installs — one per team, say. Each is a **stack**: its own manager, Docker gate, game servers, data and server files, and its own GUI login. Every container, network and volume a stack creates starts with its name, `RSM_STACK` in `.env`. A single install keeps the default name, `reforger`, which is also every name an install had before v0.65.0.
+**To add another Reforger Server Manager next to one that already runs on the machine** — for a second team, say — set up a second *stack*. Each stack is a complete, independent install: its own manager, Docker gate, game servers, data, server files and GUI login. Every container, network and volume a stack creates starts with its name, `RSM_STACK` in `.env`. The first install keeps the default name, `reforger`.
 
-Each manager sees and controls only its own stack: another team's servers, networks and folders do not exist as far as it can tell, and it cannot stop, remove or start them.
+Each manager sees and controls only its own stack. The other team's servers, networks and folders do not exist as far as it can tell, and it cannot start, stop or remove them.
 
-On Linux, add a second stack by hand, next to the first:
+This is Linux only for now, and it is done by hand: `rsm` and the installers look after the first install only. On Windows, and on a VPS with the Caddy setup (only one stack can hold ports 80 and 443), keep to one install per machine for now. Tooling for several stacks is planned in [#204](https://github.com/tubalainen/reforger-server-manager/issues/204).
+
+### Before you start
+
+- **The first install must run v0.65.0 or newer, with the v0.65.0 compose file.** An older manager does not know about stacks, so it would treat the second stack's servers as its own. Check: `docker ps` lists a `reforger-docker-gate` container, and the first GUI shows no yellow *"compose file is older than v0.65.0"* banner. If it does, update the first install first ([Updating setup files](#updating-setup-files)).
+- Docker Engine 26 or newer (`docker version --format '{{.Server.Version}}'`).
+- About 10 GB of disk per server branch: each stack downloads its own server files.
+
+### 1. Create its folder and files
+
+Pick a name for the stack: lower-case letters, digits and underscores, no dashes (`team2`, `milsim_eu`). The folder name is free.
 
 ```bash
-mkdir -p /opt/rsm-team2 && cd /opt/rsm-team2
-mkdir -p data serverfiles/stable serverfiles/experimental
-curl -fsSLO https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/docker-compose.yaml
-curl -fsSL https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/.env.example -o .env
+sudo mkdir -p /opt/rsm-team2 && cd /opt/rsm-team2
+sudo mkdir -p data serverfiles/stable serverfiles/experimental
+sudo curl -fsSLO https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/docker-compose.yaml
+sudo curl -fsSL https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/.env.example -o .env
 ```
 
-In its `.env`, set a strong `ADMIN_PASSWORD` and a `SESSION_SECRET` (`openssl rand -hex 32`), and give it settings no other stack on the machine uses:
+### 2. Give it its own name, ports and password
+
+Edit `.env` (`sudo nano .env`) and **change** these lines, which are already in the file, rather than adding new ones:
 
 ```dotenv
 RSM_STACK=team2
-COMPOSE_PROJECT_NAME=team2
 WEB_PORT=7781
 GAME_PORT_RANGE=2101-2120
 A2S_PORT_RANGE=17877-17896
 RCON_PORT_RANGE=20099-20118
+ADMIN_PASSWORD=<a long, unique password>
+SESSION_SECRET=<output of: openssl rand -hex 32>
 ```
 
-Then `docker compose pull && docker compose up -d`, and open its game and A2S ranges in the firewall. Each stack downloads its own server files (about 10 GB per branch).
+Then add this line, so Docker Compose never mixes the two installs up:
 
-Good to know:
+```dotenv
+COMPOSE_PROJECT_NAME=team2
+```
 
-- `rsm` and the installers manage one install per machine for now; run a second stack's `docker compose` commands from its own folder. Tooling for several stacks is planned ([#204](https://github.com/tubalainen/reforger-server-manager/issues/204)).
-- On Windows, keep to one install per machine for now.
-- The stacks share the machine's network. On Linux the game servers use host networking, so port ranges must not overlap, and a game server can reach whatever listens on the host — including other stacks' GUI login pages on `localhost`. Keep every GUI password strong.
+No two stacks on the machine may share a `WEB_PORT` or overlap in any port range. The first install uses the defaults: `7780`, `2001-2020`, `17777-17796` and `19999-20018`. Copy any other setting you changed for the first install, such as `PUBLIC_ADDRESS` or `WEB_BIND`. As everywhere in `.env`, write a literal `$` in a password as `$$`.
+
+### 3. Start it and open its ports
+
+```bash
+cd /opt/rsm-team2
+sudo docker compose pull
+sudo docker compose up -d
+```
+
+Open its game and A2S ranges in the firewall (and forward them on your router, as for the first install):
+
+```bash
+sudo ufw allow 2101:2120/udp
+sudo ufw allow 17877:17896/udp
+```
+
+The second GUI is at `http://localhost:7781` (or the address its `WEB_BIND` allows), with user `admin` and the password from its `.env`. Give that login to the second team; they need nothing else.
+
+### Running it day to day
+
+`rsm` only drives the first install, so run the second one's commands from its own folder:
+
+```bash
+cd /opt/rsm-team2
+sudo docker compose ps                                  # status
+sudo docker compose logs -f --tail 200 manager          # manager log
+sudo docker compose pull && sudo docker compose up -d   # update to the newest image
+sudo docker compose down                                # stop it and its game servers
+sudo docker compose up -d                               # start it again
+```
+
+When the release notes say the compose file changed, download it again into this folder (step 1's `curl` line), then run `docker compose down` and `docker compose up -d`.
+
+To remove the stack and **everything it stored** (its templates, saves and server files):
+
+```bash
+cd /opt/rsm-team2 && sudo docker compose down
+sudo docker volume rm team2-data team2-serverfiles-stable team2-serverfiles-experimental team2-docker-gate
+cd / && sudo rm -rf /opt/rsm-team2
+```
+
+### Good to know
+
+- The stacks share the machine's network. On Linux the game servers use host networking, so port ranges must not overlap, and a game server can reach whatever listens on the host, including the other stacks' GUI login pages on `localhost`. Keep every GUI password strong.
 - Whoever administers the machine (shell or `sudo` access) still controls every stack; the separation is between the teams' GUIs.
 
 ## Networking and firewalls
