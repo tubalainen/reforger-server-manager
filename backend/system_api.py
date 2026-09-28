@@ -5,11 +5,13 @@ Players reach an instance over UDP on its game port (join) and its A2S port
 (server browser). RCON and the web GUI are deliberately absent: neither should
 ever face the internet.
 """
+import asyncio
+
 from fastapi import APIRouter, Depends
 
 import auth
 import config
-from services import docker_service
+from services import docker_service, instance_service
 
 router = APIRouter(prefix="/api/system", tags=["system"])
 
@@ -72,4 +74,7 @@ async def network(_user: str = Depends(auth.require_session)):
             "windows": windows_firewall_command(s.game_port_range, s.a2s_port_range),
             "linux": linux_firewall_command(s.game_port_range, s.a2s_port_range),
         },
+        # Ports set before v0.66.0 outside these ranges: they keep working, but
+        # the firewall command above does not open them (#204).
+        "outside_ranges": await asyncio.to_thread(instance_service.ports_outside_ranges),
     }
