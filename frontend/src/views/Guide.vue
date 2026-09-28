@@ -311,8 +311,8 @@ const faq = [
        names the exact cause. The fix is on the machine, not in the GUI: whoever manages it
        runs sudo rsm update and accepts the new compose file and the restart it offers; by
        hand, download the new compose file, then docker compose down and docker compose
-       up -d. Since v0.65.0 the compose file gives Docker access no network at all, so this
-       works on any Docker version. The banner goes away on its own once the stack is fixed.`,
+       up -d. Since v0.65.0 the compose file gives Docker access no network at all. The
+       banner goes away on its own once the stack is fixed.`,
   },
   {
     q: 'What does the yellow "compose file is older than v0.65.0" banner mean?',
@@ -324,6 +324,17 @@ const faq = [
        it the same way as any compose change: sudo rsm update (accept the new compose file
        and the restart), or by hand docker compose down and docker compose up -d with the
        new file; on Windows, re-run the installer. The banner clears once it is done.`,
+  },
+  {
+    q: 'What does the red "Docker Engine … is too old" banner mean?',
+    a: `Since v0.65.0 each server mounts only its own folder of this install's data volume —
+       a volume subpath, which Docker opens with symbolic links refused, so nothing can
+       steer a server's mount into the rest of the machine. Docker Engine 26 (Docker
+       Desktop 4.29) is the first that can do that; an older one would mount the whole
+       volume, so the manager's Docker gate refuses and servers, downloads and clean-ups
+       fail until Docker is updated. Whoever manages the machine updates it: on Linux
+       curl -fsSL https://get.docker.com | sudo sh upgrades an existing install; on
+       Windows, update Docker Desktop.`,
   },
   {
     q: 'Why is the web GUI only reachable on localhost?',

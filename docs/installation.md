@@ -19,10 +19,11 @@ The manager can create and control containers, so its login should be treated li
 The supplied stack does not mount the Docker socket into the manager. Since v0.65.0 a small **Docker gate** holds it instead: its own container, with no network at all, that the manager reaches over a socket in a volume only the two of them share. The gate passes on only what the manager needs, and only for its own install:
 
 - the manager sees and controls only the containers it created — another install's servers do not exist as far as it can tell;
-- containers may only be created from the two images named in `.env`, with the install's name and label, never privileged or in the host's process or user namespaces, and mounting nothing but the install's own data and server-file folders;
+- containers may only be created from the two images named in `.env`, with the install's name and label, never privileged or in the host's process or user namespaces;
+- a container may mount only the install's own data and server-file volumes, never a host folder by its path. A server mounts just its own folder of the data volume as a *volume subpath*, which Docker opens with symbolic links refused, so a link planted in a folder cannot lead the mount anywhere else. This needs **Docker Engine 26 or newer** (Docker Desktop 4.29 or newer);
 - exec, image builds, volumes, swarm, secrets, plugins and the rest of the Docker API are refused.
 
-Manager-created containers also use `no-new-privileges`. Docker access is still powerful: the gate keeps a manager to its own slice of the machine, but it is not a sandbox for a manager that has itself been taken over, so these controls do not make a public, unencrypted GUI safe. If the GUI shows a yellow *"compose file is older than v0.65.0"* or a red *"game servers can reach the Docker API"* banner, follow [Updating setup files](#updating-setup-files).
+Manager-created containers also use `no-new-privileges`. Docker access is still powerful. Even a manager that has been taken over stays within its own containers, images and volumes, but it can still run code in its own game servers, and on Linux those share the host's network. These controls do not make a public, unencrypted GUI safe. If the GUI shows a yellow *"compose file is older than v0.65.0"* or a red *"game servers can reach the Docker API"* banner, follow [Updating setup files](#updating-setup-files).
 
 The application also enforces safer exposed defaults:
 
@@ -38,16 +39,17 @@ The application also enforces safer exposed defaults:
 curl -fsSL https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/scripts/linux/install-local.sh | sudo sh
 ```
 
-The installer checks for Docker (it offers to install it), generates a strong GUI password, optionally configures the firewall, and starts the stack. Save the password printed at the end, then open `http://localhost:7780`.
+The installer checks for Docker (Engine 26 or newer — it offers to install or upgrade it), generates a strong GUI password, optionally configures the firewall, and starts the stack. Save the password printed at the end, then open `http://localhost:7780`.
 
 Update later with `rsm update`. Check the [release notes](https://github.com/tubalainen/reforger-server-manager/releases) first for breaking changes or manual steps.
 
 ### Manual Linux setup
 
-Only `docker-compose.yaml` and `.env` are required:
+Only `docker-compose.yaml` and `.env` are required, plus Docker Engine 26 or newer (`docker version` shows it). Create the `data` and `serverfiles` folders first: the compose file hands them to Docker as volumes and expects them to exist.
 
 ```bash
 mkdir reforger-server-manager && cd reforger-server-manager
+mkdir -p data serverfiles/stable serverfiles/experimental
 curl -fsSLO https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/docker-compose.yaml
 curl -fsSL https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/.env.example -o .env
 # Edit .env and set ADMIN_PASSWORD and SESSION_SECRET.
@@ -56,13 +58,14 @@ docker compose pull
 docker compose up -d
 ```
 
-The application creates `data/` and `serverfiles/` on first run and fixes their ownership before dropping to its unprivileged user. The GUI binds to `127.0.0.1` by default. For remote use, place nginx or Caddy with TLS in front of it. Setting `WEB_BIND=0.0.0.0` exposes it directly and is not recommended.
+The application fixes the ownership of `data/` on first run before dropping to its unprivileged user. The GUI binds to `127.0.0.1` by default. For remote use, place nginx or Caddy with TLS in front of it. Setting `WEB_BIND=0.0.0.0` exposes it directly and is not recommended.
 
 To update a manual installation, refresh the compose file before pulling the images, then recreate the stack:
 
 ```bash
 cd /path/to/your/install
 curl -fsSLO https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/docker-compose.yaml
+mkdir -p data serverfiles/stable serverfiles/experimental
 docker compose pull
 docker compose down
 docker compose up -d --remove-orphans
@@ -162,6 +165,7 @@ On Linux, add a second stack by hand, next to the first:
 
 ```bash
 mkdir -p /opt/rsm-team2 && cd /opt/rsm-team2
+mkdir -p data serverfiles/stable serverfiles/experimental
 curl -fsSLO https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/docker-compose.yaml
 curl -fsSL https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/.env.example -o .env
 ```

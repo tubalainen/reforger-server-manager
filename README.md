@@ -49,6 +49,8 @@ powershell -ExecutionPolicy Bypass -File $installer
 > [!IMPORTANT]
 > The GUI can control Docker containers and should be treated like host-level access. Use a strong password, never expose port `7780` directly to the internet, and use HTTPS for remote access. The VPS installer configures HTTPS through Caddy.
 
+Linux needs Docker Engine 26 or newer (Windows: Docker Desktop 4.29 or newer); the Linux installers check it and offer to upgrade.
+
 Players connect through UDP game ports, not the web UI. The default ranges are `2001-2020` and `17777-17796`; forward only the ports assigned to your servers. Never forward the GUI or RCON ports. See [Networking and firewalls](docs/installation.md#networking-and-firewalls).
 
 ### First run

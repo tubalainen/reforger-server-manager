@@ -182,8 +182,8 @@ This is *inherent* to what the tool does, so it cannot be removed — but it can
 > (`reforger-manager.stack`), so a manager sees and controls only its own stack's containers;
 > `containers/create` held to the two configured images, the stack's name prefix, forced
 > stack labels, no `Privileged`/`CapAdd`/devices/host or container namespaces/sysctls/other
-> runtimes, host networking for the game-server image only, bind mounts only under the stack's
-> own data and server-file folders (read off the gate's own mounts), named volumes refused;
+> runtimes, host networking for the game-server image only, mounts only of the stack's own
+> named volumes (see #206 below), never a host folder by path;
 > `update` held to the restart policy; `docker info` stripped of host-wide counts. Every
 > object it checks is first held to exact field spellings from an allowlist, because the
 > daemon decodes JSON field names case-insensitively (`privileged` is `Privileged` to it). It
@@ -193,14 +193,27 @@ This is *inherent* to what the tool does, so it cannot be removed — but it can
 > `HostConfig`. That closes the residual risk above for everything that merely *reaches* the
 > Docker API.
 >
-> **Residual risk:** the bind check is a check on the path, and the daemon resolves symlinks
-> when it mounts — later, at container start. The manager can write its own folders, so code
-> running *inside a manager* could plant a symlink there and have the daemon follow it out.
-> The gate is therefore a boundary against everything outside a manager (game servers and
-> their mods, other stacks, local users) and against manager bugs, but not a sandbox for a
-> manager that has been taken over: the GUI login stays host-root-equivalent and R2/R3 still
-> apply. The race-free fix is to mount through Docker volume **subpaths**, where the daemon
-> opens each path component without following symlinks — tracked as #206.
+> **Mounts — #206, in the same release.** A first cut checked bind mounts by path. The daemon
+> resolves a bind source later — at container start, and again on its own restarts — and
+> follows symbolic links, so code running inside a manager could plant a link in its own
+> folder and have the daemon follow it out. Nothing mounts a host folder any more: the data
+> and server files are named volumes (on Linux bound to the same `data/` and `serverfiles/`
+> folders), and a server mounts just its own folder of one as a **volume subpath**. The daemon
+> opens a subpath with `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)` and bind-mounts the
+> descriptor it opened (moby `daemon/volume/safepath`), so there is nothing to race. The gate
+> allows only the stack's own volumes (named after the stack), a plain relative subpath, no
+> `DriverConfig` (a missing volume named in a mount is *created* with it, and the local
+> driver's options can bind any folder), and subpaths only on a daemon with API 1.45 or newer
+> (Docker Engine 26) — an older daemon ignores the field and mounts the whole volume. A
+> container made before v0.65.0 that mounts host folders is not started, restarted, killed
+> or updated through the gate again; the manager recreates it. The CI job `gate-e2e` shows
+> the daemon refusing a subpath that is a symbolic link to `/`.
+>
+> **Residual risk:** a manager that has been taken over is kept to its own containers,
+> images and volumes, but it can run code in its own game servers, and on Linux those use
+> host networking (#150) — so it reaches whatever listens on the host's network, as a local
+> process would. It can also fill the disk its volumes live on. The GUI login therefore
+> stays sensitive, and R2/R3 still apply.
 
 ---
 
