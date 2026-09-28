@@ -24,7 +24,7 @@ The supplied stack does not mount the Docker socket into the manager. Since v0.6
 - a container may mount only the install's own data and server-file volumes, never a host folder by its path. A server mounts just its own folder of the data volume as a *volume subpath*, which Docker opens with symbolic links refused, so a link planted in a folder cannot lead the mount anywhere else. This needs **Docker Engine 26 or newer** (Docker Desktop 4.29 or newer);
 - exec, image builds, volumes, swarm, secrets, plugins and the rest of the Docker API are refused.
 
-Manager-created containers also use `no-new-privileges`. Docker access is still powerful. Even a manager that has been taken over stays within its own containers, images and volumes, but it can still run code in its own game servers, and on Linux those share the host's network. These controls do not make a public, unencrypted GUI safe. If the GUI shows a yellow *"compose file is older than v0.65.0"* or a red *"game servers can reach the Docker API"* banner, follow [Updating setup files](#updating-setup-files).
+Manager-created containers also use `no-new-privileges`. The [security review](security-review.md) records every finding and what was done about it. Docker access is still powerful. Even a manager that has been taken over stays within its own containers, images and volumes, but it can still run code in its own game servers, and on Linux those share the host's network. These controls do not make a public, unencrypted GUI safe. If the GUI shows a yellow *"compose file is older than v0.65.0"* or a red *"game servers can reach the Docker API"* banner, follow [Updating setup files](#updating-setup-files).
 
 The application also enforces safer exposed defaults:
 
