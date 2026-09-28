@@ -91,6 +91,7 @@ async def _crash_monitor():
     prune old logs (hourly). Waits the daemon out rather than giving up on it."""
     ticks = 0
     steamcmd_cleaned = False
+    exposure_checked = False
     while True:
         try:
             if await asyncio.to_thread(docker_service.ping):
@@ -100,6 +101,13 @@ async def _crash_monitor():
                         docker_service.remove_exited, docker_service.ROLE_STEAMCMD
                     )
                     steamcmd_cleaned = True
+                if not exposure_checked:
+                    # Say it in the log too, not only in the GUI (v0.64.1). Asked
+                    # again each pass until the answer is certain.
+                    warning = await asyncio.to_thread(docker_service.docker_api_exposure)
+                    exposure_checked = docker_service.exposure_known()
+                    if warning:
+                        logger.error("SECURITY: %s %s", warning["detail"], warning["action"])
                 # Recover crashed servers, and bring auto_start ones back after a
                 # reboot / the #113 shutdown that removed their containers.
                 await asyncio.to_thread(instance_service.reconcile_and_recover)

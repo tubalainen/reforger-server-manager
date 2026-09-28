@@ -48,3 +48,19 @@ def test_is_docker_desktop(monkeypatch, operating_system, expected):
         docker_service, "daemon_info", lambda: {"OperatingSystem": operating_system}
     )
     assert docker_service.is_docker_desktop() is expected
+
+
+def test_warnings_require_login(client):
+    assert client.get("/api/system/warnings").status_code == 401
+
+
+def test_warnings_lists_the_docker_api_exposure(logged_in, monkeypatch):
+    warning = {"id": "docker_api_exposed", "severity": "danger", "title": "t",
+               "detail": "d", "action": "a"}
+    monkeypatch.setattr(docker_service, "docker_api_exposure", lambda: warning)
+    assert logged_in.get("/api/system/warnings").json() == {"warnings": [warning]}
+
+
+def test_warnings_empty_when_the_install_is_fine(logged_in, monkeypatch):
+    monkeypatch.setattr(docker_service, "docker_api_exposure", lambda: None)
+    assert logged_in.get("/api/system/warnings").json() == {"warnings": []}

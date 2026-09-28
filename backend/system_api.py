@@ -37,6 +37,20 @@ def linux_firewall_command(game: tuple[int, int], a2s: tuple[int, int]) -> str:
     )
 
 
+@router.get("/warnings")
+def warnings(_user: str = Depends(auth.require_session)):
+    """Problems with this installation that every GUI user should see.
+
+    A list, so later checks can join it; the SPA shows each one as a banner above
+    every page. Plain `def`: the checks talk to Docker and run in the threadpool.
+    """
+    found = []
+    exposure = docker_service.docker_api_exposure()
+    if exposure:
+        found.append(exposure)
+    return {"warnings": found}
+
+
 @router.get("/network")
 async def network(_user: str = Depends(auth.require_session)):
     s = config.settings

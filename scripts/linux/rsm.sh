@@ -69,6 +69,7 @@ have_tty() { (exec < /dev/tty) 2>/dev/null; }
 #   * compose file — diffed against the current release; refreshing is offered,
 #     and the old file is kept as a .bak first.
 check_setup_files() {
+    check_docker_engine
     tmp=$(mktemp -d) || return 0
     trap 'rm -rf "$tmp"' EXIT
 
@@ -112,6 +113,7 @@ check_setup_files() {
             cp "$RSM_COMPOSE" "$backup"
             cp "$tmp/compose" "$RSM_COMPOSE"
             echo "  Replaced. Previous file kept as $backup"
+            compose_replaced=1
         else
             echo "  Left as-is. Refresh it later with:"
             echo "    curl -fsSL $RAW/$RSM_COMPOSE -o $RSM_DIR/$RSM_COMPOSE"
@@ -119,6 +121,36 @@ check_setup_files() {
     fi
 
     rm -rf "$tmp"; trap - EXIT
+}
+
+# Docker Engine 28 is the first that can take the Docker API network off the
+# host (gateway mode 'isolated', v0.64.1). An older engine rejects the compose
+# file (27) or silently ignores the setting (26 and before).
+check_docker_engine() {
+    v=$(docker version --format '{{.Server.Version}}' 2>/dev/null) || v=''
+    case "${v%%.*}" in
+        ''|*[!0-9]*) return 0 ;;  # unreadable: say nothing rather than guess
+    esac
+    if [ "${v%%.*}" -lt 28 ]; then
+        echo
+        echo "  WARNING: Docker Engine $v is older than 28.0, the first version that"
+        echo "  can keep the Docker API off the host network. The compose file relies"
+        echo "  on it. Update Docker (then run 'rsm restart'):"
+        echo "    curl -fsSL https://get.docker.com | sh"
+    fi
+}
+
+# A new compose file changes nothing until the stack is recreated: a plain
+# `up -d` does not rebuild a network whose options changed. `down` first.
+apply_compose_change() {
+    [ "${compose_replaced:-0}" = "1" ] || return 0
+    echo
+    echo "  The new compose file takes effect when the stack is recreated."
+    if have_tty && [ "$(ask_tty '  Recreate it now (game servers stop briefly; auto-start ones come back)? [y/N] ')" = "y" ]; then
+        dc down && dc up -d
+    else
+        echo "  Do it later with:  sudo rsm restart"
+    fi
 }
 
 # `rsm` itself only ever arrived with an installer run, so a fix to it reached
@@ -165,11 +197,13 @@ case "${1:-}" in
         echo
         echo "Checking your setup files against this release..."
         check_setup_files
+        apply_compose_change
         self_update
         ;;
     check)
         echo "Checking your setup files against this release..."
         check_setup_files
+        apply_compose_change
         ;;
     config)
         "${EDITOR:-nano}" .env

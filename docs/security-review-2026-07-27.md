@@ -147,6 +147,29 @@ This is *inherent* to what the tool does, so it cannot be removed — but it can
 > host level (ops change, tracked separately), and keep following R2/R3 (auth + TLS + no
 > direct exposure). Net effect: meaningfully reduced blast radius; the GUI must still be
 > treated as host-root and kept off the open internet.
+>
+> **Follow-up fix — 2026-09-28 (v0.64.1; host networking had reopened the path).** Since
+> v0.45.2 (#150) the game servers on Linux run with **host networking**, so network-wise they
+> *are* the host. `internal: true` does not keep the host out: Docker still assigns an internal
+> network's bridge an address on the host, and the host may talk to any container on it
+> directly. Confirmed on a real install (Docker Engine 29.7.2) —
+> `docker run --rm --network host curlimages/curl http://<proxy-ip>:2375/version` answered.
+> So a game server, and any Workshop mod script in it that can make HTTP calls, could reach
+> the proxy, which allows `containers/create` — the R1 escalation again. Any local user account
+> on the host could too, without being in the `docker` group. Windows / Docker Desktop was
+> not affected (game servers stay on a bridge network inside Docker's VM).
+>
+> Fix: the `docker-api` network in `docker-compose.yaml` and `docker-compose.vps.yaml` now sets
+> `com.docker.network.bridge.gateway_mode_ipv4/ipv6: isolated` (Docker Engine **28.0+**), which
+> gives the bridge no host-side address; the manager and the proxy still reach each other. The
+> new compose file only helps once the stack is **recreated** (`down` then `up`), and an image
+> pull never delivers it, so the manager now checks its own setup
+> (`docker_service.docker_api_exposure()`): host-networked servers + a TCP proxy whose network
+> is not isolated (or an engine older than 28) → an error in the log and a non-dismissible red
+> banner on every page (`GET /api/system/warnings`). The Linux installers refuse an engine
+> older than 28 unless upgraded, and `rsm check`/`rsm update` warn about one and offer to
+> recreate the stack after replacing the compose file. The structural fix — a Docker gate on a
+> unix socket with no network at all — is planned with #204.
 
 ---
 

@@ -18,6 +18,8 @@ The manager can create and control containers, so its login should be treated li
 
 The supplied stack does not mount the Docker socket directly into the manager. A least-privilege proxy exposes only required operations, and manager-created containers use `no-new-privileges`. Docker access is still powerful, so these controls do not make a public, unencrypted GUI safe.
 
+On Linux the proxy's network is created in Docker's `isolated` gateway mode, so neither the host nor the game servers — which use host networking — can reach it; only the manager can. That needs **Docker Engine 28 or newer**. Installs from before v0.64.1 were missing it: if the GUI shows a red *"game servers can reach the Docker API"* banner, follow [Updating setup files](#updating-setup-files).
+
 The application also enforces safer exposed defaults:
 
 - When bound beyond `127.0.0.1`, it refuses to start with the example password.
@@ -32,13 +34,13 @@ The application also enforces safer exposed defaults:
 curl -fsSL https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/scripts/linux/install-local.sh | sudo sh
 ```
 
-The installer checks for Docker, offers to install it, generates a strong GUI password, optionally configures the firewall, and starts the stack. Save the password printed at the end, then open `http://localhost:7780`.
+The installer checks for Docker (Engine 28 or newer — it offers to install or upgrade it), generates a strong GUI password, optionally configures the firewall, and starts the stack. Save the password printed at the end, then open `http://localhost:7780`.
 
 Update later with `rsm update`. Check the [release notes](https://github.com/tubalainen/reforger-server-manager/releases) first for breaking changes or manual steps.
 
 ### Manual Linux setup
 
-Only `docker-compose.yaml` and `.env` are required:
+Only `docker-compose.yaml` and `.env` are required, plus Docker Engine 28 or newer (`docker version` shows it):
 
 ```bash
 mkdir reforger-server-manager && cd reforger-server-manager
@@ -52,16 +54,17 @@ docker compose up -d
 
 The application creates `data/` and `serverfiles/` on first run and fixes their ownership before dropping to its unprivileged user. The GUI binds to `127.0.0.1` by default. For remote use, place nginx or Caddy with TLS in front of it. Setting `WEB_BIND=0.0.0.0` exposes it directly and is not recommended.
 
-To update a manual installation, refresh the compose file before pulling the images:
+To update a manual installation, refresh the compose file before pulling the images, then recreate the stack:
 
 ```bash
 cd /path/to/your/install
 curl -fsSLO https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/docker-compose.yaml
 docker compose pull
+docker compose down
 docker compose up -d --remove-orphans
 ```
 
-Your `.env` is not overwritten. An upgrade restarts active servers; instances with auto-start return automatically.
+`down` before `up` matters when the compose file changed a network: `up -d` alone keeps the existing network as it is. Your `.env` is not overwritten. An upgrade restarts active servers; instances with auto-start return automatically.
 
 ## Linux on a public VPS
 
@@ -202,8 +205,8 @@ No NVIDIA GPU? Delete the `deploy:` block of the `ollama` service and it runs on
 
 Pulling a new container image does not update `docker-compose.yaml`, `.env.example`, or local helper scripts. Check each release's **Breaking changes** section:
 
-- Managed Linux installations: run `rsm update`.
-- Manual Linux installations: download the current compose file before `docker compose pull`.
+- Managed Linux installations: run `rsm update`. When it offers a new compose file, accept it and let it recreate the stack (or run `rsm restart` later) — a new compose file takes effect only then.
+- Manual Linux installations: download the current compose file before `docker compose pull`, then `docker compose down` and `docker compose up -d`.
 - Windows installations: the start script refreshes helpers; re-run the installer when the compose setup changes.
 
 Installers and update helpers preserve `.env` unless their output explicitly says otherwise.

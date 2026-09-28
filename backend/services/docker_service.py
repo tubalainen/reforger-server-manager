@@ -5,8 +5,11 @@ through the mounted socket. Containers it creates are therefore siblings,
 not children: they attach to the shared compose network, and every bind
 mount handed to the daemon must be expressed as a host path (host_path_for).
 """
+import ipaddress
 import logging
+import os
 import socket
+from urllib.parse import urlsplit
 
 import docker
 from docker.errors import DockerException
@@ -191,3 +194,135 @@ def use_host_network() -> bool:
     if mode == "bridge":
         return False
     return not is_docker_desktop()      # auto
+
+
+# --------------------------------------------------------------------------- #
+# Is the Docker API reachable from the game servers? (v0.64.1)
+# --------------------------------------------------------------------------- #
+# The socket proxy sits on an 'internal' network, which reads as "only the
+# manager can reach it". It is not: Docker gives an internal network's bridge an
+# address ON THE HOST, and the host can reach every container on it. Game
+# servers use host networking (#150), so network-wise they are the host — and
+# they run untrusted Workshop mods as root. Gateway mode 'isolated' (Docker
+# Engine 28+) removes that address. Pulling the image never updates the compose
+# file that sets it, so the manager checks for itself and says so in the GUI.
+GW_MODE_IPV4 = "com.docker.network.bridge.gateway_mode_ipv4"
+GW_MODE_IPV6 = "com.docker.network.bridge.gateway_mode_ipv6"
+ISOLATED_MIN_ENGINE = 28
+
+_exposure: dict | None = None
+_exposure_known = False
+
+
+def _engine_major(version: str) -> int | None:
+    head = str(version or "").split(".", 1)[0]
+    return int(head) if head.isdigit() else None
+
+
+def _proxy_network(proxy_ip: str) -> tuple[str, str] | None:
+    """(name, id) of the manager's own network that the proxy address is on."""
+    me = get_client().containers.get(socket.gethostname())
+    endpoints = (me.attrs.get("NetworkSettings") or {}).get("Networks") or {}
+    target = ipaddress.ip_address(proxy_ip)
+    for name, ep in endpoints.items():
+        ip, prefix = ep.get("IPAddress"), ep.get("IPPrefixLen")
+        if not ip or not prefix:
+            continue
+        if target in ipaddress.ip_network(f"{ip}/{prefix}", strict=False):
+            return name, ep.get("NetworkID") or name
+    return None
+
+
+def _assess_exposure() -> tuple[dict | None, bool]:
+    """(warning or None, whether that answer is certain).
+
+    Only a certain answer may be cached. Anything we cannot read gives no
+    warning at all — a false alarm on a blind read would teach people to ignore
+    the banner — and is asked again next time.
+    """
+    url = urlsplit(os.environ.get("DOCKER_HOST", ""))
+    if url.scheme not in ("tcp", "http", "https") or not url.hostname:
+        # No network proxy: the manager holds a local socket, which no network
+        # path leads to.
+        return None, True
+    info = daemon_info()
+    if not info:
+        return None, False  # daemon not answering yet
+    if not use_host_network():
+        # Bridge-networked servers are not in the host's network namespace.
+        return None, True
+    try:
+        proxy_ip = socket.gethostbyname(url.hostname)
+        found = _proxy_network(proxy_ip)
+        if found is None:
+            return None, False  # a custom setup we cannot map; do not guess
+        name, net_id = found
+        net = get_client().networks.get(net_id).attrs
+        engine = str(get_client().version().get("Version", ""))
+    except (DockerException, OSError, ValueError, AttributeError) as exc:
+        logger.info("Could not check whether the Docker API is exposed: %s", exc)
+        return None, False
+
+    options = net.get("Options") or {}
+    major = _engine_major(engine)
+    refresh = (
+        "Whoever manages this machine should refresh the compose file and recreate "
+        "the stack. With the Linux installer's rsm command: run 'sudo rsm update', "
+        "accept the new compose file, then run 'sudo rsm restart'. Manual installs: "
+        "download the new compose file, then run 'docker compose down' and "
+        "'docker compose up -d'. The v0.64.1 release notes have the details."
+    )
+    if major is not None and major < ISOLATED_MIN_ENGINE:
+        reason = (
+            f"This host runs Docker Engine {engine}; 28.0 is the first version that "
+            f"can take the Docker API network off the host."
+        )
+        action = (
+            "Whoever manages this machine should update Docker Engine to 28 or newer "
+            "first, then apply the v0.64.1 compose file as its release notes describe."
+        )
+    elif not net.get("Internal"):
+        reason = f"The network the manager reaches Docker over ({name}) is not an internal network."
+        action = refresh
+    elif options.get(GW_MODE_IPV4) != "isolated" or (
+        net.get("EnableIPv6") and options.get(GW_MODE_IPV6) != "isolated"
+    ):
+        reason = (
+            f"The network {name} was created by a compose file older than v0.64.1, "
+            f"which leaves it an address on the host."
+        )
+        action = refresh
+    else:
+        return None, True
+
+    return {
+        "id": "docker_api_exposed",
+        "severity": "danger",
+        "title": "Security: the game servers can reach the Docker API",
+        "detail": (
+            "Game servers use host networking, so they — and any Workshop mod running "
+            "in them — can reach the Docker socket proxy, which can create containers "
+            "on this host. " + reason
+        ),
+        "action": action,
+    }, True
+
+
+def exposure_known() -> bool:
+    """True once docker_api_exposure() has a certain answer cached."""
+    return _exposure_known
+
+
+def docker_api_exposure() -> dict | None:
+    """A GUI warning when the Docker API is reachable from the game servers.
+
+    Cached once certain: the answer can only change when the stack is recreated
+    or Docker restarts, and both restart this process.
+    """
+    global _exposure, _exposure_known
+    if _exposure_known:
+        return _exposure
+    warning, certain = _assess_exposure()
+    if certain:
+        _exposure, _exposure_known = warning, True
+    return warning

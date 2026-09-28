@@ -107,9 +107,13 @@ services:
 #                both other networks: a Caddy compromise reaches the GUI (which
 #                still has its own login) and nothing else.
 #   docker-api   manager <-> socket proxy, and nobody else. 'internal' means it
-#                has no route off the host. The game servers run untrusted
-#                Workshop mods as root, so a Docker API they could reach over
-#                the network would be a container escape.
+#                has no route off the host, and gateway mode 'isolated' takes
+#                away the address Docker would otherwise give its bridge ON the
+#                host. That second part matters: the game servers use host
+#                networking (#150), so they reach whatever the host reaches, and
+#                they run untrusted Workshop mods as root — a Docker API they
+#                could reach would be a container escape. Needs Docker Engine
+#                28.0 or newer (v0.64.1).
 #   reforger-net manager <-> the game server containers (the network the manager
 #                attaches each spawned server to).
 networks:
@@ -125,6 +129,9 @@ networks:
   docker-api:
     name: reforger-docker-api
     internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+      com.docker.network.bridge.gateway_mode_ipv6: isolated
   reforger-net:
     name: reforger-net
 

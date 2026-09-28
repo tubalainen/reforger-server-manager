@@ -297,9 +297,21 @@ const faq = [
        own disk — .env is yours (it holds your password) and is never overwritten, and the
        compose file was downloaded once by the installer. So a release that adds a setting
        or rewires the stack needs you to apply that part. rsm update checks both against
-       the release and tells you exactly what differs; the Windows start script reports new
-       settings on launch; by-hand installs should diff their .env against .env.example in
-       the repository. When the notes have no such section, there is nothing to do.`,
+       the release, tells you exactly what differs, and offers to recreate the stack when
+       it replaced the compose file (a new compose file only takes effect after that); the
+       Windows start script reports new settings on launch; by-hand installs should diff
+       their .env against .env.example in the repository. When the notes have no such
+       section, there is nothing to do.`,
+  },
+  {
+    q: 'What does the red "game servers can reach the Docker API" banner mean?',
+    a: `On Linux the game servers use host networking, and on a compose file older than
+       v0.64.1 (or Docker Engine older than 28) that lets them — and any Workshop mod in
+       them — reach the Docker proxy, which can create containers on the host. The banner
+       names the exact cause. The fix is on the machine, not in the GUI: whoever manages it
+       runs sudo rsm update, accepts the new compose file and recreates the stack (sudo rsm
+       restart); by hand, download the new compose file, then docker compose down and
+       docker compose up -d. The banner goes away on its own once the stack is fixed.`,
   },
   {
     q: 'Why is the web GUI only reachable on localhost?',
