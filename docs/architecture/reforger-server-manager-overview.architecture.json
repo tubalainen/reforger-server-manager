@@ -9,12 +9,15 @@
     "output": "reforger-server-manager-overview.html",
     "repository": {
       "url": "https://github.com/tubalainen/reforger-server-manager",
-      "revision": "900806c18d91b7f0126c6fd3e34654b5c4bc5cd4"
+      "revision": "f520583927e3d8e39357de3399fe8eb8e410d947"
     }
   },
   "layout": {
     "mode": "grid",
-    "origin": [55, 65],
+    "origin": [
+      55,
+      65
+    ],
     "cols": 5,
     "gapX": 65,
     "gapY": 105,
@@ -39,9 +42,24 @@
       "row": 1,
       "col": 1,
       "sources": [
-        { "path": "backend/main.py", "line": 1, "end_line": 25, "label": "Application entrypoint" },
-        { "path": "backend/main.py", "line": 179, "end_line": 187, "label": "API routers" },
-        { "path": "frontend/src/router.js", "line": 14, "end_line": 52, "label": "SPA routes" }
+        {
+          "path": "backend/main.py",
+          "line": 150,
+          "end_line": 160,
+          "label": "Application entrypoint"
+        },
+        {
+          "path": "backend/main.py",
+          "line": 216,
+          "end_line": 228,
+          "label": "API routers"
+        },
+        {
+          "path": "frontend/src/router.js",
+          "line": 18,
+          "end_line": 95,
+          "label": "SPA routes"
+        }
       ]
     },
     {
@@ -52,32 +70,74 @@
       "row": 0,
       "col": 1,
       "sources": [
-        { "path": "backend/services/workshop_service.py", "line": 1, "end_line": 8, "label": "Workshop integration" },
-        { "path": "backend/services/workshop_service.py", "line": 168, "end_line": 214, "label": "HTTP metadata access" }
+        {
+          "path": "backend/services/workshop_service.py",
+          "line": 1,
+          "end_line": 8,
+          "label": "Workshop integration"
+        },
+        {
+          "path": "backend/services/workshop_service.py",
+          "line": 168,
+          "end_line": 214,
+          "label": "HTTP metadata access"
+        }
       ]
     },
     {
       "id": "manager_state",
       "type": "database",
       "label": "Manager State",
-      "sublabel": "SQLite + /data",
+      "sublabel": "SQLite in data volume",
       "row": 2,
       "col": 1,
       "sources": [
-        { "path": "backend/models.py", "line": 1, "end_line": 14, "label": "Persistent models" },
-        { "path": "backend/models.py", "line": 168, "end_line": 183, "label": "SQLite engine" }
+        {
+          "path": "backend/models.py",
+          "line": 1,
+          "end_line": 14,
+          "label": "Persistent models"
+        },
+        {
+          "path": "backend/models.py",
+          "line": 173,
+          "end_line": 184,
+          "label": "SQLite engine"
+        },
+        {
+          "path": "docker-compose.yaml",
+          "line": 166,
+          "end_line": 169,
+          "label": "Data volume"
+        }
       ]
     },
     {
-      "id": "docker_proxy",
+      "id": "docker_gate",
       "type": "security",
-      "label": "Docker API Proxy",
-      "sublabel": "Restricted socket access",
+      "label": "Docker Gate",
+      "sublabel": "No network, own stack",
       "row": 1,
       "col": 2,
       "sources": [
-        { "path": "docker-compose.yaml", "line": 55, "end_line": 88, "label": "API allowlist" },
-        { "path": "docker-compose.yaml", "line": 92, "end_line": 100, "label": "Internal network" }
+        {
+          "path": "docker-compose.yaml",
+          "line": 93,
+          "end_line": 113,
+          "label": "Gate service"
+        },
+        {
+          "path": "backend/gate/policy.py",
+          "line": 195,
+          "end_line": 230,
+          "label": "Volume-only mounts"
+        },
+        {
+          "path": "backend/gate/policy.py",
+          "line": 265,
+          "end_line": 320,
+          "label": "Create checks"
+        }
       ]
     },
     {
@@ -88,8 +148,24 @@
       "row": 1,
       "col": 3,
       "sources": [
-        { "path": "backend/services/docker_service.py", "line": 1, "end_line": 40, "label": "Docker SDK boundary" },
-        { "path": "docker-compose.yaml", "line": 18, "end_line": 27, "label": "Proxy connection" }
+        {
+          "path": "backend/services/docker_service.py",
+          "line": 1,
+          "end_line": 40,
+          "label": "Docker SDK boundary"
+        },
+        {
+          "path": "backend/services/docker_service.py",
+          "line": 209,
+          "end_line": 225,
+          "label": "Stack-scoped lookups"
+        },
+        {
+          "path": "docker-compose.yaml",
+          "line": 25,
+          "end_line": 32,
+          "label": "Gate socket"
+        }
       ]
     },
     {
@@ -100,8 +176,18 @@
       "row": 2,
       "col": 3,
       "sources": [
-        { "path": "backend/services/steam_service.py", "line": 225, "end_line": 276, "label": "SteamCMD jobs" },
-        { "path": "docker-compose.yaml", "line": 45, "end_line": 49, "label": "Shared branch files" }
+        {
+          "path": "backend/services/steam_service.py",
+          "line": 249,
+          "end_line": 290,
+          "label": "SteamCMD jobs"
+        },
+        {
+          "path": "docker-compose.yaml",
+          "line": 170,
+          "end_line": 177,
+          "label": "Server-file volumes"
+        }
       ]
     },
     {
@@ -113,9 +199,24 @@
       "row": 1,
       "col": 4,
       "sources": [
-        { "path": "backend/services/instance_service.py", "line": 601, "end_line": 667, "label": "Instance start" },
-        { "path": "backend/services/instance_service.py", "line": 673, "end_line": 729, "label": "Container creation" },
-        { "path": "backend/services/instance_service.py", "line": 1771, "end_line": 1810, "label": "Crash recovery" }
+        {
+          "path": "backend/services/instance_service.py",
+          "line": 663,
+          "end_line": 740,
+          "label": "Instance start"
+        },
+        {
+          "path": "backend/services/instance_service.py",
+          "line": 741,
+          "end_line": 779,
+          "label": "Volume-subpath mounts"
+        },
+        {
+          "path": "backend/services/instance_service.py",
+          "line": 1933,
+          "end_line": 1974,
+          "label": "Crash recovery"
+        }
       ]
     },
     {
@@ -130,21 +231,95 @@
   "boundaries": [
     {
       "kind": "region",
-      "label": "Docker host",
-      "wraps": ["manager_app", "manager_state", "docker_proxy", "docker_daemon", "file_provisioning", "game_servers"],
+      "label": "One stack on the Docker host",
+      "wraps": [
+        "manager_app",
+        "manager_state",
+        "docker_gate",
+        "docker_daemon",
+        "file_provisioning",
+        "game_servers"
+      ],
       "pad": 24
     }
   ],
   "connections": [
-    { "id": "admin_to_manager", "from": "administrator", "to": "manager_app", "label": "web UI", "variant": "emphasis" },
-    { "id": "manager_to_workshop", "from": "manager_app", "to": "workshop", "label": "mod data", "variant": "dashed", "labelAt": [315, 181] },
-    { "id": "manager_to_state", "from": "manager_app", "to": "manager_state", "label": "state", "labelAt": [315, 312] },
-    { "id": "manager_to_proxy", "from": "manager_app", "to": "docker_proxy", "label": "API", "variant": "security" },
-    { "id": "proxy_to_daemon", "from": "docker_proxy", "to": "docker_daemon", "label": "allowlist", "variant": "security" },
-    { "id": "daemon_to_files", "from": "docker_daemon", "to": "file_provisioning", "label": "download", "labelAt": [715, 312] },
-    { "id": "files_to_servers", "from": "file_provisioning", "to": "game_servers", "label": "server files" },
-    { "id": "daemon_to_servers", "from": "docker_daemon", "to": "game_servers", "label": "lifecycle", "variant": "emphasis" },
-    { "id": "players_to_servers", "from": "players", "to": "game_servers", "label": "UDP", "variant": "emphasis", "labelAt": [915, 139] }
+    {
+      "id": "admin_to_manager",
+      "from": "administrator",
+      "to": "manager_app",
+      "label": "web UI",
+      "variant": "emphasis"
+    },
+    {
+      "id": "manager_to_workshop",
+      "from": "manager_app",
+      "to": "workshop",
+      "label": "mod data",
+      "variant": "dashed",
+      "labelAt": [
+        315,
+        181
+      ]
+    },
+    {
+      "id": "manager_to_state",
+      "from": "manager_app",
+      "to": "manager_state",
+      "label": "state",
+      "labelAt": [
+        315,
+        312
+      ]
+    },
+    {
+      "id": "manager_to_gate",
+      "from": "manager_app",
+      "to": "docker_gate",
+      "label": "socket",
+      "variant": "security"
+    },
+    {
+      "id": "gate_to_daemon",
+      "from": "docker_gate",
+      "to": "docker_daemon",
+      "label": "checked",
+      "variant": "security"
+    },
+    {
+      "id": "daemon_to_files",
+      "from": "docker_daemon",
+      "to": "file_provisioning",
+      "label": "download",
+      "labelAt": [
+        715,
+        312
+      ]
+    },
+    {
+      "id": "files_to_servers",
+      "from": "file_provisioning",
+      "to": "game_servers",
+      "label": "volumes"
+    },
+    {
+      "id": "daemon_to_servers",
+      "from": "docker_daemon",
+      "to": "game_servers",
+      "label": "lifecycle",
+      "variant": "emphasis"
+    },
+    {
+      "id": "players_to_servers",
+      "from": "players",
+      "to": "game_servers",
+      "label": "UDP",
+      "variant": "emphasis",
+      "labelAt": [
+        915,
+        139
+      ]
+    }
   ],
   "cards": [
     {
@@ -152,15 +327,15 @@
       "title": "Core design",
       "items": [
         "The manager combines the Vue interface and FastAPI control API.",
-        "Docker creates both download jobs and isolated game-server instances."
+        "Docker runs the download jobs and one container per game server."
       ]
     },
     {
       "dot": "rose",
       "title": "Security boundary",
       "items": [
-        "Only the restricted proxy touches the Docker socket.",
-        "Game servers cannot reach the proxy's internal Docker API network."
+        "Only the Docker gate holds the socket, and it has no network.",
+        "Each stack sees only its own containers and mounts only its own volumes."
       ]
     }
   ]
