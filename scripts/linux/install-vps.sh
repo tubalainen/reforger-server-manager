@@ -19,7 +19,10 @@ REPO=tubalainen/reforger-server-manager
 REF="${RSM_REF:-main}"
 RAW="https://raw.githubusercontent.com/$REPO/$REF"
 INSTALL_DIR="${RSM_DIR:-/opt/reforger-server-manager}"
-CONF=/etc/reforger-server-manager.conf
+# One file per install (stack) that rsm drives (#204); the single file of
+# versions before v0.66.0 is replaced by this install's entry.
+REGISTRY=/etc/reforger-server-manager/stacks
+LEGACY_CONF=/etc/reforger-server-manager.conf
 COMPOSE_FILE=docker-compose.vps.yaml
 
 ASSUME_YES="${RSM_ASSUME_YES:-0}"
@@ -70,6 +73,17 @@ printf '  https://github.com/%s\n' "$REPO"
 step "Checking the system"
 [ "$(uname -s)" = "Linux" ] || die "This installer is for Linux."
 [ "$(id -u)" = "0" ] || die "Please run as root:  curl -fsSL $RAW/scripts/linux/install-vps.sh | sudo sh"
+
+# One install per run of this script. Another team's install next to an existing
+# one goes through 'rsm add-stack' (#204), which gives it its own name and free
+# ports. Re-running for the same folder (to repair or update it) is fine.
+for _conf in "$LEGACY_CONF" "$REGISTRY"/*.conf; do
+    [ -r "$_conf" ] || continue
+    _dir=$( RSM_DIR=''; . "$_conf"; printf '%s' "$RSM_DIR" )
+    if [ -n "$_dir" ] && [ "$_dir" != "$INSTALL_DIR" ] && [ -d "$_dir" ]; then
+        die "This machine already has an install in $_dir. For another team's install next to it, run:  sudo rsm add-stack NAME"
+    fi
+done
 for tool in curl tr head sed; do
     command -v "$tool" >/dev/null 2>&1 || die "Required tool '$tool' is missing. Install it and re-run."
 done
@@ -285,8 +299,11 @@ fi
 step "Installing the 'rsm' command"
 install -m 755 "$INSTALL_DIR/.rsm.sh" /usr/local/bin/rsm
 rm -f "$INSTALL_DIR/.rsm.sh"
-printf 'RSM_DIR=%s\nRSM_COMPOSE=%s\n' "$INSTALL_DIR" "$COMPOSE_FILE" > "$CONF"
-chmod 644 "$CONF"
+STACK_NAME=$(env_val RSM_STACK); STACK_NAME=${STACK_NAME:-reforger}
+mkdir -p "$REGISTRY"
+printf 'RSM_DIR=%s\nRSM_COMPOSE=%s\n' "$INSTALL_DIR" "$COMPOSE_FILE" > "$REGISTRY/$STACK_NAME.conf"
+chmod 644 "$REGISTRY/$STACK_NAME.conf"
+rm -f "$LEGACY_CONF"   # the single-install file of versions before v0.66.0
 say "  /usr/local/bin/rsm  (try: rsm status)"
 
 # --------------------------------------------------------------------------- #
@@ -310,6 +327,8 @@ else
 fi
 say ""
 say "  Manage it with:  rsm start | stop | status | logs | update | config | uninstall"
+say "  Another team on this machine, with its own GUI, ports and data:"
+say "                   sudo rsm add-stack NAME"
 [ -n "$DOMAIN" ] && say "  Watch the certificate being issued:  rsm logs caddy"
 say ""
 printf '%s  ONE MORE FIREWALL — your VPS provider has its own%s\n' "$Y$B" "$N"
