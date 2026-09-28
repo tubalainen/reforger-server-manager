@@ -692,6 +692,10 @@ def start_instance(instance_id: int) -> None:
                 reason = "container security options changed (#150)"
             elif not _container_network_mode_matches(container):
                 reason = "network mode changed (host vs bridge, #150)"
+            elif not docker_service.is_current_stack(container):
+                # Adopted from before stacks existed: give it this stack's label
+                # and name, so the Docker gate lets this manager keep managing it.
+                reason = "created before stacks (v0.65.0, #204)"
             if reason:
                 logger.info("Recreating container for %s: %s", inst.name, reason)
                 try:
@@ -772,16 +776,15 @@ def _create_container(inst: Instance, config_path: Path, launch: "LaunchParams |
 
     return docker_service.get_client().containers.create(
         config.settings.reforger_server_image,
-        name=f"reforger-instance-{inst.id}",
+        name=docker_service.container_name(f"instance-{inst.id}"),
         detach=True,
         environment=environment,
         volumes=volumes,
-        labels={
-            docker_service.LABEL_MANAGED: "true",
+        labels=docker_service.managed_labels(**{
             docker_service.LABEL_ROLE: docker_service.ROLE_INSTANCE,
             docker_service.LABEL_BRANCH: inst.branch,
             docker_service.LABEL_INSTANCE_ID: str(inst.id),
-        },
+        }),
         **net_kwargs,
         restart_policy={"Name": _restart_policy(inst)},
         # Opt-in only. See config.instance_no_new_privileges: applying this to a
@@ -891,7 +894,7 @@ def _purge_instance_dir(instance_id: int) -> None:
             command=["-c", script],
             remove=True,
             volumes={host_root: {"bind": "/idata", "mode": "rw"}},
-            labels={docker_service.LABEL_MANAGED: "true"},
+            labels=docker_service.managed_labels(),
             security_opt=docker_service.SECURITY_OPT,
         )
     except DockerException as exc:
@@ -1462,7 +1465,7 @@ def clear_instance_data(instance_id: int, targets: list[str]) -> dict:
                 command=["-c", script],
                 remove=True,
                 volumes={host_dir: {"bind": "/idata", "mode": "rw"}},
-                labels={docker_service.LABEL_MANAGED: "true"},
+                labels=docker_service.managed_labels(),
                 security_opt=docker_service.SECURITY_OPT,
             )
         except DockerException as exc:

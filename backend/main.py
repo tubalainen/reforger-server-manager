@@ -20,6 +20,7 @@ import mod_templates_api
 import models
 import mods_api
 import serverfiles_api
+import stacks
 import system_api
 import templates_api
 import workshop_api
@@ -38,6 +39,14 @@ async def lifespan(_app: FastAPI):
     logger.info("=" * 60)
     logger.info("%s v%s", config.APP_NAME, config.APP_VERSION)
     logger.info("=" * 60)
+    # The stack name becomes part of container, network and volume names; a bad
+    # one would only fail later, at the first container create (#204).
+    stack_error = stacks.stack_name_error(config.settings.rsm_stack)
+    if stack_error:
+        logger.error(stack_error)
+        raise RuntimeError(f"Refusing to start: {stack_error}")
+    if config.settings.rsm_stack != stacks.DEFAULT_STACK:
+        logger.info("Stack: %s", config.settings.rsm_stack)
     # Fail closed on an insecure, network-exposed configuration (security review
     # R2/R3). Fatal issues only fire when WEB_BIND publishes the GUI beyond
     # localhost, so a local run stays frictionless; an exposed one must either

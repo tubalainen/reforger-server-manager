@@ -157,8 +157,8 @@ class SteamService:
                 config.settings.steamcmd_image,
                 command,
                 detach=True,
-                name=f"reforger-steamcheck-{branch}-{int(time.time())}",
-                labels={docker_service.LABEL_MANAGED: "true"},
+                name=docker_service.container_name(f"steamcheck-{branch}-{int(time.time())}"),
+                labels=docker_service.managed_labels(),
                 security_opt=docker_service.SECURITY_OPT,
             )
         except DockerException as exc:
@@ -195,7 +195,7 @@ class SteamService:
                 command=["-c", "rm -rf /serverfiles/* /serverfiles/.[!.]* 2>/dev/null; true"],
                 remove=True,
                 volumes={host_dir: {"bind": "/serverfiles", "mode": "rw"}},
-                labels={docker_service.LABEL_MANAGED: "true"},
+                labels=docker_service.managed_labels(),
                 security_opt=docker_service.SECURITY_OPT,
             )
         except DockerException as exc:
@@ -262,13 +262,14 @@ class SteamService:
                 entrypoint="/bin/sh",
                 command=["-c", script],
                 detach=True,
-                name=f"reforger-steamcmd-{job.branch}-{int(job.started_at)}",
+                name=docker_service.container_name(
+                    f"steamcmd-{job.branch}-{int(job.started_at)}"
+                ),
                 volumes={host_dir: {"bind": "/serverfiles", "mode": "rw"}},
-                labels={
-                    docker_service.LABEL_MANAGED: "true",
+                labels=docker_service.managed_labels(**{
                     docker_service.LABEL_ROLE: docker_service.ROLE_STEAMCMD,
                     docker_service.LABEL_BRANCH: job.branch,
-                },
+                }),
                 security_opt=docker_service.SECURITY_OPT,
             )
         except DockerException as exc:

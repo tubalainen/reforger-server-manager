@@ -4,6 +4,8 @@ import os
 import secrets
 from dataclasses import dataclass, field
 
+import stacks
+
 APP_NAME = "Reforger Server Manager"
 APP_VERSION = "0.64.1"
 
@@ -138,6 +140,10 @@ class Settings:
     ai_order_url: str = ""
     ai_order_model: str = ""
     ai_order_key: str = ""
+    # Which stack this manager is (#204): the name every container, network and
+    # volume of this install starts with, and the label its containers carry.
+    # 'reforger' — the default — keeps every name an install had before stacks.
+    rsm_stack: str = stacks.DEFAULT_STACK
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -151,7 +157,9 @@ class Settings:
             for o in os.environ.get("ALLOWED_ORIGINS", "").split(",")
             if o.strip()
         )
+        stack = os.environ.get("RSM_STACK", "").strip() or stacks.DEFAULT_STACK
         return cls(
+            rsm_stack=stack,
             trusted_proxies=trusted,
             trusted_proxies_invalid=trusted_bad,
             api_docs=_env_bool("API_DOCS", False),
@@ -178,7 +186,8 @@ class Settings:
             steamcmd_timeout_minutes=int(os.environ.get("STEAMCMD_TIMEOUT_MINUTES", "60")),
             log_retention_days=int(os.environ.get("LOG_RETENTION_DAYS", "14")),
             static_dir=os.environ.get("STATIC_DIR", ""),
-            docker_network=os.environ.get("DOCKER_NETWORK", "reforger-net"),
+            # The compose file passes <stack>-net; the fallback says the same.
+            docker_network=os.environ.get("DOCKER_NETWORK", "").strip() or f"{stack}-net",
             reforger_server_image=os.environ.get(
                 "REFORGER_SERVER_IMAGE", "ghcr.io/acemod/arma-reforger:latest"
             ),

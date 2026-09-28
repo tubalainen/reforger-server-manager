@@ -48,6 +48,11 @@ def warnings(_user: str = Depends(auth.require_session)):
     exposure = docker_service.docker_api_exposure()
     if exposure:
         found.append(exposure)
+    else:
+        # Same fix as the exposure (a newer compose file), so one banner is enough.
+        gate = docker_service.gate_warning()
+        if gate:
+            found.append(gate)
     return {"warnings": found}
 
 

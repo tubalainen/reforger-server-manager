@@ -759,7 +759,7 @@ def restore_backup(
             command=["-c", script],
             remove=True,
             volumes={host_dir: {"bind": "/idata", "mode": "rw"}},
-            labels={docker_service.LABEL_MANAGED: "true"},
+            labels=docker_service.managed_labels(),
             security_opt=docker_service.SECURITY_OPT,
         )
     except DockerException as exc:

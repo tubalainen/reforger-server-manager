@@ -15,10 +15,12 @@ import docker
 from docker.errors import DockerException
 
 import config
+import stacks
 
 logger = logging.getLogger("manager.docker")
 
-LABEL_MANAGED = "reforger-manager.managed"
+LABEL_MANAGED = stacks.LABEL_MANAGED
+LABEL_STACK = stacks.LABEL_STACK
 LABEL_ROLE = "reforger-manager.role"
 LABEL_BRANCH = "reforger-manager.branch"
 LABEL_INSTANCE_ID = "reforger-manager.instance_id"
@@ -113,14 +115,60 @@ def host_path_for(container_path: str) -> str:
     return container_path
 
 
-def find_containers(role: str, status: str | None = None, branch: str | None = None) -> list:
-    filters = {"label": [f"{LABEL_ROLE}={role}"]}
+# --------------------------------------------------------------------------- #
+# This manager's stack (#204)
+# --------------------------------------------------------------------------- #
+# Several managers can share one Docker host. Everything below only ever sees
+# and touches this stack's containers. Behind the Docker gate the daemon's
+# answers are already scoped; the filtering here is the second, independent
+# layer — and the only one for a manager still on an older compose file.
+
+def stack() -> str:
+    return config.settings.rsm_stack
+
+
+def container_name(suffix: str) -> str:
+    """This stack's name for a container: reforger-instance-3, team2-instance-3."""
+    return f"{stack()}-{suffix}"
+
+
+def managed_labels(**extra: str) -> dict:
+    """Labels for a container this manager creates: managed, and this stack's."""
+    return {LABEL_MANAGED: "true", LABEL_STACK: stack(), **extra}
+
+
+def is_mine(container) -> bool:
+    return stacks.owns(getattr(container, "labels", None) or {}, stack())
+
+
+def is_current_stack(container) -> bool:
+    """Carries this stack's label (not merely adopted from before stacks)."""
+    return (getattr(container, "labels", None) or {}).get(LABEL_STACK) == stack()
+
+
+def _scoped_list(label_filters: list[str], status: str | None = None) -> list:
+    """List containers matching the label filters, keeping only this stack's.
+
+    Docker cannot filter on a label being ABSENT, so the default stack — which
+    also adopts containers from before stacks — is filtered here; any other stack
+    asks the daemon for its own label directly and is filtered here too.
+    """
+    filters: dict = {"label": list(label_filters)}
+    if stack() != stacks.DEFAULT_STACK:
+        filters["label"].append(f"{LABEL_STACK}={stack()}")
     if status:
         filters["status"] = status
+    found = get_client().containers.list(all=True, filters=filters)
+    # A stack-labelled container sorts before an adopted one for the same thing.
+    return sorted((c for c in found if is_mine(c)), key=lambda c: not is_current_stack(c))
+
+
+def find_containers(role: str, status: str | None = None, branch: str | None = None) -> list:
+    labels = [f"{LABEL_ROLE}={role}"]
     if branch:
-        filters["label"].append(f"{LABEL_BRANCH}={branch}")
+        labels.append(f"{LABEL_BRANCH}={branch}")
     try:
-        return get_client().containers.list(all=True, filters=filters)
+        return _scoped_list(labels, status)
     except DockerException as exc:
         logger.warning("Container lookup (%s) failed: %s", role, exc)
         return []
@@ -128,9 +176,8 @@ def find_containers(role: str, status: str | None = None, branch: str | None = N
 
 def find_instance_container(instance_id: int):
     """Return the single container for an instance id, or None."""
-    filters = {"label": [f"{LABEL_INSTANCE_ID}={instance_id}"]}
     try:
-        found = get_client().containers.list(all=True, filters=filters)
+        found = _scoped_list([f"{LABEL_INSTANCE_ID}={instance_id}"])
     except DockerException as exc:
         logger.warning("Instance container lookup (%s) failed: %s", instance_id, exc)
         return None
@@ -149,9 +196,7 @@ def instance_containers() -> dict[int, object]:
     handed back are already fresh and need no reload().
     """
     try:
-        containers = get_client().containers.list(
-            all=True, filters={"label": [f"{LABEL_ROLE}={ROLE_INSTANCE}"]}
-        )
+        containers = _scoped_list([f"{LABEL_ROLE}={ROLE_INSTANCE}"])
     except DockerException as exc:
         logger.warning("Instance container listing failed: %s", exc)
         return {}
@@ -159,7 +204,8 @@ def instance_containers() -> dict[int, object]:
     for container in containers:
         raw = (container.labels or {}).get(LABEL_INSTANCE_ID)
         try:
-            by_instance[int(raw)] = container
+            # setdefault: the stack-labelled one sorts first and wins.
+            by_instance.setdefault(int(raw), container)
         except (TypeError, ValueError):
             continue  # a managed container without a usable instance label
     return by_instance
@@ -306,6 +352,85 @@ def _assess_exposure() -> tuple[dict | None, bool]:
         ),
         "action": action,
     }, True
+
+
+# --------------------------------------------------------------------------- #
+# Is Docker reached through this stack's gate? (#204)
+# --------------------------------------------------------------------------- #
+# The gate answers GET /_rsm/gate with a description of itself. The older
+# socket proxy refuses that path and the Docker daemon does not know it, so any
+# other answer means this manager still runs on a pre-v0.65.0 compose file.
+GATE_PATH = "/_rsm/gate"
+
+_gate: dict | None = None
+_gate_known = False
+
+
+def gate_info() -> dict | None:
+    """The gate's description of itself ({"gate", "stack", "version"}), or None.
+
+    None when Docker is reached some other way — or when that is not known yet
+    (daemon unreachable), which is not cached and is asked again next time.
+    """
+    global _gate, _gate_known
+    if _gate_known:
+        return _gate
+    if not daemon_info():
+        return None
+    try:
+        api = get_client().api
+        resp = api.get(api.base_url + GATE_PATH, timeout=5)
+        body = resp.json() if resp.status_code == 200 else {}
+    except (DockerException, OSError, ValueError, AttributeError) as exc:
+        logger.info("Could not ask whether Docker is reached through the gate: %s", exc)
+        return None
+    _gate = body if isinstance(body, dict) and body.get("gate") == "rsm" else None
+    _gate_known = True
+    return _gate
+
+
+def gate_warning() -> dict | None:
+    """A GUI warning when this manager is not behind its own stack's gate."""
+    info = gate_info()
+    if not _gate_known:
+        return None  # not known yet: never warn on a blind read
+    if info is None:
+        return {
+            "id": "docker_gate_missing",
+            "severity": "warning",
+            "title": "This manager's compose file is older than v0.65.0",
+            "detail": (
+                "It reaches Docker without its Docker gate, so nothing below the "
+                "manager itself keeps it to its own containers and folders. Since "
+                "v0.65.0 every install runs its own gate, which is also what lets "
+                "several managers share one machine safely."
+            ),
+            "action": (
+                "Whoever manages this machine should refresh the compose file and "
+                "recreate the stack. With the Linux installer's rsm command: run "
+                "'sudo rsm update' and accept the new compose file. Manual installs: "
+                "download the new compose file, then run 'docker compose down' and "
+                "'docker compose up -d'. Windows: re-run the installer. The v0.65.0 "
+                "release notes have the details."
+            ),
+        }
+    if info.get("stack") != stack():
+        return {
+            "id": "docker_gate_stack_mismatch",
+            "severity": "danger",
+            "title": "This manager and its Docker gate disagree about the stack",
+            "detail": (
+                f"The manager is stack '{stack()}' but its gate serves stack "
+                f"'{info.get('stack')}', so the gate stamps new servers with the "
+                f"other name and this manager will not find them again."
+            ),
+            "action": (
+                "Whoever manages this machine should make RSM_STACK the same for both "
+                "(it comes from .env; the compose file passes it to both containers), "
+                "then recreate the stack."
+            ),
+        }
+    return None
 
 
 def exposure_known() -> bool:

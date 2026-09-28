@@ -298,7 +298,7 @@ def _ollama_hint(message: str, model: str) -> str:
     if "(404)" in message and "not found" in message:
         return (
             f"{message} — the model has not been downloaded into Ollama yet. "
-            f"Run: docker exec reforger-ollama ollama pull {model} "
+            f"Run: docker exec {config.settings.rsm_stack}-ollama ollama pull {model} "
             f"(or 'ollama pull {model}' where Ollama is installed)."
         )
     if message.startswith("Could not reach"):
