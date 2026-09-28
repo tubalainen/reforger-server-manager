@@ -139,6 +139,21 @@ refused("a name in another stack", lambda: client.containers.create(
     HELPER, name=f"{OTHER}-sneaky"))
 refused("join another stack's network", lambda: client.containers.create(
     HELPER, network=f"{OTHER}-net"))
+
+# Docker reads JSON field names case-insensitively, and older daemons read a
+# HostConfig from the top level of the body: raw requests the SDK never makes.
+def raw_create(body: dict) -> int:
+    return client.api._post_json(client.api._url("/containers/create"), data=body).status_code
+
+
+for label, body in (
+    ("'privileged' in lower case", {"Image": HELPER, "HostConfig": {"privileged": True}}),
+    ("'binds' in lower case", {"Image": HELPER, "HostConfig": {"binds": ["/:/host"]}}),
+    ("host settings at the top level", {"Image": HELPER, "Privileged": True, "Binds": ["/:/host"]}),
+):
+    status = raw_create(body)
+    check(f"create with {label} -> {status}", status == 403)
+
 refused("create a volume", lambda: client.volumes.create(f"{STACK}-e2e"))
 build = client.api.post(client.api._url("/build"), data=b"")
 check(f"build an image -> {build.status_code}", build.status_code == 403)

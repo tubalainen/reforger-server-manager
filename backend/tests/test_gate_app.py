@@ -157,6 +157,23 @@ def test_a_refused_create_never_reaches_docker(gate):
     assert not fake.asked("POST", "/containers/create")
 
 
+def test_a_start_never_carries_a_body(gate):
+    # Older daemons still read a HostConfig from a start request's body.
+    client, fake = gate
+    resp = client.post(f"{V}/containers/team2-instance-1/start",
+                       json={"Privileged": True, "Binds": ["/:/host"]})
+    assert resp.status_code == 204
+    sent = next(c for m, p, c in fake.seen if p.endswith("/containers/team2-instance-1/start"))
+    assert sent == b""
+
+
+def test_a_pull_naming_its_tag_twice_is_refused(gate):
+    client, fake = gate
+    resp = client.post(f"{V}/images/create?fromImage=steamcmd/steamcmd:evil&tag=latest")
+    assert resp.status_code == 403
+    assert not fake.asked("POST", "/images/create")
+
+
 def test_a_create_that_is_not_json_is_refused(gate):
     client, _ = gate
     resp = client.post(f"{V}/containers/create", content=b"{not json",

@@ -59,8 +59,10 @@ def create_app(scope: policy.Scope, upstream: httpx.AsyncClient) -> Starlette:
         headers = _headers(request.headers, _FORWARD_REQUEST)
         if body is None:
             body = await request.body()
-        else:
+        elif body:
             headers["content-type"] = "application/json"
+        else:
+            headers.pop("content-type", None)
         url = UPSTREAM + raw_path + (f"?{query}" if query else "")
         req = upstream.build_request(request.method, url, headers=headers, content=body)
         resp = await upstream.send(req, stream=stream)
@@ -121,7 +123,10 @@ def create_app(scope: policy.Scope, upstream: httpx.AsyncClient) -> Starlette:
         if route.action == "update":
             body = policy.check_update(await json_body(request))
             return await forward(request, raw_path, query, body=json.dumps(body).encode())
-        return await forward(request, raw_path, query, stream=route.action in ("logs", "stats"))
+        # Nothing else takes a body — and a start request's body is where older
+        # daemons still read a HostConfig from, past every check on create.
+        return await forward(request, raw_path, query, body=b"",
+                             stream=route.action in ("logs", "stats"))
 
     async def other(request: Request, route: policy.Route, raw_path: str,
                     query: str) -> Response:
@@ -134,7 +139,7 @@ def create_app(scope: policy.Scope, upstream: httpx.AsyncClient) -> Starlette:
         if route.kind == "pull":
             image = params.get("fromImage", [""])[0]
             tag = params.get("tag", [None])[0]
-            if not image or not policy.image_allowed(scope, image, tag):
+            if not image or not policy.pull_allowed(scope, image, tag):
                 raise policy.Denied(f"pulling {image!r} is not allowed for this stack")
             return await forward(request, raw_path, query, stream=True)
         if route.kind == "image":

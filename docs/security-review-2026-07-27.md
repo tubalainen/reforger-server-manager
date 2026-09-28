@@ -184,8 +184,14 @@ This is *inherent* to what the tool does, so it cannot be removed — but it can
 > stack labels, no `Privileged`/`CapAdd`/devices/host or container namespaces/sysctls/other
 > runtimes, host networking for the game-server image only, bind mounts only under the stack's
 > own data and server-file folders (read off the gate's own mounts), named volumes refused;
-> `update` held to the restart policy; `docker info` stripped of host-wide counts. That closes
-> the residual risk above for everything that merely *reaches* the Docker API.
+> `update` held to the restart policy; `docker info` stripped of host-wide counts. Every
+> object it checks is first held to exact field spellings from an allowlist, because the
+> daemon decodes JSON field names case-insensitively (`privileged` is `Privileged` to it). It
+> always sends an explicit `HostConfig`, since older daemons fall back to host settings at the
+> top level of the body without one. It strips the body from start/stop/remove requests, and
+> it refuses API versions below 1.24, which still let a start request carry its own
+> `HostConfig`. That closes the residual risk above for everything that merely *reaches* the
+> Docker API.
 >
 > **Residual risk:** the bind check is a check on the path, and the daemon resolves symlinks
 > when it mounts — later, at container start. The manager can write its own folders, so code

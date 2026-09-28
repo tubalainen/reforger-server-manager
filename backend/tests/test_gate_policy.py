@@ -221,6 +221,116 @@ def test_malformed_bodies_are_refused():
         policy.check_create({"Image": SERVER, "Labels": ["a=b"]}, None, SCOPE)
 
 
+# Docker (Go) reads JSON field names case-insensitively: every one of these is a
+# privileged container, or the host's root, to the daemon.
+@pytest.mark.parametrize("body", [
+    {"Image": SERVER, "HostConfig": {"privileged": True}},
+    {"Image": SERVER, "HostConfig": {"PRIVILEGED": True}},
+    {"Image": SERVER, "HostConfig": {"binds": ["/:/host"]}},
+    {"Image": SERVER, "HostConfig": {"Binds": [], "binds": ["/:/host"]}},
+    {"Image": SERVER, "HostConfig": {"pidMode": "host"}},
+    {"Image": SERVER, "hostConfig": {"Privileged": True}},
+    {"Image": SERVER, "image": "alpine:latest"},
+    {"Image": SERVER, "HostConfig": {"Mounts": [
+        {"Type": "bind", "Source": "/opt/rsm-team2/data/x", "source": "/", "Target": "/x"}]}},
+    {"Image": SERVER, "HostConfig": {"RestartPolicy": {"name": "always"}}},
+    {"Image": SERVER, "NetworkingConfig": {"endpointsConfig": {"team1-net": {}}}},
+])
+def test_other_spellings_of_a_field_are_refused(body):
+    with pytest.raises(Denied, match="is not allowed"):
+        policy.check_create(body, None, SCOPE)
+
+
+@pytest.mark.parametrize("field", [
+    {"Privileged": True},
+    {"Binds": ["/:/host"]},
+    {"PidMode": "host"},
+    {"Memory": 1},  # merged in by older daemons even when HostConfig is present
+])
+def test_host_settings_at_the_top_level_are_refused(field):
+    # Older daemons read a HostConfig from the top level of the body when the
+    # HostConfig key is missing.
+    with pytest.raises(Denied, match="is not allowed"):
+        policy.check_create({"Image": SERVER, **field}, None, SCOPE)
+
+
+def test_a_missing_host_config_is_sent_explicitly():
+    body = policy.check_create({"Image": HELPER}, None, SCOPE)
+    assert body["HostConfig"] == {}
+
+
+@pytest.mark.parametrize("host", [
+    {"Devices": [{"PathOnHost": "/dev/sda"}]},
+    {"Cgroup": "container:team1-instance-1"},
+    {"LogConfig": {"Type": "syslog"}},
+    {"OomScoreAdj": -1000},
+    {"Isolation": "hyperv"},
+])
+def test_settings_the_manager_never_uses_are_refused(host):
+    with pytest.raises(Denied, match="is not allowed"):
+        policy.check_create(_instance_body(**host), None, SCOPE)
+
+
+def test_the_bodies_the_sdk_really_sends_pass():
+    """What docker-py puts on the wire for the manager's own create calls."""
+    import docker
+    from docker.api.client import APIClient
+
+    sent = []
+
+    def capture(_self, url, data, **_kw):
+        sent.append(data)
+        raise RuntimeError("captured")
+
+    client = docker.DockerClient(base_url="tcp://127.0.0.1:1", version="1.47")
+    calls = [
+        # A game server with host networking (instance_service._create_container).
+        dict(image=SERVER, name="team2-instance-1", detach=True, environment={"A": "1"},
+             volumes={"/opt/rsm-team2/serverfiles/stable": {"bind": "/reforger", "mode": "rw"},
+                      "/opt/rsm-team2/data/instances/1/profile": {"bind": "/p", "mode": "rw"}},
+             labels={"reforger-manager.role": "instance"}, network_mode="host",
+             restart_policy={"Name": "unless-stopped"}),
+        # ...and with bridge networking and published ports (Docker Desktop).
+        dict(image=SERVER, name="team2-instance-2", detach=True, network="team2-net",
+             ports={"2001/udp": 2001, "17777/udp": 17777}, restart_policy={"Name": "no"},
+             security_opt=["no-new-privileges:true"]),
+        # A SteamCMD helper (steam_service) and a clean-up helper (instance_service).
+        dict(image=HELPER, entrypoint="/bin/sh", command=["-c", "true"], detach=True,
+             name="team2-steamcmd-stable-1",
+             volumes={"/opt/rsm-team2/serverfiles/stable": {"bind": "/serverfiles", "mode": "rw"}},
+             labels={}, security_opt=["no-new-privileges:true"]),
+    ]
+    original = APIClient._post_json
+    APIClient._post_json = capture
+    try:
+        for kwargs in calls:
+            with pytest.raises(RuntimeError, match="captured"):
+                client.containers.create(**kwargs)
+    finally:
+        APIClient._post_json = original
+    assert len(sent) == len(calls)
+    for body in sent:
+        policy.check_create(body, None, SCOPE)
+
+
+def test_old_api_versions_are_refused():
+    with pytest.raises(Denied, match="older than this gate accepts"):
+        policy.route("POST", "/v1.23/containers/abc/start")
+    assert policy.route("POST", "/v1.24/containers/abc/start").kind == "container"
+
+
+def test_a_pull_may_not_name_its_tag_twice():
+    assert policy.pull_allowed(SCOPE, "steamcmd/steamcmd", "latest")
+    assert policy.pull_allowed(SCOPE, "steamcmd/steamcmd:latest", None)
+    assert not policy.pull_allowed(SCOPE, "steamcmd/steamcmd:evil", "latest")
+    assert not policy.pull_allowed(SCOPE, "steamcmd/steamcmd@sha256:" + "b" * 64, "latest")
+
+
+def test_update_restart_policy_spelling():
+    with pytest.raises(Denied):
+        policy.check_update({"RestartPolicy": {"name": "always"}})
+
+
 # --------------------------------------------------------------------------- #
 # update, images, filtering
 # --------------------------------------------------------------------------- #
