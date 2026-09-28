@@ -200,7 +200,7 @@ This is *inherent* to what the tool does, so it cannot be removed — but it can
 > their mods, other stacks, local users) and against manager bugs, but not a sandbox for a
 > manager that has been taken over: the GUI login stays host-root-equivalent and R2/R3 still
 > apply. The race-free fix is to mount through Docker volume **subpaths**, where the daemon
-> opens each path component without following symlinks — tracked as a follow-up.
+> opens each path component without following symlinks — tracked as #206.
 
 ---
 
