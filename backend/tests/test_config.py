@@ -105,3 +105,17 @@ def test_settings_matches_gate_signature():
     # Guard against the helper drifting from the real dataclass fields.
     real = {f.name for f in dataclasses.fields(config.Settings)}
     assert real == set(_settings().__dict__)
+
+
+def test_a_password_set_in_the_gui_is_the_one_judged():
+    # #204: .env may still hold the example password, but it is no longer the
+    # password in effect — the GUI one is, and it was held to 12+ characters.
+    s = _settings(web_bind="0.0.0.0", admin_password=config.EXAMPLE_PASSWORD)
+    fatal, _ = config.startup_security_issues(s)
+    assert fatal
+    fatal, warnings = config.startup_security_issues(s, gui_password_set=True)
+    assert not fatal and not any("ADMIN_PASSWORD" in w for w in warnings)
+    # The username still has to be there.
+    s = _settings(web_bind="0.0.0.0", admin_username="")
+    fatal, _ = config.startup_security_issues(s, gui_password_set=True)
+    assert fatal

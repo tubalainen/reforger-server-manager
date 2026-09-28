@@ -211,13 +211,19 @@ def web_exposed(s: Settings) -> bool:
     return s.web_bind.strip().lower() not in _LOOPBACK_BINDS
 
 
-def startup_security_issues(s: Settings) -> tuple[list[str], list[str]]:
+def startup_security_issues(
+    s: Settings, gui_password_set: bool = False
+) -> tuple[list[str], list[str]]:
     """Return (fatal, warnings) for the current configuration.
 
     Fatal issues abort startup; they are only raised when the GUI looks
     network-exposed (a non-loopback WEB_BIND), so a localhost-only run stays
     frictionless while an exposed one must be deliberately safe. This is the
     single source of truth for both the startup gate and its tests.
+
+    `gui_password_set`: the password was changed in the GUI (#204), so it — not
+    ADMIN_PASSWORD — is the one in effect, and it is judged instead: it was
+    held to the minimum length when it was set, so there is nothing to object to.
     """
     fatal: list[str] = []
     warnings: list[str] = []
@@ -238,6 +244,13 @@ def startup_security_issues(s: Settings) -> tuple[list[str], list[str]]:
                 "AUTH_ENABLED=false — the built-in login is DISABLED. A reverse "
                 "proxy in front MUST enforce authentication; the GUI controls Docker."
             )
+    elif gui_password_set:
+        if not s.admin_username:
+            msg = (
+                "ADMIN_USERNAME is empty — login cannot work. If the value contains "
+                "a '$', write it twice ('$$') in .env: Docker Compose eats a single '$'."
+            )
+            (fatal if exposed else warnings).append(msg)
     else:
         if not s.admin_username or not s.admin_password:
             # Usually a '$' in .env that Compose swallowed, leaving it empty (#140).
@@ -248,7 +261,8 @@ def startup_security_issues(s: Settings) -> tuple[list[str], list[str]]:
             )
             (fatal if exposed else warnings).append(msg)
         elif s.admin_password == EXAMPLE_PASSWORD:
-            base = "ADMIN_PASSWORD is still the example value — change it in .env."
+            base = ("ADMIN_PASSWORD is still the example value — change it in .env, "
+                    "or sign in and set one under System › Account.")
             if exposed:
                 fatal.append(
                     base + f" Refusing to start with it while the GUI is exposed "

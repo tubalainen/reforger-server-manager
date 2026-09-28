@@ -51,7 +51,12 @@ async def lifespan(_app: FastAPI):
     # R2/R3). Fatal issues only fire when WEB_BIND publishes the GUI beyond
     # localhost, so a local run stays frictionless; an exposed one must either
     # have a real login or an explicit AUTH_DELEGATED_ACK that a proxy owns auth.
-    fatal, warnings = config.startup_security_issues(config.settings)
+    # The database first: a password changed in the GUI (#204) lives there, and
+    # it is the password in effect that the check has to judge.
+    models.init_db()
+    fatal, warnings = config.startup_security_issues(
+        config.settings, gui_password_set=auth.gui_password_set()
+    )
     for message in warnings:
         logger.warning(message)
     if fatal:
@@ -62,7 +67,6 @@ async def lifespan(_app: FastAPI):
             "Docker-controlling GUI (see the SECURITY errors above). Fix the "
             "configuration, or bind the GUI to 127.0.0.1."
         )
-    models.init_db()
     # Seed the Mods Overview registry from existing templates so mods that were
     # baked in before the registry existed still show up (#131). Idempotent.
     try:

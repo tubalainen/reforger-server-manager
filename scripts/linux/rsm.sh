@@ -61,6 +61,7 @@ Reforger Server Manager
   rsm update         pull the newest images, restart, and check your setup files
   rsm check          only check .env / the compose file against this release
   rsm config         edit .env (\$EDITOR, default nano), then apply
+  rsm reset-password forget the password set in the GUI; .env's applies again
   rsm uninstall      remove containers; asks before deleting any data
 
 Install folder : $RSM_DIR
@@ -248,6 +249,11 @@ case "${1:-}" in
         "${EDITOR:-nano}" .env
         echo "Applying..."
         dc up -d
+        ;;
+    reset-password)
+        # A team admin who forgot the password they set in the GUI (#204): the
+        # .env password (ADMIN_PASSWORD) becomes the one in effect again.
+        docker exec -u app "$STACK-manager" python manage.py reset-password
         ;;
     uninstall)
         echo "This removes the Reforger Server Manager containers on this host."
