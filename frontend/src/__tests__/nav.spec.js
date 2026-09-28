@@ -13,7 +13,7 @@ function makeRouter() {
     '/library/templates', '/library/templates/new', '/library/templates/:id/edit',
     '/library/mod-lists', '/library/mod-lists/new', '/library/mod-lists/:id/edit',
     '/library/mods',
-    '/system/server-files', '/system/network', '/system/export',
+    '/system/server-files', '/system/network', '/system/export', '/system/account',
     '/help',
   ]
   return createRouter({

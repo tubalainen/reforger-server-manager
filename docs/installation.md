@@ -11,7 +11,7 @@ This guide covers Linux, public VPS, and Windows installations, plus networking,
 | [Linux at home or on a LAN](#linux-at-home-or-on-a-lan) | A machine on your own network | `http://localhost:7780` |
 | [Linux on a public VPS](#linux-on-a-public-vps) | A rented server with a domain | `https://your-domain` |
 | [Windows 10 or 11](#windows-10-or-11) | Docker Desktop on a PC | `http://localhost:7780` |
-| [A second manager on the same machine](#several-installs-on-one-machine) | Another team, next to an install that already runs (Linux) | `http://localhost:7781` |
+| [A second manager on the same machine](#several-installs-on-one-machine) | Another team, next to an install that already runs | `http://localhost:7781` |
 
 ## Security
 
@@ -32,7 +32,8 @@ The application also enforces safer exposed defaults:
 - Disabling built-in login on an exposed bind requires `AUTH_DELEGATED_ACK=true`, confirming that an upstream proxy authenticates every request.
 - Session cookies are marked `Secure` behind HTTPS.
 - Set `TRUSTED_PROXIES` when using a reverse proxy so rate limiting sees the real client address. The VPS installer does this automatically.
-- If a session may have leaked, `POST /api/auth/logout-all` invalidates every active session. Changing the password alone does not invalidate existing sessions.
+- The GUI password can be changed from the GUI, under **System › Account**. It is stored hashed in that install's database and replaces `ADMIN_PASSWORD` from then on; changing it needs the current password, at least 12 characters, and logs out every other session. **Log out everywhere** on the same page ends every session, yours included.
+- A forgotten GUI password is reset by whoever manages the machine: `sudo rsm reset-password` (add `--stack NAME` when there are several), or `docker exec -u app reforger-manager python manage.py reset-password`. The `ADMIN_PASSWORD` in that install's `.env` is then the password again, and everyone is logged out.
 
 ## Linux at home or on a LAN
 
@@ -160,19 +161,50 @@ Do not install Docker Engine inside a WSL distribution for this project. WSL NAT
 
 **To add another Reforger Server Manager next to one that already runs on the machine** — for a second team, say — set up a second *stack*. Each stack is a complete, independent install: its own manager, Docker gate, game servers, data, server files and GUI login. Every container, network and volume a stack creates starts with its name, `RSM_STACK` in `.env`. The first install keeps the default name, `reforger`.
 
-Each manager sees and controls only its own stack. The other team's servers, networks and folders do not exist as far as it can tell, and it cannot start, stop or remove them.
-
-This is Linux only for now, and it is done by hand: `rsm` and the installers look after the first install only. On Windows, and on a VPS with the Caddy setup (only one stack can hold ports 80 and 443), keep to one install per machine for now. Tooling for several stacks is planned in [#204](https://github.com/tubalainen/reforger-server-manager/issues/204).
+Each manager sees and controls only its own stack. The other team's servers, networks and folders do not exist as far as it can tell, and it cannot start, stop or remove them. A team needs nothing but its own GUI login: it changes its password under **System › Account**.
 
 ### Before you start
 
-- **The first install must run v0.65.0 or newer, with the v0.65.0 compose file.** An older manager does not know about stacks, so it would treat the second stack's servers as its own. Check: `docker ps` lists a `reforger-docker-gate` container, and the first GUI shows no yellow *"compose file is older than v0.65.0"* banner. If it does, update the first install first ([Updating setup files](#updating-setup-files)).
-- Docker Engine 26 or newer (`docker version --format '{{.Server.Version}}'`).
+- **Every install already on the machine must run v0.65.0 or newer, with the v0.65.0 compose file.** An older manager does not know about stacks, so it would treat the new stack's servers as its own. `rsm add-stack` checks this and says which install to update first. By hand: `docker ps` lists a `reforger-docker-gate` container, and the first GUI shows no yellow *"compose file is older than v0.65.0"* banner.
+- Docker Engine 26 or newer (Docker Desktop 4.29 or newer on Windows).
 - About 10 GB of disk per server branch: each stack downloads its own server files.
 
-### 1. Create its folder and files
+### Linux: `rsm add-stack`
 
-Pick a name for the stack: lower-case letters, digits and underscores, no dashes (`team2`, `milsim_eu`). The folder name is free.
+```bash
+sudo rsm add-stack team2
+```
+
+The name is lower-case letters, digits and underscores, no dashes (`team2`, `milsim_eu`). `rsm` sets the stack up in `/opt/rsm-team2`, gives it the next free GUI port and UDP ranges, a generated password, and the first install's `PUBLIC_ADDRESS`, time zone and GUI binding. It offers to open the new ranges in `ufw`, starts it, and prints its address and password. Give that login to the team. Options: `--dir DIR`, `--web-port N`, `--bind local|lan`.
+
+With more than one stack, every `rsm` command says which one it is for; `rsm` never guesses whose servers to stop:
+
+```bash
+sudo rsm stacks                      # every stack: GUI port, state, folder
+sudo rsm ports                       # every stack's ports, and any overlap
+sudo rsm status --stack team2
+sudo rsm update --all                # start, stop, restart, status, update and check take --all
+sudo rsm reset-password --stack team2
+sudo rsm remove-stack team2          # asks before deleting its data
+```
+
+On a VPS set up with Caddy, a second stack has no HTTPS front of its own yet, so its GUI stays reachable only from the machine itself (an SSH tunnel). `rsm add-stack` says so and asks first. A shared front for several teams is planned in [#204](https://github.com/tubalainen/reforger-server-manager/issues/204).
+
+### Windows: `install.ps1 -Stack`
+
+Run the installer again with a stack name:
+
+```powershell
+$installer = "$env:TEMP\reforger-install.ps1"
+Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/scripts/windows/install.ps1 -OutFile $installer
+powershell -ExecutionPolicy Bypass -File $installer -Stack team2
+```
+
+It installs into `%USERPROFILE%\ReforgerServerManager-team2`, with the next free GUI port and UDP ranges, its own firewall rule and its own Desktop shortcut, **Reforger Server Manager (team2)**. Start, stop and uninstall it with the scripts in its own folder.
+
+### By hand
+
+Every step `rsm add-stack` takes can be done without it. Create the folder and files:
 
 ```bash
 sudo mkdir -p /opt/rsm-team2 && cd /opt/rsm-team2
@@ -181,66 +213,25 @@ sudo curl -fsSLO https://raw.githubusercontent.com/tubalainen/reforger-server-ma
 sudo curl -fsSL https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/.env.example -o .env
 ```
 
-### 2. Give it its own name, ports and password
-
-Edit `.env` (`sudo nano .env`) and **change** these lines, which are already in the file, rather than adding new ones:
+Edit `.env` (`sudo nano .env`) and **change** these lines, which are already in the file:
 
 ```dotenv
 RSM_STACK=team2
 WEB_PORT=7781
-GAME_PORT_RANGE=2101-2120
-A2S_PORT_RANGE=17877-17896
-RCON_PORT_RANGE=20099-20118
+GAME_PORT_RANGE=2021-2040
+A2S_PORT_RANGE=17797-17816
+RCON_PORT_RANGE=20019-20038
 ADMIN_PASSWORD=<a long, unique password>
 SESSION_SECRET=<output of: openssl rand -hex 32>
 ```
 
-Then add this line, so Docker Compose never mixes the two installs up:
+Then add `COMPOSE_PROJECT_NAME=team2`, so Docker Compose never mixes the two installs up. No two stacks may share a `WEB_PORT` or overlap in any port range; the first install uses the defaults `7780`, `2001-2020`, `17777-17796` and `19999-20018`. Copy any other setting you changed for the first install, such as `PUBLIC_ADDRESS` or `WEB_BIND`. As everywhere in `.env`, write a literal `$` in a password as `$$`.
 
-```dotenv
-COMPOSE_PROJECT_NAME=team2
-```
-
-No two stacks on the machine may share a `WEB_PORT` or overlap in any port range. The first install uses the defaults: `7780`, `2001-2020`, `17777-17796` and `19999-20018`. Copy any other setting you changed for the first install, such as `PUBLIC_ADDRESS` or `WEB_BIND`. As everywhere in `.env`, write a literal `$` in a password as `$$`.
-
-### 3. Start it and open its ports
+Start it with `sudo docker compose pull && sudo docker compose up -d`, open its game and A2S ranges in the firewall (`sudo ufw allow 2021:2040/udp` and `sudo ufw allow 17797:17816/udp`), and forward them on your router. Run its `docker compose` commands from its own folder. To let `rsm` drive it too, register it:
 
 ```bash
-cd /opt/rsm-team2
-sudo docker compose pull
-sudo docker compose up -d
-```
-
-Open its game and A2S ranges in the firewall (and forward them on your router, as for the first install):
-
-```bash
-sudo ufw allow 2101:2120/udp
-sudo ufw allow 17877:17896/udp
-```
-
-The second GUI is at `http://localhost:7781` (or the address its `WEB_BIND` allows), with user `admin` and the password from its `.env`. Give that login to the second team; they need nothing else.
-
-### Running it day to day
-
-`rsm` only drives the first install, so run the second one's commands from its own folder:
-
-```bash
-cd /opt/rsm-team2
-sudo docker compose ps                                  # status
-sudo docker compose logs -f --tail 200 manager          # manager log
-sudo docker compose pull && sudo docker compose up -d   # update to the newest image
-sudo docker compose down                                # stop it and its game servers
-sudo docker compose up -d                               # start it again
-```
-
-When the release notes say the compose file changed, download it again into this folder (step 1's `curl` line), then run `docker compose down` and `docker compose up -d`.
-
-To remove the stack and **everything it stored** (its templates, saves and server files):
-
-```bash
-cd /opt/rsm-team2 && sudo docker compose down
-sudo docker volume rm team2-data team2-serverfiles-stable team2-serverfiles-experimental team2-docker-gate
-cd / && sudo rm -rf /opt/rsm-team2
+echo 'RSM_DIR=/opt/rsm-team2
+RSM_COMPOSE=docker-compose.yaml' | sudo tee /etc/reforger-server-manager/stacks/team2.conf
 ```
 
 ### Good to know

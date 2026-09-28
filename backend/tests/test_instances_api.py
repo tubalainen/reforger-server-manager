@@ -34,20 +34,52 @@ def test_create_with_custom_ports(logged_in):
     tid = _template(logged_in)
     r = logged_in.post("/api/instances", json={
         "name": "custom", "template_id": tid, "branch": "stable",
-        "game_port": 7780, "a2s_port": 7781, "rcon_port": 7782,
+        "game_port": 2010, "a2s_port": 17790, "rcon_port": 20010,
     })
     assert r.status_code == 201
     body = r.json()
-    assert (body["game_port"], body["a2s_port"], body["rcon_port"]) == (7780, 7781, 7782)
+    assert (body["game_port"], body["a2s_port"], body["rcon_port"]) == (2010, 17790, 20010)
+
+
+def test_a_port_outside_the_managers_range_is_refused(logged_in):
+    # #204: the ranges keep several installs on one machine apart.
+    tid = _template(logged_in)
+    r = logged_in.post("/api/instances", json={
+        "name": "outside", "template_id": tid, "game_port": 7780,
+    })
+    assert r.status_code == 409
+    assert "outside this manager's game range 2001-2020" in r.json()["detail"]
+
+
+def test_a_port_set_before_the_ranges_were_enforced_keeps_working(logged_in):
+    from sqlmodel import Session
+
+    import models
+
+    tid = _template(logged_in)
+    iid = logged_in.post("/api/instances", json={"name": "old", "template_id": tid}).json()["id"]
+    with Session(models.get_engine()) as session:  # as a pre-v0.66.0 install left it
+        inst = session.get(models.Instance, iid)
+        inst.game_port = 7780
+        session.add(inst)
+        session.commit()
+
+    # Changing another port leaves the old one alone...
+    r = logged_in.put(f"/api/instances/{iid}/ports", json={"a2s_port": 17790})
+    assert r.status_code == 200, r.text
+    # ...and the Ports & firewall page names it.
+    outside = logged_in.get("/api/system/network").json()["outside_ranges"]
+    assert outside == [{"id": iid, "name": "old", "kind": "game", "port": 7780,
+                        "range": "2001-2020"}]
 
 
 def test_create_custom_port_conflict(logged_in):
     tid = _template(logged_in)
     logged_in.post("/api/instances", json={
-        "name": "a", "template_id": tid, "game_port": 7790, "a2s_port": 7791, "rcon_port": 7792,
+        "name": "a", "template_id": tid, "game_port": 2015, "a2s_port": 17791, "rcon_port": 20015,
     })
     r = logged_in.post("/api/instances", json={
-        "name": "b", "template_id": tid, "game_port": 7790, "a2s_port": 8001, "rcon_port": 8002,
+        "name": "b", "template_id": tid, "game_port": 2015, "a2s_port": 17792, "rcon_port": 20016,
     })
     assert r.status_code == 409
     assert "already used" in r.json()["detail"]

@@ -58,6 +58,20 @@ onMounted(async () => {
         </HelpTip>
       </p>
 
+      <div v-if="net.outside_ranges?.length" class="alert alert-warning py-2 small">
+        <strong>Ports outside these ranges.</strong>
+        These servers were given a port outside this manager's ranges before that was
+        refused (v0.66.0). They keep working, but the command below does not open those
+        ports, and on a machine with several installs they may be another team's:
+        <ul class="mb-1 mt-1">
+          <li v-for="p in net.outside_ranges" :key="`${p.id}-${p.kind}`">
+            <router-link :to="`/servers/${p.id}`">{{ p.name }}</router-link>:
+            {{ p.kind }} port {{ p.port }} (range {{ p.range }})
+          </li>
+        </ul>
+        Move them into the ranges from each server's ports while it is stopped.
+      </div>
+
       <div class="btn-group btn-group-sm mb-2" role="group">
         <button
           class="btn"

@@ -36,7 +36,9 @@
 #>
 [CmdletBinding()]
 param(
-    [string] $InstallDir = (Join-Path $env:USERPROFILE 'ReforgerServerManager'),
+    # Default: the folder this script is in, when it is an install (a second
+    # team's install removes itself, not the first one); else the usual folder.
+    [string] $InstallDir = '',
     [switch] $RemoveData,
     [switch] $RemoveImages,
     [switch] $Yes
@@ -44,6 +46,15 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+
+if (-not $InstallDir) {
+    $selfDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+    if (Test-Path (Join-Path $selfDir 'docker-compose.windows.yaml')) {
+        $InstallDir = $selfDir
+    } else {
+        $InstallDir = Join-Path $env:USERPROFILE 'ReforgerServerManager'
+    }
+}
 
 # The helpers sit next to this script in the install folder; when it is run from
 # %TEMP% on a broken install they are not there, so define the ones we need inline.
@@ -90,6 +101,20 @@ if (Test-Path $commonPath) {
         }
         return 'reforger'
     }
+    function Get-StackLabel {
+        param([string] $Stack)
+        if ($Stack -eq 'reforger') { return '' }
+        return " ($Stack)"
+    }
+    function Get-FirewallRuleName {
+        param([string] $Stack)
+        return 'Arma Reforger (game + A2S)' + (Get-StackLabel -Stack $Stack)
+    }
+    function Get-ShortcutPath {
+        param([string] $Stack)
+        $name = 'Reforger Server Manager' + (Get-StackLabel -Stack $Stack) + '.lnk'
+        return Join-Path ([Environment]::GetFolderPath('Desktop')) $name
+    }
     function Get-StackContainerIds {
         param([string] $Cli, [string] $Stack, [string] $Filter, [switch] $All)
         $psArgs = @('ps', '--filter', $Filter, '--format', '{{.ID}}|{{.Labels}}')
@@ -109,13 +134,22 @@ if (Test-Path $commonPath) {
     }
 }
 
-$RuleName   = 'Arma Reforger (game + A2S)'
-$Shortcut   = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Reforger Server Manager.lnk'
 $ResumeDir  = Join-Path $env:LOCALAPPDATA 'ReforgerServerManager'
 $RunOnceKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce'
 # Everything this install made starts with its stack name (#204); another
 # team's stack on the same machine is left alone.
 $Stack      = Get-StackName -EnvFile (Join-Path $InstallDir '.env')
+$RuleName   = Get-FirewallRuleName -Stack $Stack
+$Shortcut   = Get-ShortcutPath -Stack $Stack
+
+# Other installs on this PC (#204) share the Docker images: those stay.
+$OtherInstalls = @(Get-ChildItem -Path $env:USERPROFILE -Directory -Filter 'ReforgerServerManager*' -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -ne $InstallDir -and (Test-Path (Join-Path $_.FullName 'docker-compose.windows.yaml')) })
+if ($RemoveImages -and $OtherInstalls.Count) {
+    Write-Warn2 ("Other installs on this PC still use the Docker images, so they are kept: " +
+                 ($OtherInstalls.Name -join ', '))
+    $RemoveImages = $false
+}
 $Volumes    = @("$Stack-data", "$Stack-serverfiles-stable", "$Stack-serverfiles-experimental")
 
 Write-Host ''

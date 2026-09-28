@@ -337,6 +337,30 @@ const faq = [
        Windows, update Docker Desktop.`,
   },
   {
+    q: 'How do I change the login password?',
+    a: `Under System › Account: give the current password and the new one (at least 12
+       characters). It takes effect at once and logs out everyone else signed in with the
+       old one; you stay signed in. From then on the password set there is the one, and the
+       ADMIN_PASSWORD in the install's .env no longer works. Log out everywhere, on the same
+       page, ends every session — yours too.`,
+  },
+  {
+    q: 'I forgot the password I set. Now what?',
+    a: `Ask whoever manages this machine. They run sudo rsm reset-password (with
+       --stack NAME when the machine has several installs), or by hand docker exec -u app
+       <stack>-manager python manage.py reset-password. That forgets the password set in the
+       GUI: the ADMIN_PASSWORD from the install's .env works again, and everyone is logged
+       out. Sign in with it and set a new one under System › Account.`,
+  },
+  {
+    q: 'Can two teams run their own manager on one machine?',
+    a: `Yes, since v0.65.0 — each as its own install (a "stack") with its own login, servers,
+       ports and data, and neither can see or touch the other's servers. Whoever manages the
+       machine adds one with sudo rsm add-stack NAME on Linux, or with the Windows installer's
+       -Stack NAME. Each manager's ports must stay inside its own ranges, which is why a port
+       outside them is refused (System › Ports & firewall lists any that were set before).`,
+  },
+  {
     q: 'Why is the web GUI only reachable on localhost?',
     a: `By default the GUI binds to 127.0.0.1 on port 7780 as a safety measure — it
        controls the Docker socket, which is root-equivalent on the host. Reach it through

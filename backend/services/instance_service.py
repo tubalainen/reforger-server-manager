@@ -234,6 +234,26 @@ def _all_instances(session: Session) -> list[Instance]:
     return list(session.exec(select(Instance)).all())
 
 
+def ports_outside_ranges() -> list[dict]:
+    """Servers holding a port outside this manager's ranges (set before v0.66.0).
+
+    They keep working, but on a machine with several installs such a port may
+    belong to another team's range (#204).
+    """
+    s = config.settings
+    kinds = (("game", "game_port", s.game_port_range), ("A2S", "a2s_port", s.a2s_port_range),
+             ("RCON", "rcon_port", s.rcon_port_range))
+    found = []
+    with Session(get_engine()) as session:
+        for inst in _all_instances(session):
+            for kind, attr, (lo, hi) in kinds:
+                port = getattr(inst, attr)
+                if not lo <= port <= hi:
+                    found.append({"id": inst.id, "name": inst.name, "kind": kind,
+                                  "port": port, "range": f"{lo}-{hi}"})
+    return found
+
+
 def used_ports(session: Session, exclude_id: int | None = None) -> tuple[set, set, set]:
     game, a2s, rcon = set(), set(), set()
     for inst in _all_instances(session):
@@ -348,13 +368,29 @@ def create_instance(
     return inst, parked
 
 
-def _resolve_port(kind: str, requested: int | None, used: set[int], rng: tuple[int, int]) -> int:
-    """Validate an explicit port, or auto-lease the first free one in range."""
+def _resolve_port(
+    kind: str, requested: int | None, used: set[int], rng: tuple[int, int],
+    current: int | None = None,
+) -> int:
+    """Validate an explicit port, or auto-lease the first free one in range.
+
+    An explicit port must lie inside this manager's range (#204): the ranges are
+    what keeps several installs on one machine apart, so a port outside them may
+    well be another team's. A server's `current` port is let through as it is —
+    one set before v0.66.0 keeps working (the Ports & firewall page flags it).
+    """
     if requested is not None:
         if not (1 <= requested <= 65535):
             raise InstanceError(f"{kind} port {requested} is out of range")
         if requested in used:
             raise InstanceError(f"{kind} port {requested} is already used by another server")
+        lo, hi = rng
+        if requested != current and not lo <= requested <= hi:
+            raise InstanceError(
+                f"{kind} port {requested} is outside this manager's {kind} range {lo}-{hi}. "
+                f"Pick a port in that range; the range itself is set by whoever manages "
+                f"this machine."
+            )
         return requested
     try:
         return ports.first_free(*rng, used)
@@ -382,15 +418,15 @@ def update_ports(
         g_used, a_used, r_used = used_ports(session, exclude_id=instance_id)
         inst.game_port = _resolve_port(
             "game", game_port if game_port is not None else inst.game_port,
-            g_used, config.settings.game_port_range,
+            g_used, config.settings.game_port_range, current=inst.game_port,
         )
         inst.a2s_port = _resolve_port(
             "A2S", a2s_port if a2s_port is not None else inst.a2s_port,
-            a_used, config.settings.a2s_port_range,
+            a_used, config.settings.a2s_port_range, current=inst.a2s_port,
         )
         inst.rcon_port = _resolve_port(
             "RCON", rcon_port if rcon_port is not None else inst.rcon_port,
-            r_used, config.settings.rcon_port_range,
+            r_used, config.settings.rcon_port_range, current=inst.rcon_port,
         )
         session.add(inst)
         session.commit()

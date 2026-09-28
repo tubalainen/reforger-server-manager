@@ -87,7 +87,8 @@ Port values are assigned per server by the manager. Imported port settings there
 
 ## Access and safety
 
-- Password-based browser authentication with session management and login rate limiting.
+- Password-based browser authentication with session management and login rate limiting; the password can be changed in the GUI (**System › Account**), which logs out every other session.
+- Several independent installs on one machine, one per team, each seeing only its own servers, ports and data (`rsm add-stack`, or the Windows installer's `-Stack`).
 - Fail-closed defaults when the GUI is exposed beyond localhost.
 - A logout-all endpoint for invalidating every active session.
 - Support for trusted reverse proxies and delegated authentication.

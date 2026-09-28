@@ -1,23 +1,32 @@
 """Login, logout and signed-cookie session handling.
 
-Credentials come from .env (ADMIN_USERNAME / ADMIN_PASSWORD). Sessions are
+The username comes from .env (ADMIN_USERNAME). The password is ADMIN_PASSWORD
+from .env until someone changes it in the GUI; from then on a scrypt hash in
+this manager's database is the password, and .env no longer is (#204: team
+admins have only the GUI, never the .env file). Sessions are
 itsdangerous-signed cookies; no server-side session store is needed.
 """
+import asyncio
+import hashlib
 import hmac
 import ipaddress
+import json
 import logging
 import secrets
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from pydantic import BaseModel
+from sqlmodel import Session
 
 import config
+import models
 
 logger = logging.getLogger("manager.auth")
 
@@ -64,6 +73,89 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str
+
+
+# --------------------------------------------------------------------------- #
+# The password in effect: .env, until one is set in the GUI (#204)
+# --------------------------------------------------------------------------- #
+MIN_PASSWORD_LENGTH = 12
+_PASSWORD_KEY = "admin_password"
+# scrypt from the standard library: ~16 MB and a few tens of milliseconds per
+# check — cheap for one login, expensive for anyone holding a stolen hash.
+_SCRYPT = {"n": 2**14, "r": 8, "p": 1}
+
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    digest = hashlib.scrypt(password.encode(), salt=salt, dklen=32, **_SCRYPT)
+    return f"scrypt${_SCRYPT['n']}${_SCRYPT['r']}${_SCRYPT['p']}${salt.hex()}${digest.hex()}"
+
+
+def verify_password(password: str, stored: str) -> bool:
+    try:
+        scheme, n, r, p, salt, digest = stored.split("$")
+        if scheme != "scrypt":
+            return False
+        candidate = hashlib.scrypt(
+            password.encode(), salt=bytes.fromhex(salt), n=int(n), r=int(r), p=int(p),
+            dklen=len(bytes.fromhex(digest)),
+        )
+    except (ValueError, TypeError):
+        return False
+    return hmac.compare_digest(candidate.hex(), digest)
+
+
+def _stored_password() -> dict:
+    """The GUI-set password record ({"hash", "changed_at"}), or {} when unset."""
+    with Session(models.get_engine()) as session:
+        row = session.get(models.AppSetting, _PASSWORD_KEY)
+    try:
+        record = json.loads(row.value) if row else {}
+    except ValueError:
+        return {}
+    return record if isinstance(record, dict) and record.get("hash") else {}
+
+
+def gui_password_set() -> bool:
+    """Has the password been changed in the GUI (so .env's no longer applies)?"""
+    return bool(_stored_password())
+
+
+def password_matches(candidate: str) -> bool:
+    """Is this the password currently in effect?"""
+    stored = _stored_password()
+    if stored:
+        return verify_password(candidate, stored["hash"])
+    expected = config.settings.admin_password
+    return bool(expected) and hmac.compare_digest(candidate.encode(), expected.encode())
+
+
+def set_gui_password(password: str) -> None:
+    now = datetime.now(UTC)
+    record = json.dumps({"hash": hash_password(password), "changed_at": now.isoformat()})
+    with Session(models.get_engine()) as session:
+        row = session.get(models.AppSetting, _PASSWORD_KEY) or models.AppSetting(
+            key=_PASSWORD_KEY)
+        row.value = record
+        row.updated_at = now
+        session.add(row)
+        session.commit()
+
+
+def clear_gui_password() -> bool:
+    """Forget the GUI-set password, so .env's applies again. True if one was set."""
+    with Session(models.get_engine()) as session:
+        row = session.get(models.AppSetting, _PASSWORD_KEY)
+        if row is None:
+            return False
+        session.delete(row)
+        session.commit()
+    return True
 
 
 _SALT_FILE = "session_salt"
@@ -298,28 +390,8 @@ def require_session(request: Request) -> str:
     return username
 
 
-@router.post("/login")
-async def login(body: LoginRequest, request: Request, response: Response):
-    _throttle(request)
+def _issue_session(request: Request, response: Response) -> None:
     cfg = config.settings
-    if not cfg.admin_username or not cfg.admin_password:
-        # Usually a '$' in .env that Docker Compose swallowed (a single '$' is a
-        # variable reference; write it '$$'), which leaves the value empty (#140).
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "ADMIN_USERNAME/ADMIN_PASSWORD not configured. If your value contains "
-                "a '$', write it twice ('$$') in .env — Docker Compose eats a single '$'."
-            ),
-        )
-    user_ok = hmac.compare_digest(body.username.encode(), cfg.admin_username.encode())
-    pass_ok = hmac.compare_digest(body.password.encode(), cfg.admin_password.encode())
-    if not (user_ok and pass_ok):
-        # Logged so a brute-force attempt is visible in the container log at all
-        # — there was previously no record that a login had ever failed.
-        logger.warning("Failed login attempt from %s", client_ip(request))
-        raise HTTPException(status_code=401, detail="Invalid username or password")
-    note_login_success(request)
     response.set_cookie(
         COOKIE_NAME,
         _serializer().dumps(cfg.admin_username),
@@ -333,6 +405,32 @@ async def login(body: LoginRequest, request: Request, response: Response):
         # default, where a Secure cookie would simply never be sent (#88, R3).
         secure=_cookie_should_be_secure(request),
     )
+
+
+@router.post("/login")
+async def login(body: LoginRequest, request: Request, response: Response):
+    _throttle(request)
+    cfg = config.settings
+    gui_password = await asyncio.to_thread(gui_password_set)
+    if not cfg.admin_username or not (cfg.admin_password or gui_password):
+        # Usually a '$' in .env that Docker Compose swallowed (a single '$' is a
+        # variable reference; write it '$$'), which leaves the value empty (#140).
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "ADMIN_USERNAME/ADMIN_PASSWORD not configured. If your value contains "
+                "a '$', write it twice ('$$') in .env — Docker Compose eats a single '$'."
+            ),
+        )
+    user_ok = hmac.compare_digest(body.username.encode(), cfg.admin_username.encode())
+    pass_ok = await asyncio.to_thread(password_matches, body.password)
+    if not (user_ok and pass_ok):
+        # Logged so a brute-force attempt is visible in the container log at all
+        # — there was previously no record that a login had ever failed.
+        logger.warning("Failed login attempt from %s", client_ip(request))
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    note_login_success(request)
+    _issue_session(request, response)
     return {"username": cfg.admin_username}
 
 
@@ -361,3 +459,58 @@ async def logout_all(response: Response, _user: str = Depends(require_session)):
 @router.get("/me")
 async def me(username: str = Depends(require_session)):
     return {"username": username}
+
+
+@router.get("/password")
+async def password_info(_user: str = Depends(require_session)):
+    """Where the password in effect comes from, for the Account page."""
+    stored = await asyncio.to_thread(_stored_password)
+    return {
+        "auth_enabled": config.settings.auth_enabled,
+        "username": config.settings.admin_username,
+        "source": "gui" if stored else "env",
+        "changed_at": stored.get("changed_at"),
+        "min_length": MIN_PASSWORD_LENGTH,
+    }
+
+
+@router.post("/password")
+async def change_password(body: PasswordChange, request: Request, response: Response,
+                          _user: str = Depends(require_session)):
+    """Change the login password from the GUI (#204).
+
+    Team admins have only the GUI — the .env file is on a machine they have no
+    shell on. The new password is stored hashed in this manager's database and
+    replaces .env's from then on. It needs the current password, so a session
+    left open on someone else's screen is not enough; and it logs out every
+    other session, so whoever had the old password is out.
+    """
+    if not config.settings.auth_enabled:
+        raise HTTPException(
+            status_code=400,
+            detail="The built-in login is off (AUTH_ENABLED=false): your reverse "
+                   "proxy handles the password, not this manager.",
+        )
+    # Same throttle as the login: an open session must not become an unlimited
+    # way to guess the password.
+    _throttle(request)
+    if not await asyncio.to_thread(password_matches, body.current_password):
+        logger.warning("Wrong current password on a password change from %s",
+                       client_ip(request))
+        raise HTTPException(status_code=400, detail="The current password is not right.")
+    new = body.new_password
+    if len(new) < MIN_PASSWORD_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Use at least {MIN_PASSWORD_LENGTH} characters.",
+        )
+    if new == body.current_password:
+        raise HTTPException(status_code=400, detail="That is the current password.")
+    note_login_success(request)
+    await asyncio.to_thread(set_gui_password, new)
+    # Every token signed so far stops verifying; this browser gets a fresh one.
+    rotate_session_salt()
+    _issue_session(request, response)
+    logger.warning("The login password was changed in the GUI; every other session "
+                   "was logged out")
+    return {"ok": True}

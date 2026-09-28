@@ -138,6 +138,16 @@ jobs:
           docker exec -i -u app -e OTHER_STACK=reforger team2-manager \
             python - < scripts/ci/gate_e2e_inside.py
 
+      - name: The host admin's password reset runs inside a manager
+        run: |
+          set -eu
+          docker exec -u app team2-manager python manage.py reset-password | tee reset.log
+          grep -q 'No password was set in the GUI' reset.log
+          # As root it refuses: files it wrote would lock the manager out.
+          if docker exec team2-manager python manage.py reset-password; then
+            echo "it ran as root"; exit 1
+          fi
+
       - name: The GUIs raise no Docker warning
         run: |
           set -eu
@@ -162,8 +172,99 @@ jobs:
             echo "::endgroup::"
           done
 
+  # The host administrator's side of several stacks (#204): the real Linux
+  # installer, then rsm adding, listing, checking and removing a second stack,
+  # under dash (Ubuntu's /bin/sh). The images are the published ones — this
+  # tests the scripts, not the manager.
+  rsm-e2e:
+    runs-on: ubuntu-latest
+    env:
+      # The scripts fetch their files from this branch, as they would from main.
+      RSM_REF: ${{ github.head_ref || github.ref_name }}
+      RSM_ASSUME_YES: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the first stack with the installer
+        run: sudo -E RSM_BIND=local sh scripts/linux/install-local.sh
+
+      - name: rsm knows it, and adopts the file of older versions
+        run: |
+          set -eux
+          test -f /etc/reforger-server-manager/stacks/reforger.conf
+          test ! -e /etc/reforger-server-manager.conf
+          sudo rsm stacks | grep -E '^reforger +7780 +running +yes'
+          # A pre-v0.66.0 machine had only /etc/reforger-server-manager.conf.
+          sudo mv /etc/reforger-server-manager/stacks/reforger.conf /etc/reforger-server-manager.conf
+          sudo rsm stacks | grep -q '^reforger'
+          test -f /etc/reforger-server-manager/stacks/reforger.conf
+          test ! -e /etc/reforger-server-manager.conf
+          # One stack: no --stack needed.
+          sudo rsm status
+
+      - name: A second install refuses to go over the first
+        run: |
+          if sudo -E RSM_DIR=/opt/other RSM_BIND=local sh scripts/linux/install-local.sh; then
+            echo "the installer installed a second copy"; exit 1
+          fi
+
+      - name: rsm add-stack sets up a second team
+        run: |
+          set -eux
+          sudo -E rsm add-stack team2 | tee add.log
+          grep -q 'Stack .team2. is up' add.log
+          sudo test -f /opt/rsm-team2/.env
+          sudo grep -q '^RSM_STACK=team2$' /opt/rsm-team2/.env
+          sudo grep -q '^COMPOSE_PROJECT_NAME=team2$' /opt/rsm-team2/.env
+          sudo grep -q '^WEB_PORT=7781$' /opt/rsm-team2/.env
+          sudo grep -q '^GAME_PORT_RANGE=2021-2040$' /opt/rsm-team2/.env
+          for port in 7780 7781; do
+            for _ in $(seq 60); do
+              curl -fsS "http://127.0.0.1:$port/api/health" >/dev/null && break
+              sleep 2
+            done
+            curl -fsS "http://127.0.0.1:$port/api/health"
+          done
+          sudo rsm stacks
+          sudo rsm ports | tee ports.log
+          grep -q 'No overlaps' ports.log
+
+      - name: With two stacks rsm asks which, and --all does both
+        run: |
+          set -eux
+          if sudo rsm status 2> which.log; then echo "rsm guessed a stack"; exit 1; fi
+          grep -q 'several stacks' which.log
+          sudo rsm status --stack team2
+          sudo rsm --all status
+          docker ps --format '{{.Names}}' | sort | tee names.log
+          grep -qx team2-docker-gate names.log
+          grep -qx reforger-docker-gate names.log
+
+      - name: rsm ports flags an overlap
+        run: |
+          set -eux
+          sudo sed -i 's/^WEB_PORT=7781$/WEB_PORT=7780/' /opt/rsm-team2/.env
+          if sudo rsm ports; then echo "overlap not reported"; exit 1; fi
+          sudo sed -i 's/^WEB_PORT=7780$/WEB_PORT=7781/' /opt/rsm-team2/.env
+
+      - name: rsm remove-stack takes the second team away again
+        run: |
+          set -eux
+          sudo -E rsm remove-stack team2
+          test ! -e /etc/reforger-server-manager/stacks/team2.conf
+          test ! -e /opt/rsm-team2
+          ! docker ps -a --format '{{.Names}}' | grep -q '^team2-'
+          sudo rsm stacks | grep -q '^reforger'
+          curl -fsS http://127.0.0.1:7780/api/health
+
+      - name: Logs
+        if: always()
+        run: |
+          sudo rsm --all status || true
+          docker ps -a || true
+
   publish:
-    needs: [test, gate-e2e]
+    needs: [test, gate-e2e, rsm-e2e]
     # Publish on pushes to main and on version tags, never for PRs
     if: github.event_name == 'push'
     runs-on: ubuntu-latest

@@ -123,6 +123,9 @@ if (-not $docker) {
 
 $webPort = Get-EnvValue -Key 'WEB_PORT' -Default '7780'
 $url = "http://localhost:$webPort"
+# Which install this folder is, when a PC runs more than one (#204).
+$stack = Get-StackName -EnvFile $EnvFile
+if ($stack -ne 'reforger') { Write-Info "Stack: $stack" }
 
 # --- 1. Docker engine (starting Docker Desktop also starts the WSL2 VM) -----
 # Wait-DockerEngine never throws on a down daemon and tells the user to click Skip
@@ -137,11 +140,14 @@ if (-not (Wait-DockerEngine -Cli $docker -TimeoutSeconds $DockerTimeout)) {
 }
 
 # --- 2. Firewall sanity check (the installer creates this rule) -------------
-$ruleName = 'Arma Reforger (game + A2S)'
+$ruleName = Get-FirewallRuleName -Stack $stack
 if (-not (Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue)) {
+    $gameRange = Get-EnvValue -Key 'GAME_PORT_RANGE' -Default '2001-2020'
+    $a2sRange = Get-EnvValue -Key 'A2S_PORT_RANGE' -Default '17777-17796'
     Write-Warn2 'The firewall rule for the game ports is missing - players will not be able to join.'
     Write-Host  '    Run this once in an ELEVATED PowerShell:' -ForegroundColor Yellow
-    Write-Host  "    powershell -ExecutionPolicy Bypass -File `"$(Join-Path $here 'firewall.ps1')`"" -ForegroundColor Yellow
+    Write-Host  ("    powershell -ExecutionPolicy Bypass -File `"$(Join-Path $here 'firewall.ps1')`"" +
+                 " -GamePorts $gameRange -A2sPorts $a2sRange -RuleName `"$ruleName`"") -ForegroundColor Yellow
 }
 
 # --- 3. The manager itself ---------------------------------------------------

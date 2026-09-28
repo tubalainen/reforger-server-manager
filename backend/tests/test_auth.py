@@ -397,3 +397,119 @@ def test_session_salt_persists_across_serializer_calls(client):
     first = auth_mod._session_salt()
     assert first and first != auth_mod._BASE_SALT
     assert auth_mod._session_salt() == first   # stable => sessions survive restarts
+
+
+# --------------------------------------------------------------------------- #
+# Changing the password in the GUI (#204)
+# --------------------------------------------------------------------------- #
+NEW_PASSWORD = "a-much-longer-password-42"
+
+
+def _change(client, current="testpass-123", new=NEW_PASSWORD):
+    return client.post("/api/auth/password",
+                       json={"current_password": current, "new_password": new})
+
+
+def test_the_password_starts_out_as_the_env_one(logged_in):
+    info = logged_in.get("/api/auth/password").json()
+    assert info["source"] == "env" and info["changed_at"] is None
+    assert info["min_length"] == 12 and info["username"] == "testadmin"
+
+
+def test_changing_the_password(client):
+    from fastapi.testclient import TestClient
+
+    import auth as auth_mod
+    import main
+
+    client.post("/api/auth/login", json={"username": "testadmin", "password": "testpass-123"})
+    with TestClient(main.app) as other:
+        other.post("/api/auth/login", json={"username": "testadmin", "password": "testpass-123"})
+
+        assert _change(client).status_code == 200
+        # This browser stays signed in; every other session is out.
+        assert client.get("/api/auth/me").status_code == 200
+        assert other.get("/api/auth/me").status_code == 401
+
+    info = client.get("/api/auth/password").json()
+    assert info["source"] == "gui" and info["changed_at"]
+    # The .env password no longer works; the new one does.
+    client.post("/api/auth/logout")
+    old = client.post("/api/auth/login", json={"username": "testadmin", "password": "testpass-123"})
+    assert old.status_code == 401
+    new = client.post("/api/auth/login", json={"username": "testadmin", "password": NEW_PASSWORD})
+    assert new.status_code == 200
+    auth_mod.rotate_session_salt()
+
+
+@pytest.mark.parametrize("current,new,reason", [
+    ("wrong-password-1", NEW_PASSWORD, "current password"),
+    ("testpass-123", "short", "at least 12"),
+    ("testpass-123", "testpass-123", "current password"),
+])
+def test_a_password_change_is_refused(logged_in, current, new, reason):
+    r = _change(logged_in, current, new)
+    assert r.status_code == 400
+    assert reason in r.json()["detail"]
+    assert logged_in.get("/api/auth/password").json()["source"] == "env"
+
+
+def test_a_password_change_needs_a_session(client):
+    assert _change(client).status_code == 401
+
+
+def test_guessing_the_current_password_is_throttled(logged_in):
+    for _ in range(10):
+        assert _change(logged_in, current="guess-guess-guess").status_code == 400
+    assert _change(logged_in, current="guess-guess-guess").status_code == 429
+
+
+def test_no_password_to_change_without_the_built_in_login(client, monkeypatch):
+    import config
+
+    monkeypatch.setattr(config.settings, "auth_enabled", False)
+    r = _change(client)
+    assert r.status_code == 400
+    assert "AUTH_ENABLED=false" in r.json()["detail"]
+
+
+def test_password_hashes():
+    import auth as auth_mod
+
+    stored = auth_mod.hash_password("correct horse battery")
+    assert stored.startswith("scrypt$") and "correct" not in stored
+    assert auth_mod.verify_password("correct horse battery", stored)
+    assert not auth_mod.verify_password("correct horse batter", stored)
+    assert not auth_mod.verify_password("x", "garbage")
+    assert auth_mod.hash_password("same") != auth_mod.hash_password("same")  # salted
+
+
+def test_host_admin_reset_brings_back_the_env_password(client, capsys, monkeypatch):
+    import auth as auth_mod
+    import manage
+
+    # It refuses to run as root (files it writes must stay the app user's);
+    # the Dockerfile's test stage runs as root.
+    monkeypatch.setattr(manage.os, "geteuid", lambda: 1000, raising=False)
+    client.post("/api/auth/login", json={"username": "testadmin", "password": "testpass-123"})
+    assert _change(client).status_code == 200
+
+    assert manage.main(["reset-password"]) == 0
+    assert "removed" in capsys.readouterr().out
+    # Everyone is logged out, and the .env password is the one in effect again.
+    assert client.get("/api/auth/me").status_code == 401
+    ok = client.post("/api/auth/login", json={"username": "testadmin", "password": "testpass-123"})
+    assert ok.status_code == 200
+
+    assert manage.main(["reset-password"]) == 0
+    assert "No password was set" in capsys.readouterr().out
+    assert manage.main(["nonsense"]) == 2
+    auth_mod.rotate_session_salt()
+
+
+def test_the_reset_refuses_to_run_as_root(monkeypatch, capsys):
+    import manage
+
+    monkeypatch.setattr(manage.os, "geteuid", lambda: 0, raising=False)
+    assert manage.main(["reset-password"]) == 2
+    assert "-u app" in capsys.readouterr().err
