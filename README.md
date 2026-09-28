@@ -77,6 +77,8 @@ Click the image for the interactive, animated overview, or edit the [Archify spe
 
 - [Installation, security, networking, and updates](docs/installation.md)
 - [Features and screenshots](docs/features.md)
+- [Security review](docs/security-review.md)
+- [All documentation](docs/README.md)
 - [Interactive architecture overview](https://tubalainen.github.io/reforger-server-manager/architecture/reforger-server-manager-overview.html)
 - [Release notes](https://github.com/tubalainen/reforger-server-manager/releases)
 
