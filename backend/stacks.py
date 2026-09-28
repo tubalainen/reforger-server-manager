@@ -15,10 +15,12 @@ LABEL_STACK = "reforger-manager.stack"
 # had: reforger-manager, reforger-instance-<id>, reforger-net, ...
 DEFAULT_STACK = "reforger"
 
-# Lower-case letters, digits and dashes, starting with a letter or digit. It
-# prefixes container, network and volume names, and it is what compose accepts
-# as a project name, so it stays well inside all three.
-_STACK_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
+# Lower-case letters, digits and underscores, starting with a letter or digit.
+# It prefixes container, network and volume names, and it is what compose
+# accepts as a project name, so it stays well inside all three. No dashes: the
+# dash is what separates the stack from the rest of a name, so with one allowed
+# stack 'team2' could take the names of a stack 'team2-x' (team2-x-instance-1).
+_STACK_RE = re.compile(r"^[a-z0-9][a-z0-9_]{0,30}$")
 
 
 def stack_name_error(name: str) -> str | None:
@@ -27,7 +29,8 @@ def stack_name_error(name: str) -> str | None:
         return None
     return (
         f"RSM_STACK={name!r} is not a valid stack name: use 1-31 lower-case letters, "
-        f"digits and dashes, starting with a letter or digit (e.g. 'team2')."
+        f"digits and underscores, starting with a letter or digit — no dashes "
+        f"(e.g. 'team2' or 'milsim_eu')."
     )
 
 

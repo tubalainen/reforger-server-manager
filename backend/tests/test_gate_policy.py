@@ -400,8 +400,8 @@ def test_owns():
 
 
 @pytest.mark.parametrize("name,ok", [
-    ("reforger", True), ("team2", True), ("a", True), ("milsim-eu-1", True),
-    ("", False), ("Team2", False), ("-team", False), ("team_2", False),
+    ("reforger", True), ("team2", True), ("a", True), ("milsim_eu_1", True),
+    ("", False), ("Team2", False), ("_team", False), ("team-2", False),
     ("team 2", False), ("a" * 32, False), ("team2/../x", False),
 ])
 def test_stack_names(name, ok):
