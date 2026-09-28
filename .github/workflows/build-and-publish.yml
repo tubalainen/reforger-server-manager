@@ -74,8 +74,95 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+  # Two stacks on one real Docker host, each behind its own Docker gate (#204).
+  # Unit tests cover the gate's rules against a fake daemon; this is the part
+  # only a real one can show: the compose wiring, the socket in its volume, the
+  # manager finding its own mounts through the gate, and each stack blind to
+  # the other.
+  gate-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the manager image (the gate runs the same one)
+        run: docker build -t ghcr.io/tubalainen/reforger-server-manager:e2e .
+
+      - name: Start two stacks side by side
+        run: |
+          set -eu
+          # The default stack keeps the pre-stacks names; team2 is a second install.
+          for s in reforger team2; do
+            dir="$RUNNER_TEMP/$s"
+            mkdir -p "$dir"
+            cp docker-compose.yaml "$dir/"
+          done
+          common="MANAGER_VERSION=e2e
+          ADMIN_USERNAME=admin
+          SESSION_SECRET=$(openssl rand -hex 32)
+          REFORGER_SERVER_IMAGE=alpine:3.20
+          STEAMCMD_IMAGE=busybox:1.36"
+          printf '%s\nADMIN_PASSWORD=e2e-password-one\nWEB_PORT=7781\n' "$common" \
+            | sed 's/^ *//' > "$RUNNER_TEMP/reforger/.env"
+          printf '%s\nADMIN_PASSWORD=e2e-password-two\nWEB_PORT=7782\nRSM_STACK=team2\nCOMPOSE_PROJECT_NAME=team2\nGAME_PORT_RANGE=2101-2120\nA2S_PORT_RANGE=17877-17896\nRCON_PORT_RANGE=20099-20118\n' "$common" \
+            | sed 's/^ *//' > "$RUNNER_TEMP/team2/.env"
+          for s in reforger team2; do
+            (cd "$RUNNER_TEMP/$s" && docker compose up -d)
+          done
+          for port in 7781 7782; do
+            for _ in $(seq 60); do
+              curl -fsS "http://127.0.0.1:$port/api/health" >/dev/null && break
+              sleep 2
+            done
+            curl -fsS "http://127.0.0.1:$port/api/health"
+          done
+          docker ps -a --format 'table {{.Names}}\t{{.Status}}\t{{.Networks}}'
+
+      - name: The gates have no network and hold the only Docker socket
+        run: |
+          set -eu
+          for s in reforger team2; do
+            test "$(docker inspect -f '{{.HostConfig.NetworkMode}}' "$s-docker-gate")" = none
+            if docker inspect -f '{{range .Mounts}}{{.Source}} {{end}}' "$s-manager" | grep -q docker.sock; then
+              echo "$s-manager mounts the Docker socket"; exit 1
+            fi
+          done
+          # Nothing listens for the Docker API on TCP any more.
+          ! ss -ltn | grep -E ':2375|:2376'
+
+      - name: Each gate lets its stack work and keeps it to itself
+        run: |
+          set -eu
+          docker exec -i -u app -e OTHER_STACK=team2 reforger-manager \
+            python - < scripts/ci/gate_e2e_inside.py
+          docker exec -i -u app -e OTHER_STACK=reforger team2-manager \
+            python - < scripts/ci/gate_e2e_inside.py
+
+      - name: The GUIs raise no Docker warning
+        run: |
+          set -eu
+          check() {  # check <port> <password>
+            jar=$(mktemp)
+            curl -fsS -c "$jar" -H 'Content-Type: application/json' \
+              -d "{\"username\":\"admin\",\"password\":\"$2\"}" \
+              "http://127.0.0.1:$1/api/auth/login" >/dev/null
+            warnings=$(curl -fsS -b "$jar" "http://127.0.0.1:$1/api/system/warnings")
+            echo "$1: $warnings"
+            ! echo "$warnings" | grep -qE 'docker_gate|docker_api_exposed'
+          }
+          check 7781 e2e-password-one
+          check 7782 e2e-password-two
+
+      - name: Logs
+        if: always()
+        run: |
+          for s in reforger team2; do
+            echo "::group::$s"
+            (cd "$RUNNER_TEMP/$s" && docker compose logs --no-color --tail 200) || true
+            echo "::endgroup::"
+          done
+
   publish:
-    needs: test
+    needs: [test, gate-e2e]
     # Publish on pushes to main and on version tags, never for PRs
     if: github.event_name == 'push'
     runs-on: ubuntu-latest

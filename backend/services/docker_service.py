@@ -250,8 +250,10 @@ def use_host_network() -> bool:
 # address ON THE HOST, and the host can reach every container on it. Game
 # servers use host networking (#150), so network-wise they are the host — and
 # they run untrusted Workshop mods as root. Gateway mode 'isolated' (Docker
-# Engine 28+) removes that address. Pulling the image never updates the compose
-# file that sets it, so the manager checks for itself and says so in the GUI.
+# Engine 28+) removes that address. Since v0.65.0 there is no such network at
+# all: the manager reaches Docker through its gate over a unix socket (#204).
+# Pulling the image never updates the compose file, so the manager checks for
+# itself and says so in the GUI.
 GW_MODE_IPV4 = "com.docker.network.bridge.gateway_mode_ipv4"
 GW_MODE_IPV6 = "com.docker.network.bridge.gateway_mode_ipv6"
 ISOLATED_MIN_ENGINE = 28
@@ -311,25 +313,13 @@ def _assess_exposure() -> tuple[dict | None, bool]:
 
     options = net.get("Options") or {}
     major = _engine_major(engine)
-    refresh = (
-        "Whoever manages this machine should refresh the compose file and recreate "
-        "the stack. With the Linux installer's rsm command: run 'sudo rsm update', "
-        "accept the new compose file, then run 'sudo rsm restart'. Manual installs: "
-        "download the new compose file, then run 'docker compose down' and "
-        "'docker compose up -d'. The v0.64.1 release notes have the details."
-    )
     if major is not None and major < ISOLATED_MIN_ENGINE:
         reason = (
-            f"This host runs Docker Engine {engine}; 28.0 is the first version that "
-            f"can take the Docker API network off the host."
-        )
-        action = (
-            "Whoever manages this machine should update Docker Engine to 28 or newer "
-            "first, then apply the v0.64.1 compose file as its release notes describe."
+            f"This host runs Docker Engine {engine}, which cannot take that network "
+            f"off the host (28.0 is the first that can)."
         )
     elif not net.get("Internal"):
         reason = f"The network the manager reaches Docker over ({name}) is not an internal network."
-        action = refresh
     elif options.get(GW_MODE_IPV4) != "isolated" or (
         net.get("EnableIPv6") and options.get(GW_MODE_IPV6) != "isolated"
     ):
@@ -337,7 +327,6 @@ def _assess_exposure() -> tuple[dict | None, bool]:
             f"The network {name} was created by a compose file older than v0.64.1, "
             f"which leaves it an address on the host."
         )
-        action = refresh
     else:
         return None, True
 
@@ -350,7 +339,16 @@ def _assess_exposure() -> tuple[dict | None, bool]:
             "in them — can reach the Docker socket proxy, which can create containers "
             "on this host. " + reason
         ),
-        "action": action,
+        # The v0.65.0 compose file replaces that network with a unix socket, on
+        # any Docker Engine, so every case has the same fix.
+        "action": (
+            "Whoever manages this machine should refresh the compose file and recreate "
+            "the stack. With the Linux installer's rsm command: run 'sudo rsm update' "
+            "and accept the new compose file and the restart it offers. Manual "
+            "installs: download the new compose file, then run 'docker compose down' "
+            "and 'docker compose up -d'. Windows: re-run the installer. The v0.65.0 "
+            "release notes have the details."
+        ),
     }, True
 
 
@@ -387,6 +385,11 @@ def gate_info() -> dict | None:
     _gate = body if isinstance(body, dict) and body.get("gate") == "rsm" else None
     _gate_known = True
     return _gate
+
+
+def gate_known() -> bool:
+    """True once gate_info() has a certain answer cached."""
+    return _gate_known
 
 
 def gate_warning() -> dict | None:

@@ -25,7 +25,8 @@ It runs on Linux, a public VPS, or Windows 10/11 through Docker Desktop. The pro
 - Back up and restore every server template and mod list as one file.
 - Back up, download and restore each server's saved world, including one written under a template the server no longer runs — or force a combination the manager would refuse.
 - Import or export `config.json` while preserving settings the UI does not know about.
-- Keep Docker access behind a least-privilege socket proxy; managed containers run with `no-new-privileges`.
+- Keep Docker access behind the manager's own Docker gate, which lets it see and touch only its own containers and folders; managed containers run with `no-new-privileges`.
+- Run several independent installs on one machine — one per team, say — each with its own name, ports and data ([how](docs/installation.md#several-installs-on-one-machine)).
 
 See the [feature tour](docs/features.md) for screenshots and the complete capability list.
 
@@ -48,8 +49,6 @@ powershell -ExecutionPolicy Bypass -File $installer
 > [!IMPORTANT]
 > The GUI can control Docker containers and should be treated like host-level access. Use a strong password, never expose port `7780` directly to the internet, and use HTTPS for remote access. The VPS installer configures HTTPS through Caddy.
 
-Linux needs Docker Engine 28 or newer; the installers check it and offer to upgrade.
-
 Players connect through UDP game ports, not the web UI. The default ranges are `2001-2020` and `17777-17796`; forward only the ports assigned to your servers. Never forward the GUI or RCON ports. See [Networking and firewalls](docs/installation.md#networking-and-firewalls).
 
 ### First run
@@ -66,7 +65,7 @@ The default server runtime is the [ACE Mod-compatible image](https://github.com/
 
 [![Architectural overview](docs/architecture/reforger-server-manager-overview.png)](https://tubalainen.github.io/reforger-server-manager/architecture/reforger-server-manager-overview.html)
 
-The browser talks to a FastAPI manager backed by SQLite. The manager delegates narrowly scoped container operations to a Docker socket proxy, while SteamCMD downloads and each Arma server run in separate containers. Persistent data, server files, profiles, and Workshop content live in shared volumes or bind mounts.
+The browser talks to a FastAPI manager backed by SQLite. The manager reaches Docker only through its Docker gate, a small proxy with no network that passes on just the operations it needs, for its own containers only, while SteamCMD downloads and each Arma server run in separate containers. Persistent data, server files, profiles, and Workshop content live in shared volumes or bind mounts.
 
 Click the image for the interactive, animated overview, or edit the [Archify specification](docs/architecture/reforger-server-manager-overview.architecture.json).
 

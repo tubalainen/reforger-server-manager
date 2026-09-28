@@ -54,13 +54,26 @@ def test_warnings_require_login(client):
     assert client.get("/api/system/warnings").status_code == 401
 
 
+_GATE_MISSING = {"id": "docker_gate_missing", "severity": "warning", "title": "t",
+                 "detail": "d", "action": "a"}
+
+
 def test_warnings_lists_the_docker_api_exposure(logged_in, monkeypatch):
     warning = {"id": "docker_api_exposed", "severity": "danger", "title": "t",
                "detail": "d", "action": "a"}
     monkeypatch.setattr(docker_service, "docker_api_exposure", lambda: warning)
+    # Same fix (a newer compose file), so the exposure banner stands alone.
+    monkeypatch.setattr(docker_service, "gate_warning", lambda: _GATE_MISSING)
     assert logged_in.get("/api/system/warnings").json() == {"warnings": [warning]}
+
+
+def test_warnings_lists_a_missing_docker_gate(logged_in, monkeypatch):
+    monkeypatch.setattr(docker_service, "docker_api_exposure", lambda: None)
+    monkeypatch.setattr(docker_service, "gate_warning", lambda: _GATE_MISSING)
+    assert logged_in.get("/api/system/warnings").json() == {"warnings": [_GATE_MISSING]}
 
 
 def test_warnings_empty_when_the_install_is_fine(logged_in, monkeypatch):
     monkeypatch.setattr(docker_service, "docker_api_exposure", lambda: None)
+    monkeypatch.setattr(docker_service, "gate_warning", lambda: None)
     assert logged_in.get("/api/system/warnings").json() == {"warnings": []}

@@ -46,7 +46,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 # The helpers sit next to this script in the install folder; when it is run from
-# %TEMP% on a broken install they are not there, so define the two we need inline.
+# %TEMP% on a broken install they are not there, so define the ones we need inline.
 $commonPath = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'common.ps1'
 if (Test-Path $commonPath) {
     . $commonPath
@@ -79,13 +79,44 @@ if (Test-Path $commonPath) {
         if (-not $Cli) { return $false }
         return (Invoke-Quiet "`"$Cli`" info")
     }
+    function Get-StackName {
+        param([Parameter(Mandatory)][string] $EnvFile)
+        if (Test-Path $EnvFile) {
+            $line = Select-String -Path $EnvFile -Pattern '^RSM_STACK=(.*)$' -ErrorAction SilentlyContinue |
+                    Select-Object -First 1
+            if ($line -and $line.Matches[0].Groups[1].Value.Trim()) {
+                return $line.Matches[0].Groups[1].Value.Trim()
+            }
+        }
+        return 'reforger'
+    }
+    function Get-StackContainerIds {
+        param([string] $Cli, [string] $Stack, [string] $Filter, [switch] $All)
+        $psArgs = @('ps', '--filter', $Filter, '--format', '{{.ID}}|{{.Labels}}')
+        if ($All) { $psArgs += '-a' }
+        $ids = @()
+        foreach ($line in @(& $Cli @psArgs)) {
+            if (-not $line) { continue }
+            $id, $labels = "$line" -split '\|', 2
+            $owner = $null
+            foreach ($pair in ("$labels" -split ',')) {
+                $key, $value = $pair -split '=', 2
+                if ($key -eq 'reforger-manager.stack') { $owner = $value }
+            }
+            if ($owner -eq $Stack -or ($null -eq $owner -and $Stack -eq 'reforger')) { $ids += $id }
+        }
+        return ,$ids
+    }
 }
 
 $RuleName   = 'Arma Reforger (game + A2S)'
 $Shortcut   = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Reforger Server Manager.lnk'
 $ResumeDir  = Join-Path $env:LOCALAPPDATA 'ReforgerServerManager'
 $RunOnceKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce'
-$Volumes    = @('reforger-data', 'reforger-serverfiles-stable', 'reforger-serverfiles-experimental')
+# Everything this install made starts with its stack name (#204); another
+# team's stack on the same machine is left alone.
+$Stack      = Get-StackName -EnvFile (Join-Path $InstallDir '.env')
+$Volumes    = @("$Stack-data", "$Stack-serverfiles-stable", "$Stack-serverfiles-experimental")
 
 Write-Host ''
 Write-Host '  Reforger Server Manager - uninstall' -ForegroundColor White
@@ -110,8 +141,8 @@ if (Get-ItemProperty -Path $RunOnceKey -Name 'ReforgerServerManagerInstall' -Err
 $containers = @()
 $volumesPresent = @()
 if ($engineUp) {
-    $containers = @(& $docker ps -a -q --filter 'label=reforger-manager.managed=true')
-    if ($containers.Count) { $found += "Docker containers     $($containers.Count) (manager + servers)" }
+    $containers = @(Get-StackContainerIds -Cli $docker -Stack $Stack -All -Filter 'label=reforger-manager.managed=true')
+    if ($containers.Count) { $found += "Docker containers     $($containers.Count) (game servers and helpers)" }
     foreach ($v in $Volumes) {
         if (Invoke-Quiet "`"$docker`" volume inspect $v") { $volumesPresent += $v }
     }
@@ -175,19 +206,32 @@ if ($engineUp) {
         & $docker compose -f $compose down --remove-orphans 2>&1 | Out-Null
     }
     # Anything the manager created carries our label, whether compose knows it or not.
-    $containers = @(& $docker ps -a -q --filter 'label=reforger-manager.managed=true')
+    $containers = @(Get-StackContainerIds -Cli $docker -Stack $Stack -All -Filter 'label=reforger-manager.managed=true')
     foreach ($id in $containers) { $null = Invoke-Quiet "`"$docker`" rm -f $id" }
-    if (Invoke-Quiet "`"$docker`" container inspect reforger-manager") {
-        $null = Invoke-Quiet "`"$docker`" rm -f reforger-manager"
+    # The compose services, in case compose could not (the file is gone).
+    # reforger-docker-proxy is the socket proxy of compose files before v0.65.0.
+    $services = @("$Stack-manager", "$Stack-docker-gate", "$Stack-ollama")
+    if ($Stack -eq 'reforger') { $services += 'reforger-docker-proxy' }
+    foreach ($name in $services) {
+        if (Invoke-Quiet "`"$docker`" container inspect $name") {
+            $null = Invoke-Quiet "`"$docker`" rm -f $name"
+        }
     }
     Write-Ok "removed $($containers.Count) container(s)"
 
-    Write-Step 'Removing the Docker network'
-    if (Invoke-Quiet "`"$docker`" network inspect reforger-net") {
-        $null = Invoke-Quiet "`"$docker`" network rm reforger-net"
-        Write-Ok 'reforger-net'
-    } else {
-        Write-Info 'no reforger-net network'
+    Write-Step 'Removing the Docker networks'
+    $networks = @("$Stack-net", "$Stack-ai")
+    # The Docker API network of compose files before v0.65.0.
+    if ($Stack -eq 'reforger') { $networks += 'reforger-docker-api' }
+    foreach ($net in $networks) {
+        if (Invoke-Quiet "`"$docker`" network inspect $net") {
+            $null = Invoke-Quiet "`"$docker`" network rm $net"
+            Write-Ok $net
+        }
+    }
+    # Holds nothing but the Docker gate's socket: not data, so always removed.
+    if (Invoke-Quiet "`"$docker`" volume inspect $Stack-docker-gate") {
+        $null = Invoke-Quiet "`"$docker`" volume rm $Stack-docker-gate"
     }
 
     if ($RemoveData -and $volumesPresent.Count) {

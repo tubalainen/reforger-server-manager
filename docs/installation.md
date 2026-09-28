@@ -16,9 +16,13 @@ This guide covers Linux, public VPS, and Windows installations, plus networking,
 
 The manager can create and control containers, so its login should be treated like host credentials. Use a strong password, keep the GUI bound to localhost when possible, and put an authenticated HTTPS reverse proxy in front of any remote deployment. Never port-forward the GUI or RCON ports.
 
-The supplied stack does not mount the Docker socket directly into the manager. A least-privilege proxy exposes only required operations, and manager-created containers use `no-new-privileges`. Docker access is still powerful, so these controls do not make a public, unencrypted GUI safe.
+The supplied stack does not mount the Docker socket into the manager. Since v0.65.0 a small **Docker gate** holds it instead: its own container, with no network at all, that the manager reaches over a socket in a volume only the two of them share. The gate passes on only what the manager needs, and only for its own install:
 
-On Linux the proxy's network is created in Docker's `isolated` gateway mode, so neither the host nor the game servers — which use host networking — can reach it; only the manager can. That needs **Docker Engine 28 or newer**. Installs from before v0.64.1 were missing it: if the GUI shows a red *"game servers can reach the Docker API"* banner, follow [Updating setup files](#updating-setup-files).
+- the manager sees and controls only the containers it created — another install's servers do not exist as far as it can tell;
+- containers may only be created from the two images named in `.env`, with the install's name and label, never privileged or in the host's process or user namespaces, and mounting nothing but the install's own data and server-file folders;
+- exec, image builds, volumes, swarm, secrets, plugins and the rest of the Docker API are refused.
+
+Manager-created containers also use `no-new-privileges`. Docker access is still powerful: the gate keeps a manager to its own slice of the machine, but it is not a sandbox for a manager that has itself been taken over, so these controls do not make a public, unencrypted GUI safe. If the GUI shows a yellow *"compose file is older than v0.65.0"* or a red *"game servers can reach the Docker API"* banner, follow [Updating setup files](#updating-setup-files).
 
 The application also enforces safer exposed defaults:
 
@@ -34,13 +38,13 @@ The application also enforces safer exposed defaults:
 curl -fsSL https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/scripts/linux/install-local.sh | sudo sh
 ```
 
-The installer checks for Docker (Engine 28 or newer — it offers to install or upgrade it), generates a strong GUI password, optionally configures the firewall, and starts the stack. Save the password printed at the end, then open `http://localhost:7780`.
+The installer checks for Docker (it offers to install it), generates a strong GUI password, optionally configures the firewall, and starts the stack. Save the password printed at the end, then open `http://localhost:7780`.
 
 Update later with `rsm update`. Check the [release notes](https://github.com/tubalainen/reforger-server-manager/releases) first for breaking changes or manual steps.
 
 ### Manual Linux setup
 
-Only `docker-compose.yaml` and `.env` are required, plus Docker Engine 28 or newer (`docker version` shows it):
+Only `docker-compose.yaml` and `.env` are required:
 
 ```bash
 mkdir reforger-server-manager && cd reforger-server-manager
@@ -64,7 +68,7 @@ docker compose down
 docker compose up -d --remove-orphans
 ```
 
-`down` before `up` matters when the compose file changed a network: `up -d` alone keeps the existing network as it is. Your `.env` is not overwritten. An upgrade restarts active servers; instances with auto-start return automatically.
+`down` before `up` matters when the compose file changed a network: `up -d` alone keeps the existing network as it is. Your `.env` is not overwritten. After updating from a compose file older than v0.65.0, the old Docker API network is left behind unused; remove it once with `docker network rm reforger-docker-api`. An upgrade restarts active servers; instances with auto-start return automatically.
 
 ## Linux on a public VPS
 
@@ -142,11 +146,45 @@ The uninstaller lists what it found and requires typing `REMOVE`. By default it 
 
 ### Windows storage and startup
 
-Persistent data uses Docker named volumes: `reforger-data`, `reforger-serverfiles-stable`, and `reforger-serverfiles-experimental`. View or back them up from **Docker Desktop → Volumes**.
+Persistent data uses Docker named volumes: `reforger-data`, `reforger-serverfiles-stable`, and `reforger-serverfiles-experimental` (with `RSM_STACK` set in `.env`, they start with that name instead of `reforger`). View or back them up from **Docker Desktop → Volumes**.
 
 Server containers have restart policies. Enable **Start Docker Desktop when you sign in** to recover them after a reboot. Docker Desktop runs in the user session, so an unattended machine must sign in before the engine can start.
 
 Do not install Docker Engine inside a WSL distribution for this project. WSL NAT does not publish the required UDP game and A2S ports to the Windows host. Use Docker Desktop.
+
+## Several installs on one machine
+
+One machine can run several complete, independent installs — one per team, say. Each is a **stack**: its own manager, Docker gate, game servers, data and server files, and its own GUI login. Every container, network and volume a stack creates starts with its name, `RSM_STACK` in `.env`. A single install keeps the default name, `reforger`, which is also every name an install had before v0.65.0.
+
+Each manager sees and controls only its own stack: another team's servers, networks and folders do not exist as far as it can tell, and it cannot stop, remove or start them.
+
+On Linux, add a second stack by hand, next to the first:
+
+```bash
+mkdir -p /opt/rsm-team2 && cd /opt/rsm-team2
+curl -fsSLO https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/docker-compose.yaml
+curl -fsSL https://raw.githubusercontent.com/tubalainen/reforger-server-manager/main/.env.example -o .env
+```
+
+In its `.env`, set a strong `ADMIN_PASSWORD` and a `SESSION_SECRET` (`openssl rand -hex 32`), and give it settings no other stack on the machine uses:
+
+```dotenv
+RSM_STACK=team2
+COMPOSE_PROJECT_NAME=team2
+WEB_PORT=7781
+GAME_PORT_RANGE=2101-2120
+A2S_PORT_RANGE=17877-17896
+RCON_PORT_RANGE=20099-20118
+```
+
+Then `docker compose pull && docker compose up -d`, and open its game and A2S ranges in the firewall. Each stack downloads its own server files (about 10 GB per branch).
+
+Good to know:
+
+- `rsm` and the installers manage one install per machine for now; run a second stack's `docker compose` commands from its own folder. Tooling for several stacks is planned ([#204](https://github.com/tubalainen/reforger-server-manager/issues/204)).
+- On Windows, keep to one install per machine for now.
+- The stacks share the machine's network. On Linux the game servers use host networking, so port ranges must not overlap, and a game server can reach whatever listens on the host — including other stacks' GUI login pages on `localhost`. Keep every GUI password strong.
+- Whoever administers the machine (shell or `sudo` access) still controls every stack; the separation is between the teams' GUIs.
 
 ## Networking and firewalls
 

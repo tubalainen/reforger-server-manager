@@ -6,6 +6,9 @@
 # permission errors, while a named volume sits on the VM's native ext4 disk.
 # Browse or back them up from Docker Desktop → Volumes.
 #
+# Every name below starts with the STACK name, RSM_STACK in .env ('reforger'
+# when unset) — see docker-compose.yaml (#204).
+#
 # Start it with the desktop shortcut created by the installer, or by hand:
 #   docker compose -f docker-compose.windows.yaml up -d
 services:
@@ -14,7 +17,7 @@ services:
     # or pin e.g. v0.31.0 to lock the manager to one version. start.ps1 pulls
     # this on start so 'latest' stays current.
     image: ghcr.io/tubalainen/reforger-server-manager:${MANAGER_VERSION:-latest}
-    container_name: reforger-manager
+    container_name: ${RSM_STACK:-reforger}-manager
     restart: unless-stopped
     # On stop/down the manager gracefully stops every running game server and
     # removes their sibling containers (they are recorded and resumed on the
@@ -24,12 +27,24 @@ services:
     stop_grace_period: 2m
     env_file: .env
     environment:
-      # Reach the host Docker daemon through the least-privilege proxy below
-      # instead of mounting the root-equivalent socket into this container.
-      # docker.from_env() honours DOCKER_HOST, so no application code changes.
-      DOCKER_HOST: tcp://docker-socket-proxy:2375
+      # Set here, not only in .env, so the manager always agrees with the names
+      # this file gives the containers and the network.
+      RSM_STACK: ${RSM_STACK:-reforger}
+      DOCKER_NETWORK: ${RSM_STACK:-reforger}-net
+      # Reach Docker through this stack's gate below, over a unix socket in a
+      # volume only the two of them share. docker.from_env() honours DOCKER_HOST.
+      DOCKER_HOST: unix:///run/rsm-gate/docker.sock
     depends_on:
       - docker-socket-proxy
+    labels:
+      # Which stack this manager is. The gate lets a manager inspect its own
+      # container only when it carries this label.
+      reforger-manager.stack: ${RSM_STACK:-reforger}
+      reforger-manager.role: manager
+      reforger-manager.web_port: ${WEB_PORT:-7780}
+      reforger-manager.game_ports: ${GAME_PORT_RANGE:-2001-2020}
+      reforger-manager.a2s_ports: ${A2S_PORT_RANGE:-17777-17796}
+      reforger-manager.rcon_ports: ${RCON_PORT_RANGE:-19999-20018}
     ports:
       # The web GUI. Server instances do NOT need port entries here: the
       # manager creates each Arma server as a *sibling* container on the host
@@ -44,54 +59,60 @@ services:
     volumes:
       # Manager state: SQLite DB, per-instance configs and profiles.
       - reforger-data:/data
-      # NOTE: the raw Docker socket is deliberately NOT mounted here. The
-      # manager reaches the daemon through the docker-socket-proxy service
-      # below (DOCKER_HOST above), which exposes only the API sections it needs.
+      # The gate's socket. The raw Docker socket is deliberately NOT mounted
+      # here: only the gate holds it.
+      - docker-gate:/run/rsm-gate
       # Downloaded server files, one volume per branch: written by the steamcmd
       # download jobs, mounted read-only here and into each server instance.
       - reforger-serverfiles-stable:/serverfiles/stable:ro
       - reforger-serverfiles-experimental:/serverfiles/experimental:ro
     networks:
       - reforger-net
-      # Private link to the socket proxy; game containers are NOT on this one.
-      - docker-api
       # Private link to the optional Ollama service below (#199).
       - reforger-ai
 
-  # Least-privilege gateway to the host Docker daemon (Docker Desktop / WSL2).
-  # The manager reaches the daemon through this proxy instead of mounting the
-  # root-equivalent socket itself; only the API sections it needs are forwarded,
-  # everything else (exec, build, volume create, swarm, secrets, …) is denied.
-  # Never published — reachable only by the manager over the internal network.
-  # See docs/security-review-2026-07-27.md (R1): this shrinks the socket's
-  # attack surface but the GUI must still stay off the open internet.
+  # The Docker gate (v0.65.0): the only container in this stack that holds the
+  # Docker socket, and it passes on only what the manager needs, for this stack
+  # only. It has no network at all. See docker-compose.yaml for what it allows;
+  # the rules are in backend/gate/policy.py. The service keeps the old socket
+  # proxy's name so that compose replaces that container instead of orphaning it.
   docker-socket-proxy:
-    image: ${DOCKER_PROXY_IMAGE:-tecnativa/docker-socket-proxy:v0.4.1}
-    container_name: reforger-docker-proxy
+    # The gate is part of the manager's image; keep the two on the same tag.
+    image: ghcr.io/tubalainen/reforger-server-manager:${MANAGER_VERSION:-latest}
+    container_name: ${RSM_STACK:-reforger}-docker-gate
     restart: unless-stopped
+    entrypoint: ["python", "-m", "gate"]
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    # Only what the rules need — deliberately not .env, which holds passwords.
     environment:
-      CONTAINERS: 1   # create/list/inspect/start/stop/remove + logs + stats
-      IMAGES: 1       # pull the server image, check it is present
-      NETWORKS: 1     # inspect reforger-net for the attach self-heal (#113)
-      INFO: 1         # docker info: Docker Desktop detection / firewall hint
-      POST: 1         # allow write verbs (create/start/stop/remove/pull)
-      # Everything not listed stays denied (image default 0).
+      RSM_STACK: ${RSM_STACK:-reforger}
+      DOCKER_NETWORK: ${RSM_STACK:-reforger}-net
+      REFORGER_SERVER_IMAGE: ${REFORGER_SERVER_IMAGE:-ghcr.io/acemod/arma-reforger:latest}
+      STEAMCMD_IMAGE: ${STEAMCMD_IMAGE:-steamcmd/steamcmd:latest}
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    networks:
-      # ONLY the private docker-api network — never shared with the game
-      # servers, which run untrusted Workshop mods as root.
-      - docker-api
+      - /var/run/docker.sock:/var/run/docker.sock
+      - docker-gate:/run/rsm-gate
+      # The volumes this stack's containers may mount: the gate reads where
+      # they live off these mounts, so they must be the same volumes the
+      # manager mounts above. It never reads what is in them.
+      - reforger-data:/stack/data:ro
+      - reforger-serverfiles-stable:/stack/serverfiles/stable:ro
+      - reforger-serverfiles-experimental:/stack/serverfiles/experimental:ro
 
   # OPTIONAL local AI for the template wizard's "AI order" button (#199). Not
   # started unless the 'ollama' profile is on: add COMPOSE_PROFILES=ollama to
   # .env, then `docker compose up -d` and download a model once:
   #   docker exec reforger-ollama ollama pull qwen2.5:3b
-  # and point the manager at it in .env: AI_ORDER_URL=http://ollama:11434
+  # (the container is <RSM_STACK>-ollama if you set RSM_STACK), and point the
+  # manager at it in .env: AI_ORDER_URL=http://ollama:11434
   # Nothing is published: only the manager can reach it, over reforger-ai.
   ollama:
     image: ${OLLAMA_IMAGE:-ollama/ollama:latest}
-    container_name: reforger-ollama
+    container_name: ${RSM_STACK:-reforger}-ollama
     restart: unless-stopped
     profiles: [ollama]
     volumes:
@@ -115,23 +136,22 @@ services:
 # volumes survive a rename of the folder this file sits in.
 networks:
   reforger-net:
-    name: reforger-net
-  # Manager <-> socket proxy only; 'internal' keeps it off any external route.
-  docker-api:
-    name: reforger-docker-api
-    internal: true
+    name: ${RSM_STACK:-reforger}-net
   # Manager <-> the optional Ollama service only. Game servers are never on
   # it (they run untrusted Workshop mods), and it is not 'internal' because
   # Ollama has to reach the internet to download models.
   reforger-ai:
-    name: reforger-ai
+    name: ${RSM_STACK:-reforger}-ai
 
 volumes:
   reforger-data:
-    name: reforger-data
+    name: ${RSM_STACK:-reforger}-data
   reforger-serverfiles-stable:
-    name: reforger-serverfiles-stable
+    name: ${RSM_STACK:-reforger}-serverfiles-stable
   reforger-serverfiles-experimental:
-    name: reforger-serverfiles-experimental
+    name: ${RSM_STACK:-reforger}-serverfiles-experimental
   reforger-ollama:
-    name: reforger-ollama
+    name: ${RSM_STACK:-reforger}-ollama
+  # Holds the gate's unix socket; shared by this stack's manager and gate only.
+  docker-gate:
+    name: ${RSM_STACK:-reforger}-docker-gate

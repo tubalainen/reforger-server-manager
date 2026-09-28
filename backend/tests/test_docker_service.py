@@ -135,7 +135,7 @@ def test_internal_network_without_gateway_mode_is_exposed(exposure):
     assert warning["severity"] == "danger"
     assert "older than v0.64.1" in warning["detail"]
     assert "reforger-docker-api" in warning["detail"]
-    assert "sudo rsm restart" in warning["action"]
+    assert "sudo rsm update" in warning["action"]
 
 
 def test_old_engine_is_exposed_even_with_the_option_set(exposure):
@@ -143,7 +143,9 @@ def test_old_engine_is_exposed_even_with_the_option_set(exposure):
     exposure(_ExposureClient({"Internal": True, "Options": _ISOLATED}, engine="27.5.1"))
     warning = docker_service.docker_api_exposure()
     assert "Docker Engine 27.5.1" in warning["detail"]
-    assert "Docker Engine to 28" in warning["action"]
+    # The v0.65.0 compose file needs no network for Docker, so no engine update.
+    assert "v0.65.0" in warning["action"]
+    assert "update Docker" not in warning["action"]
 
 
 def test_non_internal_network_is_exposed(exposure):
@@ -204,3 +206,156 @@ def test_a_failed_read_is_not_a_cached_answer(exposure):
     exposure(_ExposureClient({"Internal": True, "Options": {}}, fail_network=True))
     assert docker_service.docker_api_exposure() is None
     assert docker_service.exposure_known() is False
+
+
+# --------------------------------------------------------------------------- #
+# Stack scoping (#204): a manager sees and touches only its own stack
+# --------------------------------------------------------------------------- #
+class _Container(SimpleNamespace):
+    pass
+
+
+def _c(name, **labels):
+    return _Container(name=name, labels=labels)
+
+
+class _ListClient:
+    """containers.list() that honours label filters the way Docker does."""
+
+    def __init__(self, containers):
+        self._all = containers
+        self.filters = []
+        self.containers = SimpleNamespace(list=self._list)
+
+    def _list(self, filters=None, **_kwargs):
+        self.filters.append(filters)
+        wanted = [f.split("=", 1) for f in (filters or {}).get("label", [])]
+        return [c for c in self._all if all(c.labels.get(k) == v for k, v in wanted)]
+
+
+_M = docker_service.LABEL_MANAGED
+_S = docker_service.LABEL_STACK
+_R = docker_service.LABEL_ROLE
+_I = docker_service.LABEL_INSTANCE_ID
+
+
+@pytest.fixture()
+def on_stack(monkeypatch):
+    def use(stack, containers):
+        monkeypatch.setattr(docker_service.config.settings, "rsm_stack", stack)
+        client = _ListClient(containers)
+        monkeypatch.setattr(docker_service, "get_client", lambda: client)
+        return client
+    return use
+
+
+def _instances(**by_name):
+    return [_c(n, **{_M: "true", _R: "instance", _I: i, **extra})
+            for n, (i, extra) in by_name.items()]
+
+
+def test_the_default_stack_adopts_containers_from_before_stacks(on_stack):
+    on_stack("reforger", _instances(
+        legacy=("1", {}),                       # made before v0.65.0: no stack label
+        mine=("2", {_S: "reforger"}),
+        theirs=("3", {_S: "team2"}),
+    ))
+    found = docker_service.instance_containers()
+    assert {i: c.name for i, c in found.items()} == {1: "legacy", 2: "mine"}
+
+
+def test_another_stack_sees_only_its_own_and_asks_docker_for_them(on_stack):
+    client = on_stack("team2", _instances(
+        legacy=("1", {}),
+        theirs=("2", {_S: "reforger"}),
+        mine=("3", {_S: "team2"}),
+    ))
+    found = docker_service.instance_containers()
+    assert {i: c.name for i, c in found.items()} == {3: "mine"}
+    assert f"{_S}=team2" in client.filters[0]["label"]
+
+
+def test_the_labelled_container_wins_over_an_adopted_one(on_stack):
+    # A recreate that did not get to remove the old container: both carry id 4.
+    on_stack("reforger", _instances(old=("4", {}), new=("4", {_S: "reforger"})))
+    assert docker_service.instance_containers()[4].name == "new"
+    assert docker_service.find_instance_container(4).name == "new"
+
+
+def test_containers_the_manager_did_not_make_are_not_its_own(on_stack):
+    on_stack("reforger", [_c("stranger", **{_R: "instance", _I: "5"})])
+    assert docker_service.instance_containers() == {}
+
+
+def test_names_and_labels_carry_the_stack(monkeypatch):
+    monkeypatch.setattr(docker_service.config.settings, "rsm_stack", "team2")
+    assert docker_service.container_name("instance-3") == "team2-instance-3"
+    assert docker_service.managed_labels(**{_R: "steamcmd"}) == {
+        _M: "true", _S: "team2", _R: "steamcmd",
+    }
+    assert docker_service.is_current_stack(_c("x", **{_S: "team2"}))
+    assert not docker_service.is_current_stack(_c("x", **{_M: "true"}))
+
+
+# --------------------------------------------------------------------------- #
+# Is the manager behind its own gate? (#204)
+# --------------------------------------------------------------------------- #
+class _GateApi:
+    base_url = "http+docker://localhost"
+
+    def __init__(self, status, body=None, fail=False):
+        self.status, self.body, self.fail = status, body, fail
+        self.asked = 0
+
+    def get(self, url, timeout=None):
+        self.asked += 1
+        if self.fail:
+            raise DockerException("socket gone")
+        return SimpleNamespace(status_code=self.status, json=lambda: self.body)
+
+
+@pytest.fixture()
+def gate(monkeypatch):
+    docker_service._gate = None
+    docker_service._gate_known = False
+    monkeypatch.setattr(docker_service.config.settings, "rsm_stack", "reforger")
+    monkeypatch.setattr(docker_service, "daemon_info", lambda: {"OperatingSystem": "Ubuntu"})
+
+    def use(api):
+        monkeypatch.setattr(docker_service, "get_client", lambda: SimpleNamespace(api=api))
+        return api
+
+    yield use
+    docker_service._gate = None
+    docker_service._gate_known = False
+
+
+def test_behind_its_own_gate_there_is_nothing_to_say(gate):
+    api = gate(_GateApi(200, {"gate": "rsm", "stack": "reforger", "version": "0.65.0"}))
+    assert docker_service.gate_warning() is None
+    assert docker_service.gate_warning() is None
+    assert api.asked == 1  # a certain answer is cached
+
+
+def test_an_old_compose_file_is_named(gate):
+    # The socket proxy of an older compose file refuses the path outright.
+    gate(_GateApi(403, {"message": "forbidden"}))
+    warning = docker_service.gate_warning()
+    assert warning["id"] == "docker_gate_missing"
+    assert "older than v0.65.0" in warning["title"]
+
+
+def test_a_gate_for_another_stack_is_a_danger(gate):
+    gate(_GateApi(200, {"gate": "rsm", "stack": "team2"}))
+    warning = docker_service.gate_warning()
+    assert warning["id"] == "docker_gate_stack_mismatch"
+    assert warning["severity"] == "danger"
+
+
+def test_no_warning_on_a_blind_read(gate, monkeypatch):
+    api = gate(_GateApi(200, {}, fail=True))
+    assert docker_service.gate_warning() is None
+    monkeypatch.setattr(docker_service, "daemon_info", lambda: {})
+    api.fail = False
+    assert docker_service.gate_warning() is None  # daemon down: not asked, not cached
+    assert docker_service._gate_known is False

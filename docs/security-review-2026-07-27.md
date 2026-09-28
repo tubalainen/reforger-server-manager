@@ -170,6 +170,31 @@ This is *inherent* to what the tool does, so it cannot be removed — but it can
 > older than 28 unless upgraded, and `rsm check`/`rsm update` warn about one and offer to
 > recreate the stack after replacing the compose file. The structural fix — a Docker gate on a
 > unix socket with no network at all — is planned with #204.
+>
+> **Follow-up fix — 2026-09-28 (v0.65.0, #204; request bodies are now checked).** The socket
+> proxy is replaced by the **Docker gate** (`backend/gate/`): the manager's own image run as a
+> second container with `network_mode: none`, a read-only root, `cap_drop: ALL` and
+> `no-new-privileges`. It alone holds the socket; the manager reaches it over a unix socket in a
+> volume only the two of them share (`DOCKER_HOST=unix:///run/rsm-gate/docker.sock`). No network
+> path leads to the Docker API at all, on any engine version, so the Engine 28 requirement of
+> v0.64.1 is gone. Unlike the path-filtering proxy, the gate reads what it forwards: a
+> default-deny route table; a label check on every container-scoped call
+> (`reforger-manager.stack`), so a manager sees and controls only its own stack's containers;
+> `containers/create` held to the two configured images, the stack's name prefix, forced
+> stack labels, no `Privileged`/`CapAdd`/devices/host or container namespaces/sysctls/other
+> runtimes, host networking for the game-server image only, bind mounts only under the stack's
+> own data and server-file folders (read off the gate's own mounts), named volumes refused;
+> `update` held to the restart policy; `docker info` stripped of host-wide counts. That closes
+> the residual risk above for everything that merely *reaches* the Docker API.
+>
+> **Residual risk:** the bind check is a check on the path, and the daemon resolves symlinks
+> when it mounts — later, at container start. The manager can write its own folders, so code
+> running *inside a manager* could plant a symlink there and have the daemon follow it out.
+> The gate is therefore a boundary against everything outside a manager (game servers and
+> their mods, other stacks, local users) and against manager bugs, but not a sandbox for a
+> manager that has been taken over: the GUI login stays host-root-equivalent and R2/R3 still
+> apply. The race-free fix is to mount through Docker volume **subpaths**, where the daemon
+> opens each path component without following symlinks — tracked as a follow-up.
 
 ---
 

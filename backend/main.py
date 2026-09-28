@@ -101,6 +101,7 @@ async def _crash_monitor():
     ticks = 0
     steamcmd_cleaned = False
     exposure_checked = False
+    gate_checked = False
     while True:
         try:
             if await asyncio.to_thread(docker_service.ping):
@@ -117,6 +118,13 @@ async def _crash_monitor():
                     exposure_checked = docker_service.exposure_known()
                     if warning:
                         logger.error("SECURITY: %s %s", warning["detail"], warning["action"])
+                        gate_checked = True  # the same fix; one message is enough
+                if exposure_checked and not gate_checked:
+                    # A manager on a compose file older than v0.65.0 (#204).
+                    gate = await asyncio.to_thread(docker_service.gate_warning)
+                    gate_checked = docker_service.gate_known()
+                    if gate:
+                        logger.warning("%s. %s %s", gate["title"], gate["detail"], gate["action"])
                 # Recover crashed servers, and bring auto_start ones back after a
                 # reboot / the #113 shutdown that removed their containers.
                 await asyncio.to_thread(instance_service.reconcile_and_recover)
