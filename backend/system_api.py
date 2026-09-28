@@ -53,6 +53,9 @@ def warnings(_user: str = Depends(auth.require_session)):
         gate = docker_service.gate_warning()
         if gate:
             found.append(gate)
+    engine = docker_service.engine_warning()
+    if engine:
+        found.append(engine)
     return {"warnings": found}
 
 

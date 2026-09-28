@@ -28,7 +28,9 @@ class FakeDocker:
             "team2-instance-1": MINE,
             "team1-instance-1": THEIRS,
             "team2-manager": COMPOSE,
+            "team2-instance-9": MINE,  # made before v0.65.0: mounts host folders
         }
+        self.host_configs = {"team2-instance-9": {"Binds": ["/opt/team2/data/x:/x:rw"]}}
         self.seen: list[tuple[str, str, bytes]] = []
         self.down = False
 
@@ -51,10 +53,15 @@ class FakeDocker:
             if ref not in self.containers:
                 return httpx.Response(404, json={"message": f"No such container: {ref}"})
             if path.endswith("/json"):
-                return httpx.Response(200, json={"Id": ref, "Config": {"Labels": self.containers[ref]}})
+                return httpx.Response(200, json={
+                    "Id": ref, "Config": {"Labels": self.containers[ref]},
+                    "HostConfig": self.host_configs.get(ref, {}),
+                })
             if path.endswith("/logs"):
                 return httpx.Response(200, content=b"line 1\nline 2\n")
             return httpx.Response(204)
+        if "/volumes/" in path:
+            return httpx.Response(200, json={"Name": path.rsplit("/", 1)[1]})
         if "/networks/" in path:
             return httpx.Response(200, json={"Name": path.rsplit("/", 1)[1]})
         if path.endswith("/images/create"):
@@ -75,7 +82,8 @@ def gate():
         images=frozenset({SERVER, HELPER}),
         host_network_images=frozenset({SERVER}),
         networks=frozenset({"team2-net"}),
-        bind_roots=("/opt/team2/data",),
+        volumes=frozenset({"team2-data"}),
+        api=(1, 47),
     )
     upstream = httpx.AsyncClient(transport=httpx.MockTransport(fake))
     with TestClient(create_app(scope, upstream)) as client:
@@ -96,7 +104,7 @@ def test_ping_passes_through(gate):
 def test_list_shows_only_this_stack(gate):
     client, _ = gate
     names = [c["Id"] for c in client.get(f"{V}/containers/json?all=1").json()]
-    assert names == ["team2-instance-1", "team2-manager"]
+    assert names == ["team2-instance-1", "team2-manager", "team2-instance-9"]
 
 
 def test_info_is_trimmed(gate):
@@ -140,7 +148,9 @@ def test_logs_are_streamed_through(gate):
 
 def test_create_is_stamped_with_the_stack(gate):
     client, fake = gate
-    body = {"Image": SERVER, "HostConfig": {"Binds": ["/opt/team2/data/i/1:/x:rw"],
+    body = {"Image": SERVER, "HostConfig": {"Mounts": [
+                {"Type": "volume", "Source": "team2-data", "Target": "/x",
+                 "VolumeOptions": {"Subpath": "instances/1"}}],
                                             "NetworkMode": "host"}}
     resp = client.post(f"{V}/containers/create?name=team2-instance-2", json=body)
     assert resp.status_code == 201
@@ -172,6 +182,29 @@ def test_a_pull_naming_its_tag_twice_is_refused(gate):
     resp = client.post(f"{V}/images/create?fromImage=steamcmd/steamcmd:evil&tag=latest")
     assert resp.status_code == 403
     assert not fake.asked("POST", "/images/create")
+
+
+@pytest.mark.parametrize("action", ["start", "restart", "kill", "update"])
+def test_a_container_that_mounts_host_folders_is_not_started_again(gate, action):
+    # The daemon would resolve those paths again, symbolic links and all (#206).
+    client, fake = gate
+    resp = client.post(f"{V}/containers/team2-instance-9/{action}",
+                       json={"RestartPolicy": {"Name": "no"}} if action == "update" else None)
+    assert resp.status_code == 403
+    assert "recreate" in resp.json()["message"]
+    assert not fake.asked("POST", f"/containers/team2-instance-9/{action}")
+
+
+def test_a_container_that_mounts_host_folders_can_still_be_removed(gate):
+    client, fake = gate
+    assert client.post(f"{V}/containers/team2-instance-9/stop").status_code == 204
+    assert client.delete(f"{V}/containers/team2-instance-9?force=1").status_code == 204
+
+
+def test_only_the_stacks_volumes_can_be_inspected(gate):
+    client, _ = gate
+    assert client.get(f"{V}/volumes/team2-data").json()["Name"] == "team2-data"
+    assert client.get(f"{V}/volumes/team1-data").status_code == 404
 
 
 def test_a_create_that_is_not_json_is_refused(gate):

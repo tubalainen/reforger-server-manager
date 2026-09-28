@@ -359,3 +359,108 @@ def test_no_warning_on_a_blind_read(gate, monkeypatch):
     api.fail = False
     assert docker_service.gate_warning() is None  # daemon down: not asked, not cached
     assert docker_service._gate_known is False
+
+
+# --------------------------------------------------------------------------- #
+# Mounting this manager's folders into sibling containers (#206)
+# --------------------------------------------------------------------------- #
+_VOLUME_MOUNTS = [
+    {"Type": "volume", "Name": "team2-data", "Destination": "/data",
+     "Source": "/var/lib/docker/volumes/team2-data/_data"},
+    {"Type": "volume", "Name": "team2-serverfiles-stable", "Destination": "/serverfiles/stable",
+     "Source": "/var/lib/docker/volumes/team2-serverfiles-stable/_data"},
+]
+_BIND_MOUNTS = [
+    {"Type": "bind", "Destination": "/data", "Source": "/opt/rsm/data"},
+]
+
+
+def test_a_folder_of_a_volume_is_mounted_by_subpath(monkeypatch):
+    monkeypatch.setattr(docker_service, "_self_mounts", _VOLUME_MOUNTS)
+    assert docker_service.mount_for("/data/instances/3/profile", "/home/profile") == {
+        "Type": "volume", "Source": "team2-data", "Target": "/home/profile",
+        "ReadOnly": False, "VolumeOptions": {"Subpath": "instances/3/profile"},
+    }
+    # The whole volume needs no subpath.
+    assert docker_service.mount_for("/serverfiles/stable", "/reforger", read_only=True) == {
+        "Type": "volume", "Source": "team2-serverfiles-stable", "Target": "/reforger",
+        "ReadOnly": True,
+    }
+
+
+def test_an_old_compose_file_still_mounts_host_folders(monkeypatch):
+    monkeypatch.setattr(docker_service, "_self_mounts", _BIND_MOUNTS)
+    assert docker_service.mount_for("/data/instances", "/idata") == {
+        "Type": "bind", "Source": "/opt/rsm/data/instances", "Target": "/idata",
+        "ReadOnly": False,
+    }
+
+
+def test_outside_a_container_the_path_is_the_folder():
+    assert docker_service.mount_for("/tmp/x", "/y")["Source"] == "/tmp/x"
+
+
+def test_a_prefix_is_not_a_parent(monkeypatch):
+    monkeypatch.setattr(docker_service, "_self_mounts", _VOLUME_MOUNTS)
+    assert docker_service.mount_for("/database", "/x")["Type"] == "bind"
+
+
+class _VolumeClient:
+    def __init__(self, attrs):
+        self.asked = 0
+        self.volumes = SimpleNamespace(get=self._get)
+        self._attrs = attrs
+
+    def _get(self, name):
+        self.asked += 1
+        return SimpleNamespace(attrs=self._attrs)
+
+
+def test_host_path_names_the_folder_a_bind_volume_points_at(monkeypatch):
+    monkeypatch.setattr(docker_service, "_self_mounts", _VOLUME_MOUNTS)
+    client = _VolumeClient({"Options": {"type": "none", "o": "bind", "device": "/opt/team2/data"},
+                            "Mountpoint": "/var/lib/docker/volumes/team2-data/_data"})
+    monkeypatch.setattr(docker_service, "get_client", lambda: client)
+    assert docker_service.host_path_for("/data/instances/3") == "/opt/team2/data/instances/3"
+    assert docker_service.host_path_for("/data") == "/opt/team2/data"
+    assert client.asked == 1  # remembered
+
+
+def test_host_path_of_a_plain_volume_is_dockers_directory(monkeypatch):
+    # Windows: named volumes live in Docker's own directory.
+    monkeypatch.setattr(docker_service, "_self_mounts", _VOLUME_MOUNTS)
+    client = _VolumeClient({"Options": None,
+                            "Mountpoint": "/var/lib/docker/volumes/team2-data/_data"})
+    monkeypatch.setattr(docker_service, "get_client", lambda: client)
+    assert docker_service.host_path_for("/data/x") == "/var/lib/docker/volumes/team2-data/_data/x"
+
+
+@pytest.fixture()
+def engine(monkeypatch):
+    monkeypatch.setattr(docker_service, "_engine", None)
+    monkeypatch.setattr(docker_service, "_self_mounts", _VOLUME_MOUNTS)
+    monkeypatch.setattr(docker_service.config.settings, "data_dir", "/data")
+
+    def use(version, api):
+        client = SimpleNamespace(version=lambda: {"Version": version, "ApiVersion": api})
+        monkeypatch.setattr(docker_service, "get_client", lambda: client)
+    return use
+
+
+def test_an_engine_too_old_for_subpaths_is_named(engine):
+    engine("25.0.5", "1.44")
+    warning = docker_service.engine_warning()
+    assert warning["id"] == "docker_engine_too_old"
+    assert "25.0.5" in warning["title"]
+
+
+def test_engine_26_is_fine(engine):
+    engine("26.0.0", "1.45")
+    assert docker_service.engine_warning() is None
+
+
+def test_an_old_engine_under_an_old_compose_file_is_not_a_problem(engine, monkeypatch):
+    # Host folders by path need no subpaths.
+    engine("24.0.7", "1.43")
+    monkeypatch.setattr(docker_service, "_self_mounts", _BIND_MOUNTS)
+    assert docker_service.engine_warning() is None

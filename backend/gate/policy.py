@@ -7,13 +7,18 @@ by check_create(). Anything not named here is refused: default deny.
 
 The point is that a manager — even a compromised one — can only see and touch
 its own stack's containers, only start containers from the two images it
-actually uses, and only mount its own folders. Before this, the socket proxy
+actually uses, and only mount its own volumes. Before this, the socket proxy
 filtered by URL alone, so anything that reached it could create a privileged
 container that mounted the host's root (security review R1).
+
+Mounts are named volumes only, never host folders (#206). A host path is
+checked as a string but resolved by the daemon later, following symbolic links,
+so a manager that can write the folder could steer it anywhere. A volume
+subpath is opened by the daemon one component at a time with symbolic links
+refused, and what it opened is what gets mounted — there is nothing to steer.
 """
-import posixpath
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from docker.utils import parse_repository_tag
 
@@ -34,8 +39,11 @@ class Scope:
     host_network_images: frozenset[str]
     # Networks containers may join, besides Docker's built-in bridge/none.
     networks: frozenset[str]
-    # Host folders bind mounts must live under (this stack's data + server files).
-    bind_roots: tuple[str, ...] = field(default=())
+    # Named volumes containers may mount: this stack's data and server files.
+    volumes: frozenset[str] = frozenset()
+    # The daemon's API version. A daemon older than SUBPATH_API does not know a
+    # volume subpath and would mount the WHOLE volume instead.
+    api: tuple[int, int] = (0, 0)
 
 
 @dataclass(frozen=True)
@@ -52,6 +60,8 @@ _VERSION = r"(?:/v(?P<api_major>\d+)\.(?P<api_minor>\d+))?"
 # 1.23 a start request could still bring its own HostConfig. 1.24 is also the
 # oldest the Docker SDK and current daemons speak.
 MIN_API = (1, 24)
+# VolumeOptions.Subpath arrived with API 1.45, Docker Engine 26.0.
+SUBPATH_API = (1, 45)
 # A container or network id or name. No '%': the path is matched raw and
 # forwarded raw, so what is checked here is exactly what the daemon receives.
 _REF = r"[A-Za-z0-9][A-Za-z0-9_.-]*"
@@ -73,6 +83,7 @@ _ROUTES = [
     ({"GET"}, rf"/images/(?P<ref>{_IMAGE})/json", "image", False),
     ({"POST"}, r"/images/create", "pull", True),
     ({"GET"}, rf"/networks/(?P<ref>{_REF})", "network", False),
+    ({"GET"}, rf"/volumes/(?P<ref>{_REF})", "volume", False),
 ]
 _COMPILED = [
     (methods, re.compile(rf"{_VERSION}{pattern}"), kind, write)
@@ -150,7 +161,12 @@ _HOST_FIELDS = frozenset({
     "MemorySwap", "NanoCpus", "CpuShares", "CpuPeriod", "CpuQuota", "CpusetCpus",
     "PidsLimit", "Ulimits", "ExtraHosts", "Dns", "DnsOptions", "DnsSearch",
 })
-_MOUNT_FIELDS = frozenset({"Type", "Source", "Target", "ReadOnly", "Consistency", "TmpfsOptions"})
+_MOUNT_FIELDS = frozenset({
+    "Type", "Source", "Target", "ReadOnly", "Consistency", "VolumeOptions", "TmpfsOptions",
+})
+# Not DriverConfig: naming a volume that does not exist makes Docker create it
+# with that driver config — and the local driver's options can bind any folder.
+_VOLUME_OPTION_FIELDS = frozenset({"Subpath", "NoCopy"})
 _RESTART_FIELDS = frozenset({"Name", "MaximumRetryCount"})
 
 # Namespace settings: 'host' or another container's namespace is refused.
@@ -165,34 +181,62 @@ def _only(obj: dict, fields: frozenset[str], where: str) -> None:
             raise Denied(f"{where}{key} is not allowed")
 
 
-def _under_roots(path: str, roots: tuple[str, ...]) -> bool:
-    if not path.startswith("/"):
-        return False  # a named volume, not a host folder
-    norm = posixpath.normpath(path)
-    return any(norm == r or norm.startswith(r.rstrip("/") + "/") for r in roots)
+def subpath_ok(subpath) -> bool:
+    """A plain relative path inside a volume: no '..', no '.', no leading '/'."""
+    if not isinstance(subpath, str):
+        return False
+    if subpath == "":
+        return True
+    if subpath.startswith("/") or "\\" in subpath or "\x00" in subpath:
+        return False
+    return all(part not in ("", ".", "..") for part in subpath.split("/"))
 
 
-def _check_binds(host: dict, scope: Scope) -> None:
+def _check_mounts(host: dict, scope: Scope) -> None:
     binds = host.get("Binds") or []
     mounts = host.get("Mounts") or []
     if not isinstance(binds, list) or not isinstance(mounts, list):
         raise Denied("HostConfig.Binds and HostConfig.Mounts must be lists")
-    for entry in binds:
-        if not isinstance(entry, str):
-            raise Denied("a bind mount must be a string")
-        source = entry.split(":", 1)[0]
-        if not _under_roots(source, scope.bind_roots):
-            raise Denied(f"bind mount of {source!r} is outside this stack's folders")
+    if binds:
+        raise Denied("host folders cannot be mounted: mount one of this stack's volumes")
     for mount in mounts:
         if not isinstance(mount, dict):
             raise Denied("a mount must be an object")
         _only(mount, _MOUNT_FIELDS, "HostConfig.Mounts[].")
-        kind = mount.get("Type", "volume")
+        kind = mount.get("Type")
         if kind == "tmpfs":
             continue
-        source = str(mount.get("Source") or "")
-        if kind != "bind" or not _under_roots(source, scope.bind_roots):
-            raise Denied(f"{kind} mount of {source!r} is outside this stack's folders")
+        if kind != "volume":
+            raise Denied(f"{kind} mounts are not allowed: mount one of this stack's volumes")
+        source = mount.get("Source")
+        if source not in scope.volumes:
+            raise Denied(f"volume {source!r} is not this stack's")
+        options = mount.get("VolumeOptions")
+        options = {} if options is None else options
+        if not isinstance(options, dict):
+            raise Denied("HostConfig.Mounts[].VolumeOptions must be an object")
+        _only(options, _VOLUME_OPTION_FIELDS, "HostConfig.Mounts[].VolumeOptions.")
+        subpath = options.get("Subpath") or ""
+        if not subpath_ok(subpath):
+            raise Denied(f"volume subpath {subpath!r} must be a plain path inside the volume")
+        if subpath and scope.api < SUBPATH_API:
+            raise Denied(
+                "mounting a folder of a volume needs Docker Engine 26 or newer "
+                f"(this daemon speaks API {scope.api[0]}.{scope.api[1]})"
+            )
+
+
+def host_folder_mounts(container: dict) -> bool:
+    """Does this (inspected) container mount a host folder?
+
+    Only containers from before v0.65.0 do. Starting one would have the daemon
+    resolve those paths again, symbolic links and all, so the gate refuses to
+    (re)start it; the manager recreates it instead.
+    """
+    host = container.get("HostConfig") or {}
+    if host.get("Binds"):
+        return True
+    return any((m or {}).get("Type") == "bind" for m in host.get("Mounts") or [])
 
 
 def _check_network(body: dict, host: dict, image: str, scope: Scope) -> None:
@@ -260,7 +304,7 @@ def check_create(body: dict, name: str | None, scope: Scope) -> dict:
             raise Denied(f"security option {opt!r} is not allowed")
     if str(host.get("Runtime") or "runc") != "runc":
         raise Denied(f"runtime {host.get('Runtime')!r} is not allowed")
-    _check_binds(host, scope)
+    _check_mounts(host, scope)
     _check_network(body, host, image, scope)
 
     labels = body.get("Labels") or {}

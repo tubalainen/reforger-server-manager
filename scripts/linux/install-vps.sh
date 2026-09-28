@@ -163,7 +163,22 @@ if ! docker info >/dev/null 2>&1; then
     docker info >/dev/null 2>&1 || die "The Docker daemon is not running."
 fi
 
+# Docker Engine 26 is the first that can mount one folder of a volume (a volume
+# subpath). Each game server mounts only its own folder that way, which an
+# older engine silently turns into the WHOLE volume, so the Docker gate refuses
+# it there and no server can start (v0.65.0). Unreadable version: say nothing.
 engine_version() { docker version --format '{{.Server.Version}}' 2>/dev/null || true; }
+engine_major() {
+    _m=$(engine_version); _m=${_m%%.*}
+    case "$_m" in ''|*[!0-9]*) printf '' ;; *) printf '%s' "$_m" ;; esac
+}
+if [ -n "$(engine_major)" ] && [ "$(engine_major)" -lt 26 ]; then
+    warn "Docker Engine $(engine_version) is older than 26.0, which this setup requires."
+    say "  The official installer upgrades it:  curl -fsSL https://get.docker.com | sh"
+    confirm "  Upgrade Docker now?" y || die "Docker Engine 26 or newer is required. Upgrade it, then re-run."
+    install_docker
+    [ "$(engine_major)" -ge 26 ] 2>/dev/null || die "Docker is still older than 26.0 — upgrade docker-ce, then re-run."
+fi
 say "  Docker Engine: $(engine_version)"
 say "  Compose plugin: $(docker compose version 2>/dev/null | head -1)"
 

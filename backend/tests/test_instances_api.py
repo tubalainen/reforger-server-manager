@@ -402,8 +402,8 @@ def test_force_carries_the_restore_through_and_says_it_was_forced(logged_in, tmp
         def list(self, **kw):  # no container for this instance
             return []
 
-        def run(self, image, entrypoint=None, command=None, volumes=None, **kw):
-            idir = Path(next(iter(volumes)))
+        def run(self, image, entrypoint=None, command=None, mounts=None, **kw):
+            idir = Path(mounts[0]["Source"])
             for statement in command[1].split(";"):
                 statement = statement.strip()
                 if statement.startswith("tar xzf "):
@@ -411,7 +411,6 @@ def test_force_carries_the_restore_through_and_says_it_was_forced(logged_in, tmp
                         t.extractall(idir, filter="data")
 
     monkeypatch.setattr(instance_service.docker_service, "ping", lambda: True)
-    monkeypatch.setattr(instance_service.docker_service, "host_path_for", lambda p: p)
     monkeypatch.setattr(
         instance_service.docker_service, "get_client",
         lambda: type("C", (), {"containers": FakeContainers()})(),

@@ -13,8 +13,16 @@ SCOPE = policy.Scope(
     images=frozenset({SERVER, HELPER}),
     host_network_images=frozenset({SERVER}),
     networks=frozenset({"team2-net"}),
-    bind_roots=("/opt/rsm-team2/data", "/opt/rsm-team2/serverfiles/stable"),
+    volumes=frozenset({"team2-data", "team2-serverfiles-stable"}),
+    api=(1, 47),
 )
+
+
+def _vol(source, target, subpath="", **extra):
+    mount = {"Type": "volume", "Source": source, "Target": target, **extra}
+    if subpath:
+        mount["VolumeOptions"] = {"Subpath": subpath}
+    return mount
 
 
 def _instance_body(**host):
@@ -24,9 +32,9 @@ def _instance_body(**host):
         "Env": ["SERVER_BIND_PORT=2003"],
         "Labels": {"reforger-manager.role": "instance"},
         "HostConfig": {
-            "Binds": [
-                "/opt/rsm-team2/serverfiles/stable:/reforger:rw",
-                "/opt/rsm-team2/data/instances/1/profile:/home/profile:rw",
+            "Mounts": [
+                _vol("team2-serverfiles-stable", "/reforger"),
+                _vol("team2-data", "/home/profile", "instances/1/profile"),
             ],
             "NetworkMode": "host",
             "RestartPolicy": {"Name": "unless-stopped"},
@@ -113,7 +121,7 @@ def test_unnamed_helper_containers_are_fine():
     helper = {
         "Image": HELPER,
         "HostConfig": {
-            "Binds": ["/opt/rsm-team2/data/instances:/idata:rw"],
+            "Mounts": [_vol("team2-data", "/idata", "instances")],
             "SecurityOpt": ["no-new-privileges:true"],
         },
     }
@@ -163,34 +171,58 @@ def test_anything_that_hands_over_the_host_is_refused(host):
 @pytest.mark.parametrize("binds", [
     ["/:/host"],
     ["/var/run/docker.sock:/var/run/docker.sock"],
-    ["/opt/rsm-team1/data:/data"],                       # the other team's folder
-    ["/opt/rsm-team2/data/../../rsm-team1/data:/data"],  # ...reached with ..
-    ["/opt/rsm-team2/database:/x"],                      # a prefix, not a subfolder
-    ["team1-data:/data"],                                # a named volume
+    ["/opt/rsm-team2/data:/data"],   # even this stack's own folder: never by path (#206)
+    ["team2-data:/data"],            # a volume, but through Binds
 ])
-def test_binds_stay_inside_the_stacks_folders(binds):
-    with pytest.raises(Denied, match="outside this stack's folders"):
+def test_host_folders_are_never_mounted(binds):
+    with pytest.raises(Denied, match="host folders cannot be mounted"):
         policy.check_create(_instance_body(Binds=binds), None, SCOPE)
 
 
-def test_mounts_are_checked_like_binds():
-    ok = _instance_body(Mounts=[
-        {"Type": "bind", "Source": "/opt/rsm-team2/data/x", "Target": "/x"},
+@pytest.mark.parametrize("mount,reason", [
+    ({"Type": "bind", "Source": "/opt/rsm-team2/data/x", "Target": "/x"}, "bind mounts"),
+    ({"Type": "image", "Source": HELPER, "Target": "/x"}, "image mounts"),
+    (_vol("team1-data", "/x"), "not this stack's"),
+    (_vol("reforger-data", "/x", "instances"), "not this stack's"),
+    (_vol("team2-data", "/x", "../team1"), "plain path"),
+    (_vol("team2-data", "/x", "instances/../.."), "plain path"),
+    (_vol("team2-data", "/x", "/etc"), "plain path"),
+    (_vol("team2-data", "/x", "instances//1"), "plain path"),
+    # A missing volume named here would be CREATED with this driver config.
+    (_vol("team2-data", "/x", VolumeOptions={"DriverConfig": {
+        "Name": "local", "Options": {"type": "none", "o": "bind", "device": "/"}}}),
+     "is not allowed"),
+    (_vol("team2-data", "/x", VolumeOptions={"Labels": {"a": "b"}}), "is not allowed"),
+    (_vol("team2-data", "/x", VolumeOptions={"subpath": "x"}), "is not allowed"),
+])
+def test_only_the_stacks_own_volumes_are_mounted(mount, reason):
+    with pytest.raises(Denied, match=reason):
+        policy.check_create(_instance_body(Mounts=[mount]), None, SCOPE)
+
+
+def test_tmpfs_and_whole_volumes_are_fine():
+    body = _instance_body(Mounts=[
+        _vol("team2-data", "/d"),
+        _vol("team2-data", "/p", "instances/1/profile", ReadOnly=True),
         {"Type": "tmpfs", "Target": "/tmp"},
     ])
-    policy.check_create(ok, None, SCOPE)
-    for bad in (
-        {"Type": "bind", "Source": "/etc", "Target": "/x"},
-        {"Type": "volume", "Source": "team1-data", "Target": "/x"},
-    ):
-        with pytest.raises(Denied):
-            policy.check_create(_instance_body(Mounts=[bad]), None, SCOPE)
+    policy.check_create(body, None, SCOPE)
 
 
-def test_no_folders_known_means_no_binds_at_all():
-    blind = policy.Scope("team2", SCOPE.images, SCOPE.host_network_images, SCOPE.networks, ())
-    with pytest.raises(Denied):
-        policy.check_create(_instance_body(), None, blind)
+def test_no_subpaths_on_a_daemon_that_does_not_know_them():
+    # Docker before 26 ignores the subpath and mounts the WHOLE volume.
+    old = policy.Scope("team2", SCOPE.images, SCOPE.host_network_images, SCOPE.networks,
+                       SCOPE.volumes, api=(1, 44))
+    with pytest.raises(Denied, match="Docker Engine 26"):
+        policy.check_create(_instance_body(), None, old)
+    policy.check_create(_instance_body(Mounts=[_vol("team2-data", "/d")]), None, old)
+
+
+def test_host_folder_mounts_are_recognised():
+    assert policy.host_folder_mounts({"HostConfig": {"Binds": ["/x:/y"]}})
+    assert policy.host_folder_mounts({"HostConfig": {"Mounts": [{"Type": "bind"}]}})
+    assert not policy.host_folder_mounts({"HostConfig": {"Mounts": [_vol("team2-data", "/d")]}})
+    assert not policy.host_folder_mounts({})
 
 
 def test_host_networking_is_for_the_game_server_only():
@@ -232,7 +264,7 @@ def test_malformed_bodies_are_refused():
     {"Image": SERVER, "hostConfig": {"Privileged": True}},
     {"Image": SERVER, "image": "alpine:latest"},
     {"Image": SERVER, "HostConfig": {"Mounts": [
-        {"Type": "bind", "Source": "/opt/rsm-team2/data/x", "source": "/", "Target": "/x"}]}},
+        {"Type": "volume", "Source": "team2-data", "source": "team1-data", "Target": "/x"}]}},
     {"Image": SERVER, "HostConfig": {"RestartPolicy": {"name": "always"}}},
     {"Image": SERVER, "NetworkingConfig": {"endpointsConfig": {"team1-net": {}}}},
 ])
@@ -244,6 +276,7 @@ def test_other_spellings_of_a_field_are_refused(body):
 @pytest.mark.parametrize("field", [
     {"Privileged": True},
     {"Binds": ["/:/host"]},
+    {"Mounts": [{"Type": "volume", "Source": "team2-data", "Target": "/d"}]},
     {"PidMode": "host"},
     {"Memory": 1},  # merged in by older daemons even when HostConfig is present
 ])
@@ -286,8 +319,8 @@ def test_the_bodies_the_sdk_really_sends_pass():
     calls = [
         # A game server with host networking (instance_service._create_container).
         dict(image=SERVER, name="team2-instance-1", detach=True, environment={"A": "1"},
-             volumes={"/opt/rsm-team2/serverfiles/stable": {"bind": "/reforger", "mode": "rw"},
-                      "/opt/rsm-team2/data/instances/1/profile": {"bind": "/p", "mode": "rw"}},
+             mounts=[_vol("team2-serverfiles-stable", "/reforger", ReadOnly=False),
+                     _vol("team2-data", "/p", "instances/1/profile", ReadOnly=False)],
              labels={"reforger-manager.role": "instance"}, network_mode="host",
              restart_policy={"Name": "unless-stopped"}),
         # ...and with bridge networking and published ports (Docker Desktop).
@@ -297,7 +330,7 @@ def test_the_bodies_the_sdk_really_sends_pass():
         # A SteamCMD helper (steam_service) and a clean-up helper (instance_service).
         dict(image=HELPER, entrypoint="/bin/sh", command=["-c", "true"], detach=True,
              name="team2-steamcmd-stable-1",
-             volumes={"/opt/rsm-team2/serverfiles/stable": {"bind": "/serverfiles", "mode": "rw"}},
+             mounts=[_vol("team2-serverfiles-stable", "/serverfiles", ReadOnly=False)],
              labels={}, security_opt=["no-new-privileges:true"]),
     ]
     original = APIClient._post_json
@@ -355,7 +388,7 @@ def test_image_allowed(ref, tag, ok):
 def test_image_pinned_by_digest():
     digest = "sha256:" + "a" * 64
     pinned = policy.Scope("team2", frozenset({f"ghcr.io/acemod/arma-reforger@{digest}"}),
-                          frozenset(), frozenset(), ())
+                          frozenset(), frozenset())
     assert policy.image_allowed(pinned, "ghcr.io/acemod/arma-reforger", digest)
     assert policy.image_allowed(pinned, f"ghcr.io/acemod/arma-reforger@{digest}")
     assert not policy.image_allowed(pinned, "ghcr.io/acemod/arma-reforger", "latest")
@@ -374,7 +407,7 @@ def test_list_shows_only_the_stacks_containers():
         _summary(None),
     ]
     assert policy.filter_list(listed, SCOPE) == [listed[0]]
-    default = policy.Scope("reforger", SCOPE.images, frozenset(), frozenset(), ())
+    default = policy.Scope("reforger", SCOPE.images, frozenset(), frozenset())
     assert policy.filter_list(listed, default) == [listed[1], listed[2]]
 
 

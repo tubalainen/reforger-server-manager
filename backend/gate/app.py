@@ -34,6 +34,9 @@ _FORWARD_REQUEST = {"content-type", "x-registry-auth", "x-registry-config"}
 _FORWARD_RESPONSE = {"content-type", "api-version", "docker-experimental", "ostype", "server"}
 
 _METHODS = ["GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
+# Actions after which the daemon (re)mounts a container's volumes and folders —
+# a kill or an update can hand the container to its restart policy.
+_RESTARTS = {"start", "restart", "kill", "update"}
 
 
 def _error(status: int, message: str) -> JSONResponse:
@@ -120,6 +123,11 @@ def create_app(scope: policy.Scope, upstream: httpx.AsyncClient) -> Starlette:
             return _error(404, f"No such container: {route.ref}")
         if route.action == "json" and not query:
             return JSONResponse(found)  # already fetched, and it is ours
+        if route.action in _RESTARTS and policy.host_folder_mounts(found):
+            raise policy.Denied(
+                "this container mounts host folders (made before v0.65.0): remove and "
+                "recreate it instead"
+            )
         if route.action == "update":
             body = policy.check_update(await json_body(request))
             return await forward(request, raw_path, query, body=json.dumps(body).encode())
@@ -153,6 +161,10 @@ def create_app(scope: policy.Scope, upstream: httpx.AsyncClient) -> Starlette:
                 return Response(resp.content, status_code=200,
                                 headers=_headers(resp.headers, _FORWARD_RESPONSE))
             return _error(404, f"network {route.ref} not found")
+        if route.kind == "volume":
+            if route.ref in scope.volumes:
+                return await forward(request, raw_path, query)
+            return _error(404, f"volume {route.ref} not found")
         raise policy.Denied(f"{request.method} {raw_path} is not allowed")
 
     async def handle(request: Request) -> Response:

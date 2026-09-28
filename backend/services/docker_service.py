@@ -1,9 +1,9 @@
 """Thin wrapper around the Docker SDK for managing sibling containers.
 
 The manager runs inside a container but talks to the HOST's Docker daemon
-through the mounted socket. Containers it creates are therefore siblings,
-not children: they attach to the shared compose network, and every bind
-mount handed to the daemon must be expressed as a host path (host_path_for).
+(through its stack's Docker gate). Containers it creates are therefore
+siblings, not children: they attach to the shared compose network, and every
+folder they mount must be named the way the daemon sees it (mount_for).
 """
 import ipaddress
 import logging
@@ -102,17 +102,77 @@ def _own_mounts() -> list:
     return _self_mounts
 
 
-def host_path_for(container_path: str) -> str:
-    """Translate a path inside this container to the host path backing it.
-
-    Sibling containers can only mount host paths. Outside a container
-    (local development) the path is returned unchanged.
-    """
+def _own_mount(container_path: str) -> tuple[dict, str] | None:
+    """(the manager's own mount holding this path, the path inside it)."""
     for mount in _own_mounts():
         dest = (mount.get("Destination") or "").rstrip("/")
         if dest and (container_path == dest or container_path.startswith(dest + "/")):
-            return mount["Source"].rstrip("/") + container_path[len(dest):]
-    return container_path
+            return mount, container_path[len(dest):].strip("/")
+    return None
+
+
+def mount_for(container_path: str, target: str, read_only: bool = False) -> dict:
+    """A mount of one of this manager's folders into a sibling container.
+
+    Since v0.65.0 the data and server-file folders are named volumes, and a
+    folder inside one is mounted as the volume plus a subpath (#206). The daemon
+    opens every part of a subpath with symbolic links refused and mounts what it
+    opened, so a link planted in the folder cannot lead the mount anywhere else
+    — which a host path, resolved by the daemon later, could not promise. The
+    Docker gate accepts nothing else.
+
+    On a compose file from before v0.65.0 the folders are host folders, and so
+    is the mount. Outside a container (development) the path is used as it is.
+    Returned in the Docker API's shape, for the SDK's `mounts=[...]`.
+    """
+    found = _own_mount(container_path)
+    if found is None:
+        return {"Type": "bind", "Source": container_path, "Target": target,
+                "ReadOnly": read_only}
+    mount, inside = found
+    if mount.get("Type") == "volume" and mount.get("Name"):
+        spec = {"Type": "volume", "Source": mount["Name"], "Target": target,
+                "ReadOnly": read_only}
+        if inside:
+            spec["VolumeOptions"] = {"Subpath": inside}
+        return spec
+    source = mount["Source"].rstrip("/") + (f"/{inside}" if inside else "")
+    return {"Type": "bind", "Source": source, "Target": target, "ReadOnly": read_only}
+
+
+_volume_dirs: dict[str, str] = {}
+
+
+def _volume_dir(mount: dict) -> str:
+    """Where a volume's files are on the host: the folder a bind volume points
+    at (Linux: ./data next to the compose file), else Docker's own directory."""
+    name = mount["Name"]
+    if name not in _volume_dirs:
+        try:
+            attrs = get_client().volumes.get(name).attrs
+        except DockerException as exc:
+            logger.info("Could not inspect volume %s: %s", name, exc)
+            return mount["Source"].rstrip("/")  # not cached: ask again next time
+        options = attrs.get("Options") or {}
+        device = options.get("device") if "bind" in str(options.get("o", "")).split(",") else ""
+        _volume_dirs[name] = str(device or attrs.get("Mountpoint") or mount["Source"]).rstrip("/")
+    return _volume_dirs[name]
+
+
+def host_path_for(container_path: str) -> str:
+    """Where a path inside this container lives on the host — for showing it.
+
+    Outside a container (local development) the path is returned unchanged.
+    """
+    found = _own_mount(container_path)
+    if found is None:
+        return container_path
+    mount, inside = found
+    if mount.get("Type") == "volume" and mount.get("Name"):
+        base = _volume_dir(mount)
+    else:
+        base = mount["Source"].rstrip("/")
+    return base + (f"/{inside}" if inside else "")
 
 
 # --------------------------------------------------------------------------- #
@@ -434,6 +494,62 @@ def gate_warning() -> dict | None:
             ),
         }
     return None
+
+
+# --------------------------------------------------------------------------- #
+# Is Docker new enough to mount a folder of a volume? (#206)
+# --------------------------------------------------------------------------- #
+# VolumeOptions.Subpath arrived with API 1.45, Docker Engine 26.0. An older
+# daemon rejects nothing — it ignores the subpath and mounts the whole volume —
+# so the gate refuses such mounts there, and the GUI says why servers fail.
+SUBPATH_MIN_API = (1, 45)
+
+_engine: tuple[str, tuple[int, int]] | None = None
+
+
+def _engine_version() -> tuple[str, tuple[int, int]] | None:
+    """(engine version, API version) of the daemon, or None when unreadable."""
+    global _engine
+    if _engine is None:
+        try:
+            v = get_client().version()
+            major, minor = (int(p) for p in str(v.get("ApiVersion", "")).split(".")[:2])
+        except (DockerException, OSError, ValueError, AttributeError) as exc:
+            logger.info("Could not read the Docker version: %s", exc)
+            return None  # not cached: ask again next time
+        _engine = (str(v.get("Version", "")), (major, minor))
+    return _engine
+
+
+def uses_volumes() -> bool:
+    """Is this manager's data a named volume (the compose files since v0.65.0)?"""
+    found = _own_mount(config.settings.data_dir)
+    return found is not None and found[0].get("Type") == "volume"
+
+
+def engine_warning() -> dict | None:
+    """A GUI warning when Docker is too old for the volume mounts servers need."""
+    if not uses_volumes():
+        return None
+    engine = _engine_version()
+    if engine is None or engine[1] >= SUBPATH_MIN_API:
+        return None  # new enough — or not known yet, and never warn on a blind read
+    return {
+        "id": "docker_engine_too_old",
+        "severity": "danger",
+        "title": f"Docker Engine {engine[0]} is too old: servers cannot start",
+        "detail": (
+            "Since v0.65.0 each server mounts only its own folder of this install's "
+            "data volume, which needs Docker Engine 26.0 or newer. Until Docker is "
+            "updated, starting a server, downloading server files and the other "
+            "jobs that run in a container fail."
+        ),
+        "action": (
+            "Whoever manages this machine should update Docker. On Linux the official "
+            "installer upgrades an existing install: curl -fsSL https://get.docker.com "
+            "| sudo sh. On Windows, update Docker Desktop."
+        ),
+    }
 
 
 def exposure_known() -> bool:

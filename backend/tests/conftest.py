@@ -39,6 +39,20 @@ def client(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _not_in_a_container(monkeypatch):
+    """Tests run outside a container: every folder is mounted by its own path.
+
+    The manager learns how its folders are mounted by inspecting its own
+    container, once, and remembers it. Pinning the answer keeps one test's fake
+    Docker client from deciding it for the rest.
+    """
+    from services import docker_service
+
+    monkeypatch.setattr(docker_service, "_self_mounts", [])
+    monkeypatch.setattr(docker_service, "_volume_dirs", {})
+
+
+@pytest.fixture(autouse=True)
 def _clean_db():
     """Each test starts with empty tables (the SQLite file is shared)."""
     from sqlmodel import Session, delete

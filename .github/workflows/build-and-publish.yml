@@ -93,7 +93,8 @@ jobs:
           # The default stack keeps the pre-stacks names; team2 is a second install.
           for s in reforger team2; do
             dir="$RUNNER_TEMP/$s"
-            mkdir -p "$dir"
+            # The compose file binds its volumes to these; they must exist.
+            mkdir -p "$dir/data" "$dir/serverfiles/stable" "$dir/serverfiles/experimental"
             cp docker-compose.yaml "$dir/"
           done
           common="MANAGER_VERSION=e2e

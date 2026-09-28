@@ -88,10 +88,11 @@ services:
       reforger-manager.rcon_ports: ${RCON_PORT_RANGE:-19999-20018}
     # NOTE: deliberately no 'ports:'. The GUI is reachable only via Caddy.
     volumes:
-      - ./data:/data
+      # data/ and serverfiles/ next to this file (see 'volumes' at the bottom).
+      - reforger-data:/data
       - docker-gate:/run/rsm-gate   # the gate's socket; never the raw one
-      - ./serverfiles/stable:/serverfiles/stable:ro
-      - ./serverfiles/experimental:/serverfiles/experimental:ro
+      - reforger-serverfiles-stable:/serverfiles/stable:ro
+      - reforger-serverfiles-experimental:/serverfiles/experimental:ro
     networks:
       - proxy          # inbound from Caddy
       - reforger-net   # shared with the game server containers
@@ -123,12 +124,6 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - docker-gate:/run/rsm-gate
-      # The folders this stack's containers may mount: the gate reads their
-      # host paths off these mounts, so they must be the same folders the
-      # manager mounts above. It never reads what is in them.
-      - ./data:/stack/data:ro
-      - ./serverfiles/stable:/stack/serverfiles/stable:ro
-      - ./serverfiles/experimental:/stack/serverfiles/experimental:ro
 
 # Two networks, so that every component can reach exactly what it needs and
 # nothing else (the Docker gate has none at all):
@@ -156,6 +151,28 @@ volumes:
     name: ${RSM_STACK:-reforger}-caddy-data
   caddy-config:
     name: ${RSM_STACK:-reforger}-caddy-config
+  # This stack's data and downloaded server files. On disk they are plain
+  # folders next to this file (data/ and serverfiles/), easy to inspect and back
+  # up; Docker knows them as named volumes bound to those folders. That lets a
+  # server mount just its own folder of one — a volume subpath, which Docker
+  # opens with symbolic links refused, so nothing planted in a folder can lead
+  # the mount anywhere else (#206). Needs Docker Engine 26 or newer.
+  #
+  # The folders must exist before `docker compose up`: create them with
+  #   mkdir -p data serverfiles/stable serverfiles/experimental
+  # (the installers do). The names are how the Docker gate knows them.
+  reforger-data:
+    name: ${RSM_STACK:-reforger}-data
+    driver: local
+    driver_opts: {type: none, o: bind, device: ./data}
+  reforger-serverfiles-stable:
+    name: ${RSM_STACK:-reforger}-serverfiles-stable
+    driver: local
+    driver_opts: {type: none, o: bind, device: ./serverfiles/stable}
+  reforger-serverfiles-experimental:
+    name: ${RSM_STACK:-reforger}-serverfiles-experimental
+    driver: local
+    driver_opts: {type: none, o: bind, device: ./serverfiles/experimental}
   # Holds the gate's unix socket; shared by this stack's manager and gate only.
   docker-gate:
     name: ${RSM_STACK:-reforger}-docker-gate

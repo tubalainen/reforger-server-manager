@@ -96,12 +96,6 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - docker-gate:/run/rsm-gate
-      # The volumes this stack's containers may mount: the gate reads where
-      # they live off these mounts, so they must be the same volumes the
-      # manager mounts above. It never reads what is in them.
-      - reforger-data:/stack/data:ro
-      - reforger-serverfiles-stable:/stack/serverfiles/stable:ro
-      - reforger-serverfiles-experimental:/stack/serverfiles/experimental:ro
 
   # OPTIONAL local AI for the template wizard's "AI order" button (#199). Not
   # started unless the 'ollama' profile is on: add COMPOSE_PROFILES=ollama to
@@ -143,6 +137,9 @@ networks:
   reforger-ai:
     name: ${RSM_STACK:-reforger}-ai
 
+# The data and server-file volumes are the ones the Docker gate lets this
+# stack's containers mount, by these names; a server mounts just its own folder
+# of one (a volume subpath, #206), which needs Docker Desktop 4.29 or newer.
 volumes:
   reforger-data:
     name: ${RSM_STACK:-reforger}-data

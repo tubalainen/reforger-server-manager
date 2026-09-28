@@ -125,6 +125,10 @@ async def _crash_monitor():
                     gate_checked = docker_service.gate_known()
                     if gate:
                         logger.warning("%s. %s %s", gate["title"], gate["detail"], gate["action"])
+                    engine = await asyncio.to_thread(docker_service.engine_warning)
+                    if engine:
+                        logger.error("%s. %s %s", engine["title"], engine["detail"],
+                                     engine["action"])
                 # Recover crashed servers, and bring auto_start ones back after a
                 # reboot / the #113 shutdown that removed their containers.
                 await asyncio.to_thread(instance_service.reconcile_and_recover)

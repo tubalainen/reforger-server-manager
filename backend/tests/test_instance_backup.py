@@ -91,7 +91,6 @@ def _fake_container_run(monkeypatch, idir):
         instance_service.docker_service, "get_client",
         lambda: type("C", (), {"containers": FakeContainers()})(),
     )
-    monkeypatch.setattr(instance_service.docker_service, "host_path_for", lambda p: p)
     return seen
 
 

@@ -10,6 +10,7 @@ the host or another stack is refused. Exits non-zero on any failure. The CI job
 'gate-e2e' runs it once from each of two stacks on one Docker host.
 """
 import os
+import shutil
 import sys
 
 import docker
@@ -51,6 +52,8 @@ info = docker_service.gate_info() or {}
 check("the gate describes itself", info.get("gate") == "rsm" and info.get("stack") == STACK)
 check("no gate warning in the GUI", docker_service.gate_warning() is None)
 check("no Docker API exposure warning", docker_service.docker_api_exposure() is None)
+check("no Docker Engine warning", docker_service.engine_warning() is None)
+check("the data is a named volume", docker_service.uses_volumes())
 
 # --- What this stack needs goes through ---------------------------------------
 listed = client.containers.list(all=True)
@@ -63,8 +66,17 @@ check(
 own = client.containers.get(f"{STACK}-manager")
 check("the manager can inspect itself", own.labels.get("reforger-manager.stack") == STACK)
 
+# The folder the data volume is bound to — the data/ folder of this stack.
 data_host = docker_service.host_path_for("/data")
-check(f"/data maps to a host path ({data_host})", data_host.startswith("/") and data_host != "/data")
+check(f"/data is the host folder {data_host}",
+      data_host.startswith("/") and data_host.endswith("/data") and data_host != "/data")
+check("inspect this stack's data volume", client.volumes.get(f"{STACK}-data").name == f"{STACK}-data")
+
+# A folder of the volume, and a symbolic link out of it (#206).
+work = "/data/e2e"
+shutil.rmtree(work, ignore_errors=True)
+os.makedirs(f"{work}/sub")
+os.symlink("/", f"{work}/escape")
 
 try:
     client.images.pull(HELPER)
@@ -75,12 +87,12 @@ except APIError as exc:
 helper = None
 try:
     helper = client.containers.create(
-        HELPER, ["true"], name=docker_service.container_name("e2e-helper"),
-        volumes={data_host: {"bind": "/d", "mode": "ro"}},
+        HELPER, ["test", "-d", "/d"], name=docker_service.container_name("e2e-helper"),
+        mounts=[docker_service.mount_for(f"{work}/sub", "/d", read_only=True)],
         labels={"reforger-manager.role": "e2e"},  # no stack label: the gate adds it
     )
     labels = helper.labels
-    check("create a helper that mounts this stack's data", True)
+    check("create a helper that mounts one folder of this stack's data", True)
     check("the gate stamped it with the stack",
           labels.get("reforger-manager.stack") == STACK
           and labels.get("reforger-manager.managed") == "true")
@@ -95,6 +107,27 @@ finally:
             check("remove it", True)
         except APIError as exc:
             check(f"remove it ({exc})", False)
+
+# The mount the gate cannot see through: the path is plain, the folder is a
+# symbolic link to the host's root. The daemon must refuse to follow it.
+escape = None
+try:
+    escape = client.containers.create(
+        HELPER, ["ls", "/host"], mounts=[docker_service.mount_for(f"{work}/escape", "/host")])
+    try:
+        escape.start()
+        check("a symbolic link out of the volume is refused by Docker", False)
+    except APIError as exc:
+        check(f"a symbolic link out of the volume is refused by Docker ({exc.explanation})", True)
+except APIError as exc:
+    # Refused already at create is fine too — but by Docker, not by the gate,
+    # which has no way to see the link.
+    check(f"a symbolic link out of the volume is refused by Docker ({exc})",
+          exc.status_code != 403)
+finally:
+    if escape is not None:
+        escape.remove(force=True)
+shutil.rmtree(work, ignore_errors=True)
 
 check("inspect this stack's network", client.networks.get(f"{STACK}-net").name == f"{STACK}-net")
 daemon = client.info()
@@ -113,6 +146,11 @@ try:
     check(f"{OTHER}-net is invisible", False)
 except NotFound:
     check(f"{OTHER}-net is invisible", True)
+try:
+    client.volumes.get(f"{OTHER}-data")
+    check(f"{OTHER}-data is invisible", False)
+except NotFound:
+    check(f"{OTHER}-data is invisible", True)
 
 # --- The manager's own container is readable, not writable --------------------
 refused("change the manager's own restart policy",
@@ -124,6 +162,17 @@ refused("create a privileged container",
         lambda: client.containers.create(HELPER, privileged=True))
 refused("mount the host's root", lambda: client.containers.create(
     HELPER, volumes={"/": {"bind": "/host", "mode": "rw"}}))
+refused("mount this stack's own data folder by its host path", lambda: client.containers.create(
+    HELPER, volumes={data_host: {"bind": "/d", "mode": "rw"}}))
+refused("mount the other stack's data volume", lambda: client.containers.create(
+    HELPER, mounts=[{"Type": "volume", "Source": f"{OTHER}-data", "Target": "/d"}]))
+refused("mount a volume with driver options", lambda: client.containers.create(
+    HELPER, mounts=[{"Type": "volume", "Source": f"{STACK}-data", "Target": "/d",
+                     "VolumeOptions": {"DriverConfig": {"Name": "local", "Options": {
+                         "type": "none", "o": "bind", "device": "/"}}}}]))
+refused("a subpath that climbs out", lambda: client.containers.create(
+    HELPER, mounts=[{"Type": "volume", "Source": f"{STACK}-data", "Target": "/d",
+                     "VolumeOptions": {"Subpath": "../.."}}]))
 refused("mount the Docker socket", lambda: client.containers.create(
     HELPER, volumes={"/var/run/docker.sock": {"bind": "/s", "mode": "rw"}}))
 refused("mount a named volume", lambda: client.containers.create(

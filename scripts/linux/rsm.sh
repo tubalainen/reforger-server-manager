@@ -94,6 +94,7 @@ have_tty() { (exec < /dev/tty) 2>/dev/null; }
 #   * compose file — diffed against the current release; refreshing is offered,
 #     and the old file is kept as a .bak first.
 check_setup_files() {
+    check_docker_engine
     tmp=$(mktemp -d) || return 0
     trap 'rm -rf "$tmp"' EXIT
 
@@ -147,6 +148,23 @@ check_setup_files() {
     rm -rf "$tmp"; trap - EXIT
 }
 
+# Docker Engine 26 is the first that can mount one folder of a volume, which is
+# how each game server mounts its own folder since v0.65.0. An older engine
+# would mount the whole volume, so the Docker gate refuses and servers cannot
+# start. Unreadable version: say nothing rather than guess.
+check_docker_engine() {
+    v=$(docker version --format '{{.Server.Version}}' 2>/dev/null) || v=''
+    case "${v%%.*}" in
+        ''|*[!0-9]*) return 0 ;;
+    esac
+    if [ "${v%%.*}" -lt 26 ]; then
+        echo
+        echo "  WARNING: Docker Engine $v is older than 26.0, which this release needs"
+        echo "  to start game servers. Update Docker (then run 'rsm restart'):"
+        echo "    curl -fsSL https://get.docker.com | sh"
+    fi
+}
+
 # A new compose file changes nothing until the stack is recreated: a plain
 # `up -d` does not rebuild a network whose options changed. `down` first.
 apply_compose_change() {
@@ -154,6 +172,8 @@ apply_compose_change() {
     echo
     echo "  The new compose file takes effect when the stack is recreated."
     if have_tty && [ "$(ask_tty '  Recreate it now (game servers stop briefly; auto-start ones come back)? [y/N] ')" = "y" ]; then
+        # The compose file binds its volumes to these folders; they must exist.
+        mkdir -p data serverfiles/stable serverfiles/experimental
         dc down && remove_legacy_network && dc up -d
     else
         echo "  Do it later with:  sudo rsm restart"

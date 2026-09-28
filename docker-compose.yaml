@@ -57,17 +57,17 @@ services:
       #   RCON  RCON_PORT_RANGE  19999-20018/udp   (only if used remotely)
       - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-7780}:8080"
     volumes:
-      # Manager state: SQLite DB, per-instance configs and profiles.
+      # Manager state: SQLite DB, per-instance configs and profiles — the
+      # data/ folder next to this file (see 'volumes' at the bottom).
       # Ownership is fixed automatically by the container entrypoint.
-      - ./data:/data
+      - reforger-data:/data
       # The gate's socket. The raw Docker socket is deliberately NOT mounted
       # here: only the gate holds it.
       - docker-gate:/run/rsm-gate
-      # Downloaded server files, one folder per branch: written by the
-      # steamcmd download jobs, mounted into each server instance.
-      # Kept as plain local folders so they are easy to inspect and back up.
-      - ./serverfiles/stable:/serverfiles/stable:ro
-      - ./serverfiles/experimental:/serverfiles/experimental:ro
+      # Downloaded server files, one folder per branch (serverfiles/): written
+      # by the steamcmd download jobs, mounted into each server instance.
+      - reforger-serverfiles-stable:/serverfiles/stable:ro
+      - reforger-serverfiles-experimental:/serverfiles/experimental:ro
     networks:
       - reforger-net
       # Private link to the optional Ollama service below (#199).
@@ -84,7 +84,7 @@ services:
   #   * other stacks' containers do not exist, as far as this manager can tell;
   #   * containers may only be created from the two images in .env, with this
   #     stack's name and label, never privileged, never in the host's process
-  #     or user namespaces, and mounting nothing but this stack's own folders;
+  #     or user namespaces, and mounting nothing but this stack's own volumes;
   #   * exec, build, volumes, swarm, secrets, plugins and the rest are refused.
   # It has no network at all, so nothing can reach it over one — not the game
   # servers (host networking, #150) and not the host. The rules are in
@@ -111,12 +111,6 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - docker-gate:/run/rsm-gate
-      # The folders this stack's containers may mount: the gate reads their
-      # host paths off these mounts, so they must be the same folders the
-      # manager mounts above. It never reads what is in them.
-      - ./data:/stack/data:ro
-      - ./serverfiles/stable:/stack/serverfiles/stable:ro
-      - ./serverfiles/experimental:/stack/serverfiles/experimental:ro
 
   # OPTIONAL local AI for the template wizard's "AI order" button (#199). Not
   # started unless the 'ollama' profile is on: add COMPOSE_PROFILES=ollama to
@@ -159,6 +153,28 @@ networks:
     name: ${RSM_STACK:-reforger}-ai
 
 volumes:
+  # This stack's data and downloaded server files. On disk they are plain
+  # folders next to this file (data/ and serverfiles/), easy to inspect and back
+  # up; Docker knows them as named volumes bound to those folders. That lets a
+  # server mount just its own folder of one — a volume subpath, which Docker
+  # opens with symbolic links refused, so nothing planted in a folder can lead
+  # the mount anywhere else (#206). Needs Docker Engine 26 or newer.
+  #
+  # The folders must exist before `docker compose up`: create them with
+  #   mkdir -p data serverfiles/stable serverfiles/experimental
+  # (the installers do). The names are how the Docker gate knows them.
+  reforger-data:
+    name: ${RSM_STACK:-reforger}-data
+    driver: local
+    driver_opts: {type: none, o: bind, device: ./data}
+  reforger-serverfiles-stable:
+    name: ${RSM_STACK:-reforger}-serverfiles-stable
+    driver: local
+    driver_opts: {type: none, o: bind, device: ./serverfiles/stable}
+  reforger-serverfiles-experimental:
+    name: ${RSM_STACK:-reforger}-serverfiles-experimental
+    driver: local
+    driver_opts: {type: none, o: bind, device: ./serverfiles/experimental}
   # Holds the gate's unix socket; shared by this stack's manager and gate only.
   docker-gate:
     name: ${RSM_STACK:-reforger}-docker-gate
