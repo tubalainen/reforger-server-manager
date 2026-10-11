@@ -4,21 +4,17 @@
 // This is deliberately not the wizard's Mods step: a mod template has no
 // scenario, so there is no "scenario mod", no dependency graph to keep whole and
 // nothing to demote — every entry is a plain top-level addon, exactly like adding
-// a single mod in the wizard (#97), and the array order is the load order (#164)
-// that survives into whichever server template loads this list.
+// a single mod in the wizard (#97). The list keeps the order mods were added in;
+// it is not rearranged here (#216) — load order is the server template's job.
+// Each mod can carry a comment (#216), which stays on the list: loading the list
+// into a server template does not copy it.
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
 import { formatBytes } from '../format'
-import {
-  extractModIds,
-  mergeResolved,
-  moveMod,
-  normalizeMods,
-  reorderMods,
-  sortModsByAdded,
-  sortModsByName,
-} from '../mods'
+import { extractModIds, mergeResolved, normalizeMods } from '../mods'
+
+const COMMENT_MAX = 200 // backend MOD_COMMENT_MAX
 
 const props = defineProps({ id: { type: [String, Number], default: null } })
 const router = useRouter()
@@ -27,6 +23,9 @@ const editing = computed(() => props.id != null)
 const name = ref('')
 const description = ref('')
 const mods = ref([])
+// Comments by modId, kept beside the list rather than on each row: the shared
+// mod helpers (normalizeMods, mergeResolved) rebuild rows and know nothing of them.
+const comments = reactive({})
 const loading = ref(true)
 const saving = ref(false)
 const error = ref('')
@@ -49,6 +48,7 @@ onMounted(async () => {
       name.value = mt.name
       description.value = mt.description
       mods.value = normalizeMods(mt.mods)
+      for (const m of mt.mods) if (m.comment) comments[m.modId] = m.comment
       hydrate()
     } catch (e) {
       error.value = e.message
@@ -160,53 +160,13 @@ async function submitSearch() {
 
 function removeMod(id) {
   mods.value = mods.value.filter((m) => m.modId !== id)
+  delete comments[id]
   notice.value = ''
 }
 
 function unlockAll() {
   mods.value = mods.value.map((m) => ({ ...m, version: null }))
   notice.value = 'All mods now follow the latest Workshop version.'
-}
-
-function sortByName() {
-  mods.value = sortModsByName(mods.value)
-  notice.value = 'Mods sorted by name.'
-}
-
-function sortByAdded() {
-  mods.value = sortModsByAdded(mods.value)
-  notice.value = 'Mods sorted in the order they were added.'
-}
-
-function moveOne(id, dir) {
-  mods.value = moveMod(mods.value, id, dir)
-}
-
-// Drag and drop, as on the wizard's mod list (#164): native HTML5 events, with
-// the ↑ ↓ buttons kept as the keyboard and touch path.
-const drag = reactive({ from: -1, over: -1 })
-
-function onDragStart(i, event) {
-  drag.from = i
-  drag.over = i
-  if (event.dataTransfer) {
-    event.dataTransfer.effectAllowed = 'move'
-    event.dataTransfer.setData('text/plain', String(i)) // Firefox needs this
-  }
-}
-function onDragOver(i, event) {
-  if (drag.from < 0) return
-  event.preventDefault()
-  drag.over = i
-}
-function onDrop(i) {
-  if (drag.from >= 0) mods.value = reorderMods(mods.value, drag.from, i)
-  drag.from = -1
-  drag.over = -1
-}
-function onDragEnd() {
-  drag.from = -1
-  drag.over = -1
 }
 
 function lockOptions(m) {
@@ -220,7 +180,11 @@ const canSave = computed(() => !!name.value.trim() && !saving.value)
 async function save() {
   saving.value = true
   error.value = ''
-  const body = { name: name.value.trim(), description: description.value, mods: mods.value }
+  const body = {
+    name: name.value.trim(),
+    description: description.value,
+    mods: mods.value.map((m) => ({ ...m, comment: (comments[m.modId] || '').trim() })),
+  }
   try {
     if (editing.value) {
       await api(`/api/mod-templates/${props.id}`, { method: 'PUT', body })
@@ -334,18 +298,6 @@ async function save() {
             <div class="btn-group btn-group-sm">
               <button
                 class="btn btn-outline-secondary"
-                :disabled="mods.length < 2"
-                title="Sort the mods alphabetically"
-                @click="sortByName"
-              >Sort A–Z</button>
-              <button
-                class="btn btn-outline-secondary"
-                :disabled="mods.length < 2"
-                title="Sort the mods in the order they were added"
-                @click="sortByAdded"
-              >Sort as added</button>
-              <button
-                class="btn btn-outline-secondary"
                 :disabled="!anyLocked"
                 title="Clear every version lock so all mods follow the latest Workshop release"
                 @click="unlockAll"
@@ -358,63 +310,52 @@ async function save() {
           </div>
 
           <div v-else class="text-secondary small mb-1">
-            This order is carried over when the list is loaded into a server template.
-            Drag a row (or use ↑ ↓) to change it.
+            The comment is your own note — it stays on this list and is not copied
+            into a server template.
           </div>
 
           <ul v-if="mods.length" class="list-group mb-2">
             <li
-              v-for="(m, i) in mods"
+              v-for="m in mods"
               :key="m.modId"
-              class="list-group-item d-flex justify-content-between align-items-center py-2"
-              :class="{
-                'opacity-50': drag.from === i,
-                'border-primary border-2': drag.over === i && drag.from !== i && drag.from >= 0,
-              }"
-              draggable="true"
-              @dragstart="onDragStart(i, $event)"
-              @dragover="onDragOver(i, $event)"
-              @drop="onDrop(i)"
-              @dragend="onDragEnd"
+              class="list-group-item py-2"
             >
-              <span
-                class="text-secondary me-2 flex-shrink-0 text-nowrap"
-                style="cursor: grab"
-                title="Drag to reorder"
-              >
-                <span class="font-monospace small">{{ i + 1 }}</span> ⠿
-              </span>
-              <div class="me-2 text-truncate">
-                <span class="fw-semibold">{{ m.name || m.modId }}</span>
-                <span
-                  v-if="m.provides_scenarios"
-                  class="badge text-bg-info ms-1"
-                  title="This mod publishes its own scenario(s). A server runs the scenario picked in the server template — loading this list adds the mod for its content."
-                >+ scenario</span>
-                <small class="text-secondary d-block">{{ m.modId }}</small>
-              </div>
-              <select
-                v-model="m.version"
-                class="form-select form-select-sm w-auto ms-auto me-2 flex-shrink-0"
-                :title="m.version ? 'Locked to v' + m.version : 'Follows the latest Workshop release'"
-              >
-                <option :value="null">latest</option>
-                <option v-for="v in lockOptions(m)" :key="v" :value="v">🔒 v{{ v }}</option>
-              </select>
-              <div class="btn-group btn-group-sm flex-shrink-0">
-                <button
-                  class="btn btn-outline-secondary"
-                  :disabled="i === 0"
-                  title="Move up"
-                  @click="moveOne(m.modId, -1)"
-                >↑</button>
-                <button
-                  class="btn btn-outline-secondary"
-                  :disabled="i === mods.length - 1"
-                  title="Move down"
-                  @click="moveOne(m.modId, 1)"
-                >↓</button>
-                <button class="btn btn-outline-danger" title="Remove" @click="removeMod(m.modId)">✕</button>
+              <div class="row g-2 align-items-center">
+                <div class="col-12 col-md-4 text-truncate">
+                  <span class="fw-semibold">{{ m.name || m.modId }}</span>
+                  <span
+                    v-if="m.provides_scenarios"
+                    class="badge text-bg-info ms-1"
+                    title="This mod publishes its own scenario(s). A server runs the scenario picked in the server template — loading this list adds the mod for its content."
+                  >+ scenario</span>
+                  <small class="text-secondary d-block">{{ m.modId }}</small>
+                </div>
+                <div class="col">
+                  <input
+                    v-model="comments[m.modId]"
+                    class="form-control form-control-sm"
+                    :maxlength="COMMENT_MAX"
+                    placeholder="Comment (optional)"
+                    :aria-label="`Comment on ${m.name || m.modId}`"
+                  />
+                </div>
+                <div class="col-auto d-flex align-items-center">
+                  <select
+                    v-model="m.version"
+                    class="form-select form-select-sm me-2"
+                    style="width: 8rem"
+                    :title="m.version ? 'Locked to v' + m.version : 'Follows the latest Workshop release'"
+                  >
+                    <option :value="null">latest</option>
+                    <option v-for="v in lockOptions(m)" :key="v" :value="v">🔒 v{{ v }}</option>
+                  </select>
+                  <button
+                    class="btn btn-sm btn-outline-danger"
+                    title="Remove"
+                    :aria-label="`Remove ${m.name || m.modId}`"
+                    @click="removeMod(m.modId)"
+                  >✕</button>
+                </div>
               </div>
             </li>
           </ul>

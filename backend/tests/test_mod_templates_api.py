@@ -141,3 +141,43 @@ def test_deleting_a_mod_template_leaves_its_mods_prunable(logged_in):
     overview = logged_in.get("/api/mods").json()["mods"]
     assert all(m["orphaned"] for m in overview)  # kept, but nothing lists them now
     assert logged_in.post("/api/mods/rescan").json()["pruned"] == 2
+
+
+def test_each_mod_keeps_its_comment(logged_in):
+    """#216: a mod on a mod list carries the admin's own note."""
+    mid = logged_in.post("/api/mod-templates", json=_spec(mods=[
+        {"modId": A, "name": "Alpha", "comment": "  needed for the AI  "},
+        {"modId": B, "name": "Bravo"},
+    ])).json()["id"]
+    mods = logged_in.get(f"/api/mod-templates/{mid}").json()["mods"]
+    assert [m["comment"] for m in mods] == ["needed for the AI", ""]
+
+    too_long = _spec(mods=[{"modId": A, "comment": "x" * 201}])
+    assert logged_in.put(f"/api/mod-templates/{mid}", json=too_long).status_code == 422
+
+
+def test_change_log_records_comment_edits(logged_in):
+    mid = logged_in.post("/api/mod-templates", json=_spec(mods=[
+        {"modId": A, "name": "Alpha"},
+        {"modId": B, "name": "Bravo", "comment": "old note"},
+    ])).json()["id"]
+
+    logged_in.put(f"/api/mod-templates/{mid}", json=_spec(mods=[
+        {"modId": A, "name": "Alpha", "comment": "keeps the AI fed"},
+        {"modId": B, "name": "Bravo"},
+        {"modId": C, "name": "Charlie", "comment": "brand new"},
+    ]))
+    summaries = [e["summary"] for e in logged_in.get(
+        f"/api/mod-templates/{mid}/changelog"
+    ).json()]
+    assert "Comment on mod 'Alpha' (AAAAAAAAAAAAAAAA) set to 'keeps the AI fed'" in summaries
+    assert "Comment on mod 'Bravo' (BBBBBBBBBBBBBBBB) removed" in summaries
+    # A new mod's comment comes with adding it; it gets no line of its own.
+    assert not any("Comment on mod 'Charlie'" in s for s in summaries)
+
+
+def test_a_comment_never_reaches_a_server_template():
+    """Only mod lists keep the note; a server template's ModEntry drops it."""
+    from services.template_service import ModEntry
+
+    assert "comment" not in ModEntry(modId=A, comment="mine").model_dump()

@@ -80,6 +80,25 @@ class ModEntry(BaseModel):
     added_order: int | None = None
 
 
+MOD_COMMENT_MAX = 200
+
+
+class ModListEntry(ModEntry):
+    """A mod on a mod list (#166), which can carry the admin's own note (#216).
+
+    Only mod lists keep the comment: a server template's mods are plain
+    ModEntry rows, so loading a list into a template drops it and it can never
+    reach config.json.
+    """
+
+    comment: str = Field(default="", max_length=MOD_COMMENT_MAX)
+
+    @field_validator("comment", mode="before")
+    @classmethod
+    def _trim_comment(cls, value) -> str:
+        return (value or "").strip() if isinstance(value, str) or value is None else value
+
+
 class WhitelistEntry(BaseModel):
     """A player allowed in when game.playerWhitelist is non-empty (#154).
 

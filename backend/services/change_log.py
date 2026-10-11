@@ -367,6 +367,31 @@ def order_change(old_mods: list, new_mods: list) -> list[tuple[str, str]]:
     return [("mod", f"Load order changed — {len(moved)} mod(s) moved: {named}{more}")]
 
 
+def _comment_changes(old_mods: list, new_mods: list) -> list[tuple[str, str]]:
+    """One line per mod whose comment on a mod list changed (#216).
+
+    Only mods on both sides: a newly added mod's comment is part of adding it,
+    and a removed mod's comment goes with it.
+    """
+    old = {m.get("modId"): (m.get("comment") or "") for m in old_mods if m.get("modId")}
+    items: list[tuple[str, str]] = []
+    for mod in new_mods:
+        mid = mod.get("modId")
+        if mid not in old:
+            continue
+        was, now = old[mid], mod.get("comment") or ""
+        if was == now:
+            continue
+        if not now:
+            text = "removed"
+        elif not was:
+            text = f"set to '{now}'"
+        else:
+            text = f"'{was}' → '{now}'"
+        items.append(("mod", f"Comment on mod {_mod_label(mod)} {text}"))
+    return items
+
+
 def mod_template_diff(old: dict, new: dict) -> list[tuple[str, str]]:
     """Human-readable (category, summary) lines turning `old` into `new`."""
     items: list[tuple[str, str]] = []
@@ -375,6 +400,7 @@ def mod_template_diff(old: dict, new: dict) -> list[tuple[str, str]]:
     if (old.get("description") or "") != (new.get("description") or ""):
         items.append(("meta", "Description updated"))
     items += _mod_changes(old.get("mods", []), new.get("mods", []))
+    items += _comment_changes(old.get("mods", []), new.get("mods", []))
     items += order_change(old.get("mods", []), new.get("mods", []))
     return items
 

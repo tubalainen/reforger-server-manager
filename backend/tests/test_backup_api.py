@@ -332,3 +332,20 @@ def test_a_template_saved_before_the_enriched_mod_list_still_round_trips(logged_
     restored = logged_in.get("/api/templates").json()[0]
     spec = logged_in.get(f"/api/templates/{restored['id']}").json()["spec"]
     assert [m["modId"] for m in spec["mods"]] == [A]
+
+
+def test_mod_comments_survive_a_backup_round_trip(logged_in):
+    """#216: a mod list's per-mod comments are part of what a backup restores."""
+    logged_in.post("/api/mod-templates", json=_mod_spec(mods=[
+        {"modId": A, "name": "Alpha", "comment": "the AI pack"},
+    ]))
+    payload = _export(logged_in)
+    assert payload["mod_templates"][0]["mods"][0]["comment"] == "the AI pack"
+    assert _preview(logged_in, payload)["mod_templates"][0]["status"] == "identical"
+
+    mid = logged_in.get("/api/mod-templates").json()[0]["id"]
+    logged_in.delete(f"/api/mod-templates/{mid}")
+    _import(logged_in, payload, {"mod_templates": {"Milsim pack": "create"}})
+    restored = logged_in.get("/api/mod-templates").json()[0]["id"]
+    mods = logged_in.get(f"/api/mod-templates/{restored}").json()["mods"]
+    assert mods[0]["comment"] == "the AI pack"

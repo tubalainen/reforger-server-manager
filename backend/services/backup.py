@@ -31,7 +31,7 @@ from sqlmodel import Session, select
 import config
 from models import ModTemplate, Template
 from services import change_log, mod_registry
-from services.template_service import ModEntry
+from services.template_service import ModEntry, ModListEntry
 
 # The envelope's format tag. Bump the number only for a change an older manager
 # could not read correctly; anything additive keeps @1 (unknown keys are
@@ -178,13 +178,13 @@ def _list(value, label: str) -> list:
     return value
 
 
-def _clean_mods(mods: list, label: str) -> list[dict]:
+def _clean_mods(mods: list, label: str, entry=ModEntry) -> list[dict]:
     out = []
     for mod in mods:
         if not isinstance(mod, dict) or not str(mod.get("modId") or "").strip():
             raise BackupError(f"{label} has a mod entry with no modId.")
         try:
-            out.append(ModEntry(**mod).model_dump())
+            out.append(entry(**mod).model_dump())
         except (TypeError, ValueError) as exc:
             raise BackupError(f"{label} has an unusable mod entry: {exc}") from exc
     return out
@@ -226,7 +226,8 @@ def _read_mod_template(raw, index: int) -> dict:
     return {
         "name": name,
         "description": _str(raw.get("description"), f"{label}: description"),
-        "mods": _clean_mods(_list(raw.get("mods"), f"{label}: mods"), label),
+        # A mod list's entries keep their per-mod comment (#216).
+        "mods": _clean_mods(_list(raw.get("mods"), f"{label}: mods"), label, ModListEntry),
     }
 
 
