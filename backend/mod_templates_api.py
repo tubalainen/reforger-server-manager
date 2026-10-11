@@ -16,7 +16,7 @@ from sqlmodel import Session, select
 import auth
 from models import ModTemplate, get_engine
 from services import change_log, mod_registry
-from services.template_service import ModEntry
+from services.template_service import ModListEntry
 from services.workshop_service import normalize_asset_id
 
 router = APIRouter(prefix="/api/mod-templates", tags=["mod-templates"])
@@ -27,9 +27,10 @@ class ModTemplateSpec(BaseModel):
 
     name: str = Field(min_length=1, max_length=100)
     description: str = ""
-    # Same enriched entries as a server template's mods (#55/#60), in load
-    # order (#164). Every mod is an explicit addon — see the model docstring.
-    mods: list[ModEntry] = []
+    # Same enriched entries as a server template's mods (#55/#60), plus a
+    # comment per mod (#216), in the order they were added. Every mod is an
+    # explicit addon — see the model docstring.
+    mods: list[ModListEntry] = []
 
     @field_validator("name", "description")
     @classmethod
@@ -38,12 +39,12 @@ class ModTemplateSpec(BaseModel):
 
     @field_validator("mods")
     @classmethod
-    def _clean_mods(cls, mods: list[ModEntry]) -> list[ModEntry]:
+    def _clean_mods(cls, mods: list[ModListEntry]) -> list[ModListEntry]:
         """Normalise ids and drop duplicates, keeping the first (i.e. the order
         the user put them in). A mod listed twice is one mod, not a load-order
         instruction the engine could act on."""
         seen: set[str] = set()
-        out: list[ModEntry] = []
+        out: list[ModListEntry] = []
         for mod in mods:
             mod_id = normalize_asset_id(mod.modId or "")
             if not mod_id:

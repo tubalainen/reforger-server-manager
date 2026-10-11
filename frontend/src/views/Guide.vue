@@ -546,7 +546,10 @@ const faq = [
             <router-link :to="{ name: 'mod-templates' }">Library › Mod lists</router-link>, create one and add
             mods the same way as in the wizard — search the Workshop, or paste ids/URLs,
             several at once, comma-separated. Lock a version per mod, or leave it on
-            <em>latest</em>. Drag the rows (or use their ↑ ↓) to set the order.
+            <em>latest</em>, and give it a comment of your own ("needed for the AI",
+            "test before Friday"). The list keeps mods in the order you added them; set the
+            load order in the server template's Mods step. Comments stay on the list — they
+            are not copied into a server template.
           </li>
           <li class="mb-2">
             <strong>Or take it from a server template:</strong> happy with a template's mods?
@@ -573,8 +576,8 @@ const faq = [
           </li>
           <li>
             <strong>Change log:</strong> like server templates, each mod list keeps a
-            searchable, read-only history — mods added and removed, version locks, renames
-            and reorderings — from the <strong>Change log</strong> button on the list.
+            searchable, read-only history — mods added and removed, version locks, comments
+            and renames — from the <strong>Change log</strong> button on the list.
           </li>
         </ul>
       </div>
