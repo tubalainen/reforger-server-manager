@@ -36,6 +36,7 @@ from starlette.routing import Route
 
 import config
 import stacks
+from gate import KEEP_ALIVE_SECONDS
 from services import container_reading
 from services.server_log import parse_server_status
 
@@ -271,7 +272,8 @@ def main() -> None:
     logger.info("Supervisor observer v%s: read-only, on %s", config.APP_VERSION, path)
     # uvicorn makes the socket 0666; only the Supervisor mounts the volume.
     uvicorn.run(create_app(client), uds=str(path), log_level="warning",
-                access_log=False, timeout_graceful_shutdown=2)
+                access_log=False, timeout_graceful_shutdown=2,
+                timeout_keep_alive=KEEP_ALIVE_SECONDS)
 
 
 if __name__ == "__main__":
