@@ -629,11 +629,15 @@ const faq = [
             running</em> asks before it disconnects everyone.
           </li>
           <li class="mb-2">
-            <strong>Who's online:</strong> the Players tab lists the connected players
-            by name, read from the server's own join/leave log lines. The player count
-            stays the source of truth for how many are on; the named list depends on the
-            server build actually logging names, so on builds that don't, you still get
-            the count.
+            <strong>Who's online:</strong> the Players tab lists the connected players,
+            read from the server's own join/leave log lines: name, how long they've been
+            on, PC or console, IP address (hidden until you tick <em>Show IP
+            addresses</em>), and their identity id, Steam id and BattlEye GUID. The
+            identity id has a <em>Copy</em> button — it is what a template's whitelist and
+            ban list match on — and players listed under the template's Server admins get
+            an <em>Admin</em> badge. The player count stays the source of truth for how
+            many are on; the named list depends on the server build actually logging
+            names, so on builds that don't, you still get the count.
           </li>
           <li class="mb-2">
             <strong>Reliability:</strong> on a server's Settings tab you can toggle

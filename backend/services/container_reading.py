@@ -97,7 +97,20 @@ def _split_log_timestamp(line: str) -> tuple[datetime | None, str]:
 
 
 def current_run_log(container, tail: int = STATS_LOG_TAIL) -> str:
+    """The tail of the log for the container's CURRENT run only, as plain text.
+
+    See current_run_log_lines for how the run boundary is drawn.
+    """
+    return "\n".join(text for _, text in current_run_log_lines(container, tail))
+
+
+def current_run_log_lines(
+    container, tail: int = STATS_LOG_TAIL
+) -> list[tuple[datetime | None, str]]:
     """The tail of the log for the container's CURRENT run only.
+
+    Each line comes with the time Docker received it (UTC), or None when that
+    is unknown — the roster uses it for when a player joined (#213).
 
     Docker keeps a container's log across restarts, so a plain tail serves up the
     previous run's output too — which would report a restarting server as still
@@ -108,13 +121,14 @@ def current_run_log(container, tail: int = STATS_LOG_TAIL) -> str:
     line the previous run wrote in the same second the new run began still comes
     through — and on a fast restart that is exactly where the last stats line
     lands. Each line therefore carries its timestamp and is checked against
-    StartedAt at full precision; the prefix is stripped again so the parsers see
+    StartedAt at full precision; the prefix is split off again so the parsers see
     an ordinary log.
     """
     started_dt = _started_at(container)
     if started_dt is None:
         # Unknown start time: no honest way to draw the boundary, so read as before.
-        return container.logs(tail=tail).decode("utf-8", errors="replace")
+        raw = container.logs(tail=tail).decode("utf-8", errors="replace")
+        return [(None, line) for line in raw.splitlines()]
 
     raw = container.logs(tail=tail, since=started_dt, timestamps=True)
     kept = []
@@ -122,8 +136,8 @@ def current_run_log(container, tail: int = STATS_LOG_TAIL) -> str:
         ts, text = _split_log_timestamp(line)
         if ts is not None and ts < started_dt:
             continue  # belongs to a previous run of this container
-        kept.append(text)
-    return "\n".join(kept)
+        kept.append((ts, text))
+    return kept
 
 
 # Runs already seen online: {container id: StartedAt}. Once a server has come up
