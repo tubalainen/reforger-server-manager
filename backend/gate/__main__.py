@@ -18,7 +18,7 @@ import uvicorn
 
 import config
 import stacks
-from gate import policy
+from gate import KEEP_ALIVE_SECONDS, policy
 from gate.app import create_app
 
 logger = logging.getLogger("gate")
@@ -86,7 +86,8 @@ def main() -> None:
     path.unlink(missing_ok=True)  # left over from the last run; bind would fail
     # uvicorn makes the socket 0666; only this stack's manager mounts the volume.
     uvicorn.run(create_app(scope, upstream), uds=str(path), log_level="warning",
-                access_log=False, timeout_graceful_shutdown=2)
+                access_log=False, timeout_graceful_shutdown=2,
+                timeout_keep_alive=KEEP_ALIVE_SECONDS)
 
 
 if __name__ == "__main__":
