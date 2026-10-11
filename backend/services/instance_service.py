@@ -38,6 +38,7 @@ from services.container_reading import (  # noqa: F401
     _split_log_timestamp,
     _started_at,
     current_run_log,
+    current_run_log_lines,
     forget_run,
     server_state,
 )
@@ -1101,6 +1102,8 @@ def instance_stats(instance_id: int) -> dict:
         if not inst:
             raise InstanceError("Server not found")
         game_port = inst.game_port
+        template = session.get(Template, inst.template_id) if inst.template_id else None
+        admins = _admin_ids(template.config_json) if template else set()
 
     public = config.settings.public_address
     # ONE lookup for the container, reused for status, uptime, logs and cpu/mem.
@@ -1136,9 +1139,14 @@ def instance_stats(instance_id: int) -> dict:
         # One wider read serves both the status line (most-recent wins, so a
         # bigger window is harmless) and the roster, which needs the whole
         # session's join lines rather than just the last few (#126).
-        log_text = current_run_log(container, tail=ROSTER_LOG_TAIL)
+        log_lines = current_run_log_lines(container, tail=ROSTER_LOG_TAIL)
+        log_text = "\n".join(text for _, text in log_lines)
         stats["server_state"] = server_state(container, log_text)
-        stats["roster"] = parse_roster(log_text)
+        stats["roster"] = parse_roster(log_lines, now=datetime.now(UTC))
+        for player in stats["roster"]:
+            player["admin"] = bool(
+                admins & {player["steam_id"], player["identity_id"]} - {None}
+            )
         server = parse_server_status(log_text)
         if server:
             stats["players"] = server["players"]
@@ -1502,6 +1510,17 @@ def _max_players(config_json: str) -> int | None:
     except (ValueError, AttributeError):
         return None
     return value if isinstance(value, int) else None
+
+
+def _admin_ids(config_json: str) -> set[str]:
+    """The ids a template's game.admins lists (Steam64 or identity id), lower-cased."""
+    try:
+        admins = (json.loads(config_json or "{}").get("game") or {}).get("admins")
+    except (ValueError, AttributeError):
+        return set()
+    if not isinstance(admins, list):
+        return set()
+    return {str(a).strip().lower() for a in admins if isinstance(a, str | int)}
 
 
 def instances_summary() -> dict:

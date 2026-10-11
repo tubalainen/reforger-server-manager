@@ -51,6 +51,8 @@ A server's own page keeps every server listed down the left and splits into five
 - Start, stop, restart, and delete a server.
 - Follow live logs and copy useful diagnostic output.
 - View player count, process state, resource use, and server metadata.
+- See who is on: each player's name, time online, platform, IP address (shown on
+  request) and identity, Steam and BattlEye ids, with server admins marked.
 - Recover servers after manager or host restarts.
 - Configure auto-start and scheduled restarts.
 - Apply template changes to existing servers.

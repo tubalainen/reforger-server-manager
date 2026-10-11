@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -99,16 +99,19 @@ def test_parse_server_status_combines_separate_fps_and_player_lines():
     assert s == {"fps": 58.0, "mem_kb": 1000000, "players": 3}
 
 
+def _names(roster):
+    return [(p["player_num"], p["name"]) for p in roster]
+
+
 def test_parse_roster_lists_connected_players():
     log = (
         "boot noise\n"
         "10:00:01:100 NETWORK : Player #0 Alice 203.0.113.7:2001 connected\n"
         "10:00:02:200 NETWORK : Player #1 Bob 203.0.113.8:2001 connected\n"
     )
-    assert instance_service.parse_roster(log) == [
-        {"player_num": 0, "name": "Alice"},
-        {"player_num": 1, "name": "Bob"},
-    ]
+    roster = instance_service.parse_roster(log)
+    assert _names(roster) == [(0, "Alice"), (1, "Bob")]
+    assert [p["ip"] for p in roster] == ["203.0.113.7", "203.0.113.8"]
 
 
 def test_parse_roster_removes_players_who_left():
@@ -117,7 +120,7 @@ def test_parse_roster_removes_players_who_left():
         "Player #1 Bob 203.0.113.8:2001 connected\n"
         "Player #0 Alice disconnected\n"
     )
-    assert instance_service.parse_roster(log) == [{"player_num": 1, "name": "Bob"}]
+    assert _names(instance_service.parse_roster(log)) == [(1, "Bob")]
 
 
 def test_parse_roster_handles_names_with_spaces_and_missing_ip():
@@ -126,10 +129,9 @@ def test_parse_roster_handles_names_with_spaces_and_missing_ip():
         "Player #4 Foxtrot Actual 198.51.100.5:2001 connected\n"
         "Player #5 Lone Wolf connected\n"
     )
-    assert instance_service.parse_roster(log) == [
-        {"player_num": 4, "name": "Foxtrot Actual"},
-        {"player_num": 5, "name": "Lone Wolf"},
-    ]
+    roster = instance_service.parse_roster(log)
+    assert _names(roster) == [(4, "Foxtrot Actual"), (5, "Lone Wolf")]
+    assert roster[1]["ip"] is None
 
 
 def test_parse_roster_reconnect_updates_name_keeps_slot():
@@ -138,12 +140,109 @@ def test_parse_roster_reconnect_updates_name_keeps_slot():
         "Player #2 OldName disconnected\n"
         "Player #2 NewName 203.0.113.7:2001 connected\n"
     )
-    assert instance_service.parse_roster(log) == [{"player_num": 2, "name": "NewName"}]
+    assert _names(instance_service.parse_roster(log)) == [(2, "NewName")]
 
 
 def test_parse_roster_empty_when_no_join_lines():
     # "disconnected" must not be misread as a connect, and unrelated lines ignored.
     assert instance_service.parse_roster("FPS: 60.0, Player: 0\nrandom noise\n") == []
+
+
+# A join exactly as a real Reforger 1.x server logs it (ids changed). Note the
+# address is in PARENTHESES: #126 only expected it bare, so "(ip:port)" ended up
+# in the player's name and the GUI showed "MATT... (203.0..." (#213).
+_REAL_JOIN = [
+    "18:13:08.696 RPL          : ServerImpl event: authenticating (identity=0x00000000, address=203.0.113.9:63583)",
+    "18:13:08.879 RPL          : ServerImpl event: connected (identity=0x00000000)",
+    "18:13:08.892  DEFAULT      : BattlEye Server: Adding player identity=0x00000000, name='Matt the Medic'",
+    "18:13:08.892  DEFAULT      : BattlEye Server: 'Player #0 Matt the Medic (203.0.113.9:63583) connected'",
+    "18:13:08.892  DEFAULT      : BattlEye Server: Setting GUID for player identity=0x00000000, GUID=76561198000000001",
+    "18:13:08.892  DEFAULT      : BattlEye Server: 'Player #0 Matt the Medic - BE GUID: 0FF29685078407615EF8FAEADC59B566'",
+    "18:13:23.123 NETWORK      : Player connected: connectionID=0",
+    "18:13:23.123 NETWORK      : ### Connecting player: connectionID=0, Name=",
+    "18:13:26.208   NETWORK      : ### Creating player: PlayerId=1, Name=Matt the Medic",
+    "18:13:26.811   NETWORK      : ### Updating player: PlayerId=1, Name=Matt the Medic, IdentityId=25C9BB9D-FDD7-4BE9-898E-CAC20A551DD2",
+    "18:13:26.811   NETWORK      : Players connected: 1 / 1",
+]
+_REAL_LEAVE = [
+    "18:13:31.644 RPL          : ServerImpl event: disconnected (identity=0x00000000), group=1, reason=9",
+    "18:13:31.674  DEFAULT      : BattlEye Server: Disconnect player identity=0x00000000",
+    "18:13:31.674  DEFAULT      : BattlEye Server: 'Player #0 Matt the Medic disconnected'",
+    "18:13:31.690 NETWORK      : Player disconnected: connectionID=0",
+]
+
+
+def test_parse_roster_reads_a_real_join_without_the_address_in_the_name():
+    [player] = instance_service.parse_roster("\n".join(_REAL_JOIN))
+    assert player == {
+        "player_num": 0,
+        "name": "Matt the Medic",
+        "ip": "203.0.113.9",
+        "connected_at": None,
+        "online_seconds": None,
+        "platform": "PC",
+        "steam_id": "76561198000000001",
+        "be_guid": "0ff29685078407615ef8faeadc59b566",
+        "player_id": 1,
+        "identity_id": "25c9bb9d-fdd7-4be9-898e-cac20a551dd2",
+    }
+
+
+def test_parse_roster_real_leave_empties_it():
+    assert instance_service.parse_roster("\n".join(_REAL_JOIN + _REAL_LEAVE)) == []
+
+
+def test_parse_roster_keeps_a_parenthesised_name_apart_from_the_address():
+    log = "BattlEye Server: 'Player #3 Bob (CDN) (198.51.100.4:2001) connected'"
+    [player] = instance_service.parse_roster(log)
+    assert (player["name"], player["ip"]) == ("Bob (CDN)", "198.51.100.4")
+
+
+def test_parse_roster_ipv6_address():
+    log = "BattlEye Server: 'Player #1 Ada ([2001:db8::7]:2001) connected'"
+    [player] = instance_service.parse_roster(log)
+    assert (player["name"], player["ip"]) == ("Ada", "2001:db8::7")
+
+
+def test_parse_roster_marks_a_console_player():
+    log = "\n".join([
+        "BattlEye Server: Adding player identity=0x00000002, name='Pad Player'",
+        "BattlEye Server: 'Player #2 Pad Player (203.0.113.20:1000) connected'",
+        "BattlEye Server: Setting GUID for player identity=0x00000002, GUID=[u8; 64]",
+    ])
+    [player] = instance_service.parse_roster(log)
+    assert (player["platform"], player["steam_id"]) == ("Console", None)
+
+
+def test_parse_roster_guid_line_before_the_connect_line_still_lands():
+    log = "\n".join([
+        "BattlEye Server: Adding player identity=0x00000005, name='Early'",
+        "BattlEye Server: Setting GUID for player identity=0x00000005, GUID=76561198000000005",
+        "BattlEye Server: 'Player #5 Early (203.0.113.5:1000) connected'",
+    ])
+    [player] = instance_service.parse_roster(log)
+    assert player["steam_id"] == "76561198000000005"
+
+
+def test_parse_roster_ties_engine_ids_to_the_right_namesake():
+    # Two players called "Bob": the engine line follows the second Bob's join,
+    # so it belongs to him, not to the Bob who already has his ids.
+    log = "\n".join([
+        "'Player #0 Bob (203.0.113.1:1) connected'",
+        "### Updating player: PlayerId=1, Name=Bob, IdentityId=11111111-1111-1111-1111-111111111111",
+        "'Player #1 Bob (203.0.113.2:1) connected'",
+        "### Updating player: PlayerId=2, Name=Bob, IdentityId=22222222-2222-2222-2222-222222222222",
+    ])
+    first, second = instance_service.parse_roster(log)
+    assert (first["player_id"], second["player_id"]) == (1, 2)
+
+
+def test_parse_roster_join_time_from_log_timestamps():
+    joined = datetime(2026, 10, 11, 8, 0, 0, tzinfo=UTC)
+    pairs = [(joined, _REAL_JOIN[3])]
+    [player] = instance_service.parse_roster(pairs, now=joined + timedelta(minutes=90))
+    assert player["connected_at"] == "2026-10-11T08:00:00+00:00"
+    assert player["online_seconds"] == 5400
 
 
 def test_parse_public_address_from_registration_line():
@@ -1225,7 +1324,8 @@ def _stats_stubs(monkeypatch, log_text):
                         "find_instance_container", lambda _id: fake_container)
     monkeypatch.setattr(instance_service, "status_of", lambda _c: "running")
     monkeypatch.setattr(instance_service, "_container_uptime_seconds", lambda _c: 123)
-    monkeypatch.setattr(instance_service, "current_run_log", lambda _c, tail=None: log_text)
+    monkeypatch.setattr(instance_service, "current_run_log_lines",
+                        lambda _c, tail=None: [(None, ln) for ln in log_text.splitlines()])
     monkeypatch.setattr(instance_service, "server_state", lambda _c, _t: "online")
     monkeypatch.setattr(instance_service, "cpu_mem_for", lambda _id, _c: {})
 
@@ -1238,10 +1338,24 @@ def test_instance_stats_includes_the_roster(monkeypatch):
     ))
     stats = instance_service.instance_stats(1)
     assert stats["players"] == 2
-    assert stats["roster"] == [
-        {"player_num": 0, "name": "Alice"},
-        {"player_num": 1, "name": "Bob"},
-    ]
+    assert _names(stats["roster"]) == [(0, "Alice"), (1, "Bob")]
+    assert [p["admin"] for p in stats["roster"]] == [False, False]
+
+
+def test_instance_stats_flags_the_templates_admins(monkeypatch):
+    _stats_stubs(monkeypatch, "\n".join([*_REAL_JOIN, "DEFAULT : FPS: 60.0, Player: 1"]))
+    from sqlmodel import Session
+
+    import models
+
+    with Session(models.get_engine()) as s:
+        s.add(models.Template(
+            id=1, name="t", config_json=json.dumps({"game": {"admins": ["76561198000000001"]}}),
+        ))
+        s.get(models.Instance, 1).template_id = 1
+        s.commit()
+    [player] = instance_service.instance_stats(1)["roster"]
+    assert player["admin"] is True
 
 
 def test_instance_stats_clears_roster_when_count_is_zero(monkeypatch):
