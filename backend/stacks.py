@@ -32,6 +32,8 @@ LABEL_MAX_PLAYERS = "reforger-manager.max_players"
 LABEL_GAME_PORT = "reforger-manager.game_port"
 LABEL_A2S_PORT = "reforger-manager.a2s_port"
 LABEL_RCON_PORT = "reforger-manager.rcon_port"
+# The server template it was started with (v0.70.0).
+LABEL_TEMPLATE = "reforger-manager.template"
 
 # On a manager, from its compose file: what the stack takes on the host.
 LABEL_WEB_PORT = "reforger-manager.web_port"

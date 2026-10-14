@@ -878,10 +878,12 @@ def test_a_server_carries_what_the_supervisor_shows(tmp_path, monkeypatch):
     assert kw["labels"][stacks.LABEL_RCON_PORT] == "20002"
     # No template config, no player limit to state.
     assert stacks.LABEL_MAX_PLAYERS not in kw["labels"]
+    assert stacks.LABEL_TEMPLATE not in kw["labels"]
 
     labels = instance_service._display_labels(
-        _inst(), json.dumps({"game": {"maxPlayers": 64}}))
+        _inst(), json.dumps({"game": {"maxPlayers": 64}}), "Conflict Everon")
     assert labels[stacks.LABEL_MAX_PLAYERS] == "64"
+    assert labels[stacks.LABEL_TEMPLATE] == "Conflict Everon"
 
 
 def test_a_server_whose_labels_drifted_is_recreated():
@@ -898,6 +900,9 @@ def test_a_server_whose_labels_drifted_is_recreated():
     # A limit the server did not have before is drift too.
     assert instance_service._container_labels_match(
         C(), {**desired, stacks.LABEL_MAX_PLAYERS: "32"}) is False
+    # So is another template, or one started before servers named their template.
+    assert instance_service._container_labels_match(
+        C(), {**desired, stacks.LABEL_TEMPLATE: "Game Master"}) is False
 
     class Unreadable:
         @property

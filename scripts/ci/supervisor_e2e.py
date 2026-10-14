@@ -74,6 +74,7 @@ for name, st in stacks.items():
     check(f"{name}: the stand-in server is running", srv.get("status") == "running")
     check(f"{name}: its players and limit ({srv.get('players')}/{srv.get('max_players')})",
           srv.get("players") == 3 and srv.get("max_players") == 64)
+    check(f"{name}: its template ({srv.get('template')})", srv.get("template") == "e2e template")
     check(f"{name}: it is online", srv.get("server_state") == "online")
 
 dangers = {w["id"] for w in data["warnings"] if w["severity"] == "danger"}
