@@ -150,10 +150,11 @@ const spec = reactive({
   // re-applies over every render (#29). Set by the JSON editor's Apply.
   extras: {},
   launch: {
-    // New templates cap the server at 60 FPS by default (#143). Clear the field
-    // to run uncapped. Existing templates keep whatever they saved: the loader
-    // merges the stored launch over these defaults, so an explicit value wins.
-    max_fps: 60,
+    // New templates cap the server at 30 FPS (#143, lowered in #218) and verify
+    // & repair their addons (#218). Clear the field / untick the box to opt out.
+    // Existing templates keep whatever they saved: the loader merges the stored
+    // launch over these defaults, so an explicit value wins.
+    max_fps: 30,
     network_dynamic_simulation: null,
     spatial_map_resolution: null,
     staggering_budget: null,
@@ -168,7 +169,7 @@ const spec = reactive({
     load_session_save: null,
     short_worker_count: null,
     long_worker_count: null,
-    verify_and_repair_addons: false,
+    verify_and_repair_addons: true,
     auto_shutdown: false,
     log_voting: false,
     ai_partial_sim: false,
