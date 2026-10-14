@@ -38,12 +38,14 @@ def _gate(stack, **kw):
     return _c(f"{stack}-g", f"{stack}-docker-gate", stack, {stacks.LABEL_ROLE: "gate"}, **kw)
 
 
-def _server(stack, iid, game, a2s, rcon, name=None, max_players="64", **kw):
+def _server(stack, iid, game, a2s, rcon, name=None, max_players="64", template=None, **kw):
     labels = {stacks.LABEL_ROLE: "instance", stacks.LABEL_INSTANCE_ID: str(iid),
               stacks.LABEL_BRANCH: "stable", stacks.LABEL_GAME_PORT: str(game),
               stacks.LABEL_A2S_PORT: str(a2s), stacks.LABEL_RCON_PORT: str(rcon)}
     if name:
         labels[stacks.LABEL_NAME] = name
+    if template:
+        labels[stacks.LABEL_TEMPLATE] = template
     if max_players:
         labels[stacks.LABEL_MAX_PLAYERS] = max_players
     return _c(f"{stack}-s{iid}", f"{stack}-instance-{iid}", stack, labels, **kw)
@@ -52,7 +54,7 @@ def _server(stack, iid, game, a2s, rcon, name=None, max_players="64", **kw):
 def _two_stacks():
     return [
         _manager("reforger"), _gate("reforger"),
-        _server("reforger", 1, 2001, 17777, 19999, name="Conflict"),
+        _server("reforger", 1, 2001, 17777, 19999, name="Conflict", template="Conflict Everon"),
         _manager("team2", web="7781", game="2021-2040", a2s="17797-17816", rcon="20019-20038"),
         _gate("team2"),
         _server("team2", 1, 2021, 17797, 20019, name="Training", max_players="16"),
@@ -83,6 +85,7 @@ def test_two_healthy_stacks():
     srv = ref["servers"][0]
     assert (srv["name"], srv["players"], srv["max_players"], srv["server_state"]) == (
         "Conflict", 12, 64, "online")
+    assert srv["template"] == "Conflict Everon"
     assert srv["ports"] == {"game": 2001, "a2s": 17777, "rcon": 19999}
     assert data["totals"] == {
         "stacks": 2, "managers_up": 2, "servers": 2, "running": 2, "online": 1,
@@ -97,6 +100,7 @@ def test_a_server_from_before_v067_has_no_name_yet():
     srv = overview.build(HOST, containers, {}, {}, "0.67.0", NOW)["stacks"][0]["servers"][0]
     assert srv["name"] == "Server 3" and srv["named"] is False
     assert srv["max_players"] is None
+    assert srv["template"] is None
 
 
 def test_a_stopped_server_shows_no_live_figures():

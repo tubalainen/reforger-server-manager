@@ -39,6 +39,7 @@ container = client.containers.create(
         stacks.LABEL_BRANCH: "stable",
         stacks.LABEL_INSTANCE_ID: "99",
         stacks.LABEL_NAME: f"{config.settings.rsm_stack} e2e server",
+        stacks.LABEL_TEMPLATE: "e2e template",
         stacks.LABEL_MAX_PLAYERS: "64",
         stacks.LABEL_GAME_PORT: str(config.settings.game_port_range[0]),
         stacks.LABEL_A2S_PORT: str(config.settings.a2s_port_range[0]),

@@ -55,6 +55,20 @@ describe('serverRow', () => {
   it('leaves out a player limit it does not know (a server from before v0.67.0)', () => {
     expect(serverRow(server({ max_players: null })).players).toBe('12')
   })
+
+  it('names the template the server was started with', () => {
+    const row = serverRow(server({ template: 'Conflict Everon' }))
+    expect(row.template).toBe('Conflict Everon')
+    expect(row.templateTitle).toContain('Conflict Everon')
+    // A stopped server still says what it last ran.
+    expect(serverRow(server({ status: 'exited', exit_code: 0, template: 'GM' })).template).toBe('GM')
+  })
+
+  it('has no template to name for a server started before v0.70.0', () => {
+    const row = serverRow(server({ template: null }))
+    expect(row.template).toBe('—')
+    expect(row.templateTitle).toBe('Shown once the server is next started')
+  })
 })
 
 describe('stackHealth', () => {

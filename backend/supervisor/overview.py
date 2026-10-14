@@ -100,6 +100,8 @@ def _server(container: dict, figures: dict, sample: dict, now: datetime) -> dict
             f"Server {instance_id}" if instance_id is not None else container.get("name")),
         "named": stacks.LABEL_NAME in labels,
         "branch": labels.get(stacks.LABEL_BRANCH),
+        # The template it was started with; servers started before v0.70.0 have none.
+        "template": labels.get(stacks.LABEL_TEMPLATE),
         "status": _status(container),
         "server_state": figures.get("server_state") if running else None,
         "players": figures.get("players") if running else None,

@@ -217,6 +217,7 @@ onUnmounted(() => clearInterval(poll))
           <thead>
             <tr class="small">
               <th scope="col">Server</th>
+              <th scope="col">Template</th>
               <th scope="col">Status</th>
               <th scope="col">Players</th>
               <th scope="col" class="text-end">FPS</th>
@@ -233,6 +234,9 @@ onUnmounted(() => clearInterval(poll))
                 <div class="small text-secondary">
                   {{ branchLabel(s.branch) || '—' }}<template v-if="!s.named"> · named on its next start</template>
                 </div>
+              </td>
+              <td data-label="Template" class="rsm-cell-template" :title="serverRow(s).templateTitle">
+                {{ serverRow(s).template }}
               </td>
               <td data-label="Status">
                 <span class="d-inline-flex align-items-center gap-2 text-nowrap" :title="serverRow(s).status.long">
@@ -293,6 +297,14 @@ onUnmounted(() => clearInterval(poll))
   border-bottom: 0;
 }
 
+/* Template names can be long; keep the row to one line and show the rest on hover. */
+.rsm-cell-template {
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* On a phone each server becomes a block: name on top, figures as labelled pairs. */
 @media (max-width: 767.98px) {
   .rsm-fleet thead {
@@ -327,6 +339,12 @@ onUnmounted(() => clearInterval(poll))
 
   .rsm-fleet .rsm-cell-name {
     grid-column: 1 / -1;
+  }
+
+  .rsm-fleet .rsm-cell-template {
+    grid-column: 1 / -1;
+    max-width: none;
+    white-space: normal;
   }
 }
 </style>

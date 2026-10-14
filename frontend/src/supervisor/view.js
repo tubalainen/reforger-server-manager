@@ -34,6 +34,12 @@ export function serverRow(s) {
     mem: isRunning(s) ? formatBytes(s.mem_bytes, { empty: '—' }) : '—',
     uptime: isRunning(s) ? formatUptime(s.uptime_seconds) : '—',
     ports: [s.ports?.game, s.ports?.a2s].filter((p) => p != null).join(' · ') || '—',
+    // The template it was started with; a server started before v0.70.0 names it
+    // on its next start.
+    template: s.template || '—',
+    templateTitle: s.template
+      ? `Started with the server template "${s.template}"`
+      : 'Shown once the server is next started',
   }
 }
 

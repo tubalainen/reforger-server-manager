@@ -249,7 +249,7 @@ For each stack it shows:
 
 - whether its manager and Docker gate are running, the manager's version and uptime;
 - the ports it takes: GUI, game, A2S and RCON ranges;
-- each game server with its status, players and player limit, FPS, CPU, memory, uptime and game and A2S ports.
+- each game server with the server template it was started with, its status, players and player limit, FPS, CPU, memory, uptime and game and A2S ports.
 
 Across the machine it shows the totals (servers running, players, CPU and memory, each with the last hour as a small graph) and a **Needs attention** list: a manager or gate that is down, a stack without a Docker gate, two stacks whose ports overlap, a port two servers share, a server outside its stack's range, a server that keeps restarting or ran out of memory, a Docker Engine too old for game servers, a machine whose CPU or memory is nearly full, and managers older than the Supervisor.
 

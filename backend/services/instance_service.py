@@ -690,6 +690,7 @@ def start_instance(instance_id: int) -> None:
                 "download them on the Downloads tab first"
             )
         template_config = _template_config(session, inst)
+        template_name = session.get(Template, inst.template_id).name
         launch = _template_launch(session, inst)
 
         # Reuse an existing container if present, else create one. But recreate
@@ -715,8 +716,10 @@ def start_instance(instance_id: int) -> None:
                 # Adopted from before stacks existed: give it this stack's label
                 # and name, so the Docker gate lets this manager keep managing it.
                 reason = "created before stacks (v0.65.0, #204)"
-            elif not _container_labels_match(container, _display_labels(inst, template_config)):
-                reason = "name, player limit or ports changed (as the Server Supervisor shows them)"
+            elif not _container_labels_match(
+                    container, _display_labels(inst, template_config, template_name)):
+                reason = ("name, template, player limit or ports changed "
+                          "(as the Server Supervisor shows them)")
             if reason:
                 logger.info("Recreating container for %s: %s", inst.name, reason)
                 try:
@@ -728,7 +731,7 @@ def start_instance(instance_id: int) -> None:
             self_config_path = _write_config(inst, template_config)
             try:
                 container = _create_container(inst, self_config_path, launch,
-                                              template_config)
+                                              template_config, template_name)
             except ImageNotFound as exc:
                 raise InstanceError(
                     f"Server image '{config.settings.reforger_server_image}' not found — "
@@ -796,13 +799,14 @@ def _container_mounts_match(container, inst: Instance) -> bool:
     return have == sorted(_mount_key(m) for m in _desired_mounts(inst))
 
 
-def _display_labels(inst: Instance, template_config: str | None) -> dict:
+def _display_labels(inst: Instance, template_config: str | None,
+                    template_name: str | None = None) -> dict:
     """What the Server Supervisor shows for this server, as container labels (#204).
 
     The Supervisor sees every stack on the machine but none of their databases,
-    so a server carries its own name, player limit and ports. The player limit
-    is the template's at the time the server was started, which is also the one
-    the running server has.
+    so a server carries its own name, template, player limit and ports. The
+    template and player limit are the ones it was started with, which are also
+    the ones the running server has.
     """
     labels = {
         stacks.LABEL_NAME: inst.name,
@@ -810,14 +814,16 @@ def _display_labels(inst: Instance, template_config: str | None) -> dict:
         stacks.LABEL_A2S_PORT: str(inst.a2s_port),
         stacks.LABEL_RCON_PORT: str(inst.rcon_port),
     }
+    if template_name:
+        labels[stacks.LABEL_TEMPLATE] = template_name
     limit = _max_players(template_config) if template_config is not None else None
     if limit is not None:
         labels[stacks.LABEL_MAX_PLAYERS] = str(limit)
     return labels
 
 
-_DISPLAY_LABELS = (stacks.LABEL_NAME, stacks.LABEL_MAX_PLAYERS, stacks.LABEL_GAME_PORT,
-                   stacks.LABEL_A2S_PORT, stacks.LABEL_RCON_PORT)
+_DISPLAY_LABELS = (stacks.LABEL_NAME, stacks.LABEL_TEMPLATE, stacks.LABEL_MAX_PLAYERS,
+                   stacks.LABEL_GAME_PORT, stacks.LABEL_A2S_PORT, stacks.LABEL_RCON_PORT)
 
 
 def _container_labels_match(container, desired: dict) -> bool:
@@ -835,7 +841,7 @@ def _container_labels_match(container, desired: dict) -> bool:
 
 
 def _create_container(inst: Instance, config_path: Path, launch: "LaunchParams | None" = None,
-                      template_config: str | None = None):
+                      template_config: str | None = None, template_name: str | None = None):
     """Create (not start) the sibling server container for an instance."""
     Path(f"{config.settings.serverfiles_dir}/{inst.branch}").mkdir(parents=True, exist_ok=True)
     mounts = _desired_mounts(inst)
@@ -873,7 +879,7 @@ def _create_container(inst: Instance, config_path: Path, launch: "LaunchParams |
             docker_service.LABEL_ROLE: docker_service.ROLE_INSTANCE,
             docker_service.LABEL_BRANCH: inst.branch,
             docker_service.LABEL_INSTANCE_ID: str(inst.id),
-            **_display_labels(inst, template_config),
+            **_display_labels(inst, template_config, template_name),
         }),
         **net_kwargs,
         restart_policy={"Name": _restart_policy(inst)},
