@@ -11,6 +11,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
+import ModIdLink from '../components/ModIdLink.vue'
 import { formatBytes } from '../format'
 import { extractModIds, mergeResolved, normalizeMods } from '../mods'
 
@@ -328,7 +329,7 @@ async function save() {
                     class="badge text-bg-info ms-1"
                     title="This mod publishes its own scenario(s). A server runs the scenario picked in the server template — loading this list adds the mod for its content."
                   >+ scenario</span>
-                  <small class="text-secondary d-block">{{ m.modId }}</small>
+                  <small class="text-secondary d-block"><ModIdLink :mod-id="m.modId" :name="m.name" /></small>
                 </div>
                 <div class="col">
                   <input

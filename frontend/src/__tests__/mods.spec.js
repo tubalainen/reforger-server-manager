@@ -23,6 +23,7 @@ import {
   sortModsByName,
   stillRequiredWithoutExplicit,
   topoOrder,
+  workshopUrl,
 } from '../mods'
 
 describe('extractModId', () => {
@@ -51,6 +52,21 @@ const graph = () => [
   mod('C', { explicit: false, dependencies: [] }),
   mod('D', { explicit: true, dependencies: ['C'] }),
 ]
+
+describe('workshopUrl', () => {
+  it("links a mod id to the mod's Workshop page (#221)", () => {
+    expect(workshopUrl('59D64ADD6FC59CBF')).toBe('https://reforger.armaplatform.com/workshop/59D64ADD6FC59CBF')
+    expect(workshopUrl('59d64add6fc59cbf')).toBe('https://reforger.armaplatform.com/workshop/59D64ADD6FC59CBF')
+  })
+
+  it('gives no link for anything that is not exactly an asset id', () => {
+    expect(workshopUrl('')).toBeNull()
+    expect(workshopUrl(null)).toBeNull()
+    expect(workshopUrl('59D64ADD6FC59CB')).toBeNull()
+    expect(workshopUrl('59D64ADD6FC59CBF-slug')).toBeNull()
+    expect(workshopUrl('javascript:alert(1)')).toBeNull()
+  })
+})
 
 describe('neededSet', () => {
   it('keeps every explicit mod and everything they transitively require', () => {

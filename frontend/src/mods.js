@@ -26,6 +26,15 @@ export function extractModId(raw) {
   return m ? m[0].toUpperCase() : null
 }
 
+// The mod's own page on the Arma Reforger Workshop (#221), or null when the id
+// is not exactly a Workshop asset id — then there is nothing to link to, and an
+// odd value never ends up in an href.
+const WORKSHOP_URL = 'https://reforger.armaplatform.com/workshop/'
+
+export function workshopUrl(modId) {
+  return /^[0-9a-fA-F]{16}$/.test(modId || '') ? WORKSHOP_URL + modId.toUpperCase() : null
+}
+
 // Every mod id in the text, deduplicated, in the order written — so a
 // comma-separated list of ids (or several pasted Workshop URLs) can be added
 // in one go (#104).

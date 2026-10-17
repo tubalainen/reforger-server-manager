@@ -3,6 +3,7 @@
 // Emits bubble up to the ModsOverview view, which owns the API calls.
 import { computed } from 'vue'
 import { nodePath } from '../modtree'
+import ModIdLink from './ModIdLink.vue'
 
 const props = defineProps({
   node: { type: Object, required: true },
@@ -120,7 +121,7 @@ const tags = computed(() => {
         :title="`Baked into ${i.name} (template ${i.template})`"
       >{{ i.name }}{{ i.version ? ' @ ' + i.version : '' }}</span>
 
-      <span class="small text-secondary font-monospace ms-1 d-none d-md-inline">{{ node.modId }}</span>
+      <span class="small text-secondary font-monospace ms-1 d-none d-md-inline"><ModIdLink :mod-id="node.modId" :name="node.name" /></span>
 
       <div v-if="node.registered" class="btn-group btn-group-sm ms-auto flex-shrink-0">
         <button
