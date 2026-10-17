@@ -7,6 +7,7 @@ import { randomServerName } from '../serverName'
 import CollapsibleCard from '../components/CollapsibleCard.vue'
 import HelpTip from '../components/HelpTip.vue'
 import MenuButton from '../components/MenuButton.vue'
+import ModIdLink from '../components/ModIdLink.vue'
 
 // CodeMirror is ~130 KB gzipped and only needed once someone clicks "Edit JSON",
 // which most users never will — so it gets its own chunk instead of riding along
@@ -1872,7 +1873,7 @@ onBeforeUnmount(() => {
                   class="text-secondary ms-1"
                   :title="'Required by: ' + requiredByNames(m.modId)"
                 >· required by {{ requiredBy(spec.mods, m.modId).length }}</small>
-                <small class="text-secondary d-block">{{ m.modId }}</small>
+                <small class="text-secondary d-block"><ModIdLink :mod-id="m.modId" :name="m.name" /></small>
               </div>
               <select
                 v-model="m.version"
@@ -2026,7 +2027,7 @@ onBeforeUnmount(() => {
                         :class="{ 'list-group-item-warning': modTemplatePreview.added.includes(row.modId) }"
                       >
                         <span class="text-truncate">{{ row.name || row.modId }}</span>
-                        <small class="text-secondary flex-shrink-0 ms-2">{{ row.modId }}</small>
+                        <small class="text-secondary flex-shrink-0 ms-2"><ModIdLink :mod-id="row.modId" :name="row.name" /></small>
                       </li>
                     </ol>
                   </template>
@@ -2164,7 +2165,7 @@ onBeforeUnmount(() => {
                         :class="{ 'list-group-item-warning': aiProposal.moved.some((r) => r.mod.modId === row.modId) }"
                       >
                         <span class="text-truncate">{{ row.name || row.modId }}</span>
-                        <small class="text-secondary flex-shrink-0 ms-2">{{ row.modId }}</small>
+                        <small class="text-secondary flex-shrink-0 ms-2"><ModIdLink :mod-id="row.modId" :name="row.name" /></small>
                       </li>
                     </ol>
                   </template>
