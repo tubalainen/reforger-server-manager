@@ -184,7 +184,9 @@ class Instance(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(index=True, unique=True)
-    template_id: int = Field(foreign_key="template.id")
+    # None: its template was deleted (#223). It keeps its data and settings but
+    # cannot start until a template is chosen in its Settings.
+    template_id: int | None = Field(default=None, foreign_key="template.id")
     # A Prod template's version this server is pinned to (#223); None = latest.
     template_version: int | None = None
     branch: str = "stable"  # stable | experimental
@@ -389,29 +391,44 @@ def _migrate(engine) -> None:
                 conn.commit()
             except Exception:
                 conn.rollback()
-                _rebuild_instance_without_container_id(conn)
+                _rebuild_instance(conn, "instance_legacy_pre88")
                 conn.commit()
 
+        # A server can be left without a template: deleting the template it
+        # uses unlinks it (#223). template_id was NOT NULL until then, and
+        # SQLite cannot loosen that in place, so the table is rebuilt once.
+        notnull = {
+            row[1]: row[3] for row in conn.execute(text("PRAGMA table_info(instance)"))
+        }
+        if notnull.get("template_id"):
+            _rebuild_instance(conn, "instance_legacy_pre223")
+            conn.commit()
 
-def _rebuild_instance_without_container_id(conn) -> None:
-    """Fallback for SQLite too old for ALTER TABLE ... DROP COLUMN (< 3.35).
 
-    Rebuilds `instance` from the current model definition and copies over every
-    column the old and new tables share, dropping the orphaned `container_id`.
+def _rebuild_instance(conn, legacy: str) -> None:
+    """Rebuild `instance` from the current model definition, copying every
+    column the old and new tables share.
+
+    For what SQLite's ALTER TABLE cannot do: drop a column before 3.35 (the
+    orphaned `container_id`, #127), or drop a NOT NULL (`template_id`, #223).
+    No other table has a foreign key to `instance`, so renaming it is safe.
     """
     from sqlalchemy import text
 
     old_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(instance)"))}
     new_cols = [c.name for c in Instance.__table__.columns]
-    shared = [c for c in new_cols if c in old_cols and c != "container_id"]
+    shared = [c for c in new_cols if c in old_cols]
     col_list = ", ".join(f'"{c}"' for c in shared)
 
-    conn.execute(text("PRAGMA foreign_keys=OFF"))
-    conn.execute(text("ALTER TABLE instance RENAME TO instance_legacy_pre88"))
+    conn.execute(text(f"ALTER TABLE instance RENAME TO {legacy}"))
+    # Index names are global in SQLite and move with the renamed table; the new
+    # table's own (ix_instance_name, …) cannot be created while they exist.
+    for (index,) in conn.execute(text(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = :t AND sql IS NOT NULL"
+    ), {"t": legacy}).all():
+        conn.execute(text(f'DROP INDEX "{index}"'))
     Instance.__table__.create(bind=conn)
     conn.execute(text(
-        f"INSERT INTO instance ({col_list}) "
-        f"SELECT {col_list} FROM instance_legacy_pre88"
+        f"INSERT INTO instance ({col_list}) SELECT {col_list} FROM {legacy}"
     ))
-    conn.execute(text("DROP TABLE instance_legacy_pre88"))
-    conn.execute(text("PRAGMA foreign_keys=ON"))
+    conn.execute(text(f"DROP TABLE {legacy}"))

@@ -67,7 +67,10 @@ function rightText(s) {
         <span class="rsm-dot" :class="dotClass(s)" aria-hidden="true"></span>
         <span class="rsm-server-row-name">
           <span class="d-block text-truncate">{{ s.name }}</span>
-          <small class="d-block text-truncate text-secondary">
+          <small v-if="s.template_id == null" class="d-block text-truncate text-warning">
+            No template selected
+          </small>
+          <small v-else class="d-block text-truncate text-secondary">
             {{ s.scenario_name || s.template_name || '—' }}
             <StageBadge :stage="s.template_stage" :version="s.template_prod_version" />
           </small>

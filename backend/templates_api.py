@@ -1,4 +1,5 @@
 """Template CRUD + config.json export (auth-gated)."""
+import asyncio
 import json
 from datetime import UTC, datetime
 
@@ -550,28 +551,57 @@ async def promote_template(
         return _out(result, session)
 
 
+@router.get("/{template_id}/servers")
+async def template_servers(template_id: int, _user: str = Depends(auth.require_session)):
+    """The servers using a template, [{id, name, status}]: what deleting it
+    would leave without one, for the confirmation that names them (#223)."""
+    with Session(get_engine()) as session:
+        if not session.get(Template, template_id):
+            raise HTTPException(status_code=404, detail="Template not found")
+    return await asyncio.to_thread(instance_service.instances_using_template, template_id)
+
+
 @router.delete("/{template_id}", status_code=204)
 async def delete_template(
-    template_id: int, request: Request, _user: str = Depends(auth.require_session)
+    template_id: int,
+    request: Request,
+    force: bool = False,
+    _user: str = Depends(auth.require_session),
 ):
+    """Delete a template. Servers that use it are left without one (#223): they
+    keep their data, running ones are stopped, and each needs a new template
+    before it can start. That takes `force`, which the GUI sends once the user
+    has confirmed it; without it the delete is refused and names them."""
     if edit_locks.held_by_other(template_id, _client_id(request)):
         raise HTTPException(status_code=423, detail=_LOCKED_DETAIL)
     with Session(get_engine()) as session:
         t = session.get(Template, template_id)
         if not t:
             raise HTTPException(status_code=404, detail="Template not found")
-        # Don't orphan instances: block the delete while any still use this
-        # template, and tell the user which ones to repoint or remove (issue #31).
-        used = instance_service.instances_using_template(template_id)
-        if used:
-            listed = ", ".join(f"{u['name']} ({u['status']})" for u in used)
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"Can't delete '{t.name}': used by {len(used)} server(s): "
-                    f"{listed}. Repoint or delete them first."
-                ),
-            )
+        name = t.name
+    used = await asyncio.to_thread(instance_service.instances_using_template, template_id)
+    if used and not force:
+        listed = ", ".join(f"{u['name']} ({u['status']})" for u in used)
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"'{name}' is used by {len(used)} server(s): {listed}. Deleting it "
+                "leaves them without a template, and stops any that is running."
+            ),
+        )
+    if used:
+        await asyncio.to_thread(instance_service.detach_template, template_id)
+    with Session(get_engine()) as session:
+        t = session.get(Template, template_id)
+        if not t:
+            return
+        # A server pointed at it in the meantime must not keep a dangling id:
+        # SQLite hands a deleted template's id to the next one created.
+        for inst in session.exec(select(Instance).where(Instance.template_id == template_id)).all():
+            inst.template_id = None
+            inst.template_version = None
+            inst.desired_state = "stopped"
+            session.add(inst)
         change_log.delete_for_template(session, template_id)  # the log dies with it (#112)
         stages.delete_versions(session, stages.TEMPLATES, template_id)
         session.flush()

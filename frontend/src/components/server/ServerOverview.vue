@@ -94,13 +94,20 @@ const restartTimes = computed(() => (props.inst.restart_times || []).join(', ') 
     <div v-else-if="!running" class="card">
       <div class="card-body d-flex flex-wrap align-items-center gap-2 py-2">
         <span class="rsm-dot bg-secondary" aria-hidden="true"></span>
-        <span class="me-auto">
+        <span v-if="inst.template_id == null" class="me-auto">
+          <strong>No template selected.</strong>
+          <span class="text-secondary">
+            Its template was deleted. Its world, backups and settings are kept; choose a
+            template under Settings to start it again.
+          </span>
+        </span>
+        <span v-else class="me-auto">
           <strong>Not running.</strong>
           <span class="text-secondary"> Its world, backups and settings are kept.</span>
         </span>
         <button
           class="btn btn-sm btn-success"
-          :disabled="!inst.server_files_ready"
+          :disabled="!inst.server_files_ready || inst.template_id == null"
           @click="emit('action', 'start')"
         >Start server</button>
       </div>

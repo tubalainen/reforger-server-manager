@@ -64,6 +64,27 @@ export function versionsText(n) {
   return n > 1 ? `all ${n} of its released versions` : 'its released version'
 }
 
+// The first delete prompt. A template servers still use can be deleted (#223):
+// they are left without one, and a running one is shut down — so name them.
+// `servers`: [{name, status}] from GET /api/templates/{id}/servers.
+export function deleteTemplatePrompt(name, servers = []) {
+  if (!servers.length) return `Delete template "${name}"?`
+  const running = servers.filter((s) => s.status === 'running')
+  const lines = servers.map((s) => `  • ${s.name}${s.status === 'running' ? ' (running: it will be shut down)' : ''}`)
+  const n = servers.length
+  return [
+    `Delete template "${name}"?`,
+    '',
+    `${n === 1 ? 'This server uses' : `These ${n} servers use`} it:`,
+    ...lines,
+    '',
+    `${n === 1 ? 'It is' : 'They are'} left with no template selected`
+      + (running.length ? `, and ${running.length === 1 ? 'the running one is' : 'the running ones are'} shut down now` : '')
+      + `. ${n === 1 ? 'Its' : 'Their'} saves and settings are kept; choose a new template in `
+      + `${n === 1 ? 'its' : 'their'} Settings to start ${n === 1 ? 'it' : 'them'} again.`,
+  ].join('\n')
+}
+
 // Where a release goes by default: the Prod item this one was copied from, if
 // it is still in Prod; otherwise a new Prod item (null).
 export function defaultReleaseTarget(item, prods) {

@@ -107,6 +107,7 @@ const ATTENTION_BUTTON = {
   restart: 'Restart',
   update: 'Update server files',
   'server-files': 'Server files',
+  settings: 'Choose a template',
 }
 
 function runAttention(item) {
@@ -116,6 +117,8 @@ function runAttention(item) {
     if (s) action(s, 'restart')
   } else if (a.kind === 'update') {
     updateNow(a.branch)
+  } else if (a.kind === 'settings') {
+    router.push({ name: 'instance-detail', params: { id: a.id, tab: 'settings' } })
   } else {
     router.push({ name: 'server-files' })
   }
@@ -160,7 +163,8 @@ const fmtUp = (s) => (isRunning(s) ? formatUptime(s.uptime_seconds) : '—')
 // The backend renders "YYYY-MM-DD HH:MM" in the server's local time; the time of day
 // is what matters in a table, the full label goes in the tooltip.
 const fmtNext = (s) => (s.next_restart ? s.next_restart.slice(11) : '—')
-const scenarioOf = (s) => s.scenario_name || s.template_name || '—'
+const scenarioOf = (s) =>
+  s.template_id == null ? 'No template selected' : s.scenario_name || s.template_name || '—'
 
 async function action(s, verb) {
   pending[s.id] = verb
@@ -362,7 +366,7 @@ onUnmounted(() => clearInterval(poll))
                   class="fw-semibold text-decoration-none"
                 >{{ s.name }}</router-link>
                 <div class="small text-secondary">
-                  {{ scenarioOf(s) }} · {{ branchLabel(s.branch) }}
+                  <span :class="{ 'text-warning': s.template_id == null }">{{ scenarioOf(s) }}</span> · {{ branchLabel(s.branch) }}
                   <StageBadge :stage="s.template_stage" :version="s.template_prod_version" class="ms-1" />
                 </div>
               </td>
@@ -403,8 +407,9 @@ onUnmounted(() => clearInterval(poll))
                 <button
                   v-else
                   class="btn btn-sm btn-success"
-                  :disabled="!s.server_files_ready || !!pending[s.id]"
-                  :title="s.server_files_ready ? '' : `${branchLabel(s.branch)} server files are not downloaded yet`"
+                  :disabled="!s.server_files_ready || s.template_id == null || !!pending[s.id]"
+                  :title="s.template_id == null ? 'Choose a template in its Settings first'
+                    : s.server_files_ready ? '' : `${branchLabel(s.branch)} server files are not downloaded yet`"
                   @click="action(s, 'start')"
                 >Start</button>
                 <button
