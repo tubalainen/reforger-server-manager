@@ -74,13 +74,19 @@ The browser talks to a FastAPI manager backed by SQLite. The manager reaches Doc
 
 Click the image for the interactive, animated overview, or edit the [Archify specification](docs/architecture/reforger-server-manager-overview.architecture.json).
 
+### Several teams on one machine
+
+[![Several teams on one machine](docs/architecture/reforger-server-manager-multi-team.png)](https://tubalainen.github.io/reforger-server-manager/architecture/reforger-server-manager-multi-team.html)
+
+Each team's install (a *stack*) has its own manager and Docker gate. A gate shows its manager only that stack's containers and volumes, so the teams never see each other's servers. On a VPS, one shared Caddy, the edge, serves each team's GUI at its own domain. It reaches each manager over that stack's own network only. The Server Supervisor shows every stack on one read-only page for whoever manages the machine; only its observer, which has no network, reads Docker. See [Several installs on one machine](docs/installation.md#several-installs-on-one-machine) and the [Archify specification](docs/architecture/reforger-server-manager-multi-team.architecture.json).
+
 ## Documentation
 
 - [Installation, security, networking, and updates](docs/installation.md)
 - [Features and screenshots](docs/features.md)
 - [Security review](docs/security-review.md)
 - [All documentation](docs/README.md)
-- [Interactive architecture overview](https://tubalainen.github.io/reforger-server-manager/architecture/reforger-server-manager-overview.html)
+- [Interactive architecture overview](https://tubalainen.github.io/reforger-server-manager/architecture/reforger-server-manager-overview.html), and [several teams on one machine](https://tubalainen.github.io/reforger-server-manager/architecture/reforger-server-manager-multi-team.html)
 - [Release notes](https://github.com/tubalainen/reforger-server-manager/releases)
 
 ## Development
