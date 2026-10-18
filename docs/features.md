@@ -34,6 +34,7 @@ Key template capabilities include:
   a version (v1, v2, …), and a changed copy is released as the next version of the original.
   Saves in Dev carry a comment in the change log.
 - Run a server on the latest release of a Prod template, or pin it to an older version.
+- Delete a template even while servers use it: the prompt names them, running ones are shut down, and they show **No template selected** until a new one is chosen in their Settings.
 - File templates under game-mode categories (built-in or your own) and show one category at a time.
 
 ## Server operations
@@ -96,6 +97,7 @@ Port values are assigned per server by the manager. Imported port settings there
 
 - Password-based browser authentication with session management and login rate limiting; the password can be changed in the GUI (**System › Account**), which logs out every other session.
 - Several independent installs on one machine, one per team, each seeing only its own servers, ports and data (`rsm add-stack`, or the Windows installer's `-Stack`).
+- On a VPS, a domain per team behind one shared HTTPS front, the edge (`rsm add-stack NAME --domain DOMAIN`, `rsm edge`), which reaches each team's manager over that team's own network only.
 - The Server Supervisor: every install on the machine on one read-only page, for whoever manages the machine. It shows each stack's manager, gate, ports and servers, the totals, and what needs attention, and it never sees a team's password or a server's log text.
 - Fail-closed defaults when the GUI is exposed beyond localhost.
 - A logout-all endpoint for invalidating every active session.
