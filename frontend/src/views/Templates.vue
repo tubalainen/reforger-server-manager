@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
 import ChangeLogModal from '../components/ChangeLogModal.vue'
@@ -12,8 +12,29 @@ import { filterByCategory, groupByStage, isLocked, promoteAction, versionsText }
 
 const router = useRouter()
 const templates = ref([])
+// What an action (delete, copy, …) ran into. It stays until it is dismissed or
+// the next action: the list reloads every few seconds, and clearing it on each
+// reload wiped a refused delete's reason before anyone could read it (#223).
 const error = ref('')
+// The list itself could not be loaded; the next good reload clears it.
+const loadError = ref('')
 const loading = ref(true)
+
+// The alert sits above the list, so an action far down the page failed out of
+// sight and looked like it did nothing (#223): bring each new message into view.
+const errorEl = ref(null)
+watch(error, async (msg) => {
+  if (!msg) return
+  await nextTick()
+  errorEl.value?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+})
+
+// A template servers still use cannot be deleted (the backend refuses); say so
+// on the menu item instead of letting the click fail.
+function deleteLabel(t) {
+  if (!t.server_count) return 'Delete'
+  return `Delete (used by ${t.server_count} server${t.server_count === 1 ? '' : 's'})`
+}
 let poll = null
 
 // --- Change log (#112): a read-only, searchable history per template ---
@@ -38,9 +59,9 @@ const prods = computed(() => templates.value.filter((t) => t.stage === 'prod'))
 async function load() {
   try {
     templates.value = await api('/api/templates')
-    error.value = ''
+    loadError.value = ''
   } catch (e) {
-    error.value = e.message
+    loadError.value = e.message
   } finally {
     loading.value = false
   }
@@ -53,6 +74,7 @@ async function remove(t) {
     `"${t.name}" is a Prod template. Deleting it also deletes ${versionsText(t.prod_version)} `
     + 'and its change log, for good.\n\nReally delete it?',
   )) return
+  error.value = ''
   try {
     await api(`/api/templates/${t.id}`, { method: 'DELETE' })
     await load()
@@ -215,7 +237,11 @@ onUnmounted(() => clearInterval(poll))
       </HelpTip>
     </p>
 
-    <div v-if="error" class="alert alert-warning py-2">{{ error }}</div>
+    <div v-if="error" ref="errorEl" class="alert alert-warning py-2 d-flex align-items-start gap-2">
+      <span class="flex-grow-1">{{ error }}</span>
+      <button type="button" class="btn-close" aria-label="Dismiss" @click="error = ''"></button>
+    </div>
+    <div v-if="loadError" class="alert alert-warning py-2">{{ loadError }}</div>
 
     <div v-if="loading" class="text-secondary">Loading…</div>
 
@@ -319,9 +345,14 @@ onUnmounted(() => clearInterval(poll))
                 </li>
                 <li><hr class="dropdown-divider" /></li>
                 <li>
-                  <button class="dropdown-item text-danger" :disabled="t.locked" @click="remove(t)">
-                    Delete
-                  </button>
+                  <!-- text-danger would outrank the grey of a disabled item -->
+                  <button
+                    class="dropdown-item"
+                    :class="{ 'text-danger': !t.locked && !t.server_count }"
+                    :disabled="t.locked || t.server_count > 0"
+                    :title="t.server_count ? 'Delete those servers, or switch them to another template, first' : ''"
+                    @click="remove(t)"
+                  >{{ deleteLabel(t) }}</button>
                 </li>
               </MenuButton>
             </div>
