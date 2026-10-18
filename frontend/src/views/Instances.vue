@@ -24,7 +24,12 @@ const updates = ref([])
 const autoDownload = ref(false)
 const templates = ref([])
 const templatesLoaded = ref(false)
+// What an action (start, stop, …) ran into. It stays until dismissed or the
+// next action: the summary reloads every 5 s, and clearing it there wiped a
+// failure before anyone could read it (#223).
 const error = ref('')
+// The summary itself could not be loaded; the next good reload clears it.
+const loadError = ref('')
 const showCreate = ref(false)
 const orphanedData = ref('')
 const create = reactive({
@@ -37,9 +42,9 @@ let poll = null
 async function load() {
   try {
     summary.value = await api('/api/instances/summary')
-    error.value = ''
+    loadError.value = ''
   } catch (e) {
-    error.value = e.message
+    loadError.value = e.message
   }
   try {
     const auto = await api('/api/serverfiles/auto-update')
@@ -119,6 +124,7 @@ function runAttention(item) {
 // Start the branch's download, then open System › Server files, which picks up the
 // running job and streams its progress and log (#177).
 async function updateNow(branch) {
+  error.value = ''
   try {
     await api(`/api/serverfiles/${branch}/download`, { method: 'POST' })
   } catch (e) {
@@ -158,6 +164,7 @@ const scenarioOf = (s) => s.scenario_name || s.template_name || '—'
 
 async function action(s, verb) {
   pending[s.id] = verb
+  error.value = ''
   try {
     await api(`/api/instances/${s.id}/${verb}`, { method: 'POST' })
     await load()
@@ -256,7 +263,11 @@ onUnmounted(() => clearInterval(poll))
       <button class="btn btn-primary" @click="openCreate">New server</button>
     </div>
 
-    <div v-if="error" class="alert alert-warning py-2">{{ error }}</div>
+    <div v-if="error" class="alert alert-warning py-2 d-flex align-items-start gap-2">
+      <span class="flex-grow-1">{{ error }}</span>
+      <button type="button" class="btn-close" aria-label="Dismiss" @click="error = ''"></button>
+    </div>
+    <div v-if="loadError" class="alert alert-warning py-2">{{ loadError }}</div>
 
     <div v-if="orphanedData" class="alert alert-info py-2 small d-flex gap-2 align-items-start">
       <span>
@@ -408,7 +419,7 @@ onUnmounted(() => clearInterval(poll))
       </div>
     </template>
 
-    <p v-else-if="!error" class="text-secondary">Loading…</p>
+    <p v-else-if="!loadError" class="text-secondary">Loading…</p>
 
     <!-- Restart all: every player on the host is disconnected, so confirm it -->
     <div v-if="restartAll.open" class="modal d-block" tabindex="-1" style="background: rgba(0,0,0,.5)">
