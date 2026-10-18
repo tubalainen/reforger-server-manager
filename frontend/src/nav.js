@@ -14,7 +14,7 @@ export const NAV = [
     key: 'system',
     to: '/system',
     label: 'System',
-    full: 'Server files, ports & firewall, export & import, account',
+    full: 'Server files, ports & firewall, export & import, categories, account',
   },
 ]
 
@@ -30,6 +30,7 @@ export const SUBNAV = {
     { to: '/system/server-files', label: 'Server files' },
     { to: '/system/network', label: 'Ports & firewall' },
     { to: '/system/export', label: 'Export & import' },
+    { to: '/system/categories', label: 'Category management' },
     { to: '/system/account', label: 'Account' },
   ],
 }

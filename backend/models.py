@@ -47,8 +47,31 @@ class Template(SQLModel, table=True):
     # deleted), so a release can default to "next version of" it.
     based_on_id: int | None = None
     based_on_version: int | None = None
+    # Game-mode category (#223), managed under System; None = Uncategorised.
+    # Only a label: changing it never changes what a server runs.
+    category_id: int | None = None
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
+
+
+class TemplateCategory(SQLModel, table=True):
+    """A game mode a server template can be filed under (#223): Conflict, HQC, …
+
+    A few come built in and are added once; after that they are the user's to
+    rename or delete like any other. Deleting one leaves its templates
+    Uncategorised.
+    """
+
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(index=True, unique=True)
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+# The categories a new install starts with (#223).
+BUILTIN_CATEGORIES = (
+    "Game Master", "HQC", "Conflict", "COE", "Escapist", "Freedom Fighters",
+)
+_CATEGORIES_SEEDED = "template_categories"
 
 
 class TemplateVersion(SQLModel, table=True):
@@ -241,6 +264,27 @@ def init_db() -> None:
     engine = get_engine()
     SQLModel.metadata.create_all(engine)
     _migrate(engine)
+    seed_template_categories(engine)
+
+
+def seed_template_categories(engine) -> int:
+    """Add the built-in categories once (#223). A flag remembers it was done, so
+    a built-in the user deleted is not brought back on the next start; a name
+    that already exists is left alone. Returns how many were added."""
+    import json
+
+    from sqlmodel import Session, select
+
+    with Session(engine) as session:
+        if session.get(AppSetting, _CATEGORIES_SEEDED):
+            return 0
+        taken = {n.lower() for n in session.exec(select(TemplateCategory.name)).all()}
+        added = [n for n in BUILTIN_CATEGORIES if n.lower() not in taken]
+        for name in added:
+            session.add(TemplateCategory(name=name))
+        session.add(AppSetting(key=_CATEGORIES_SEEDED, value=json.dumps({"seeded": True})))
+        session.commit()
+        return len(added)
 
 
 def _migrate(engine) -> None:
@@ -323,6 +367,10 @@ def _migrate(engine) -> None:
                 if col not in cols:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} INTEGER"))
                     conn.commit()
+        # game-mode category (#223); NULL = Uncategorised
+        if "category_id" not in tcols:
+            conn.execute(text("ALTER TABLE template ADD COLUMN category_id INTEGER"))
+            conn.commit()
 
         # container_id was removed from the Instance model in #88 (containers are
         # located by Docker label now, not a stored id). create_all() never alters

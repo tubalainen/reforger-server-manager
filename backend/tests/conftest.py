@@ -75,6 +75,7 @@ def _clean_db():
         session.exec(delete(models.ModTemplateVersion))
         session.exec(delete(models.ModTemplate))
         session.exec(delete(models.AppSetting))
+        session.exec(delete(models.TemplateCategory))
         session.commit()
     yield
 

@@ -141,6 +141,7 @@ function releaseLock() {
 // The working spec sent to the backend
 const spec = reactive({
   name: '',
+  category_id: null, // game-mode category (#223); null = Uncategorised
   description: '',
   scenario_id: '',
   scenario_name: '',
@@ -1488,7 +1489,18 @@ const canNext = computed(() => {
   return true
 })
 
+// The categories a template can be filed under (#223), for the Save step.
+const categories = ref([])
+async function loadCategories() {
+  try {
+    categories.value = await api('/api/template-categories')
+  } catch {
+    /* the picker just stays empty */
+  }
+}
+
 onMounted(async () => {
+  loadCategories() // not awaited: only the Save step needs it
   if (editing.value) {
     try {
       // Load first: a Prod template is read-only and takes no edit lock (#223).
@@ -1513,6 +1525,7 @@ onMounted(async () => {
       spec.mods = normalizeMods(t.spec.mods)
       spec.name = t.name
       spec.description = t.description
+      spec.category_id = t.category_id ?? null
       extrasPaths.value = t.extras_paths || []
       hydrateVersionHistories() // deliberately not awaited — fills pickers as results land
     } catch (e) {
@@ -2994,6 +3007,17 @@ onBeforeUnmount(() => {
           <div class="mb-3">
             <label class="form-label">Description <small class="text-secondary">(optional)</small></label>
             <input v-model="spec.description" class="form-control" />
+          </div>
+          <div class="mb-3">
+            <label for="tpl-category" class="form-label">Category</label>
+            <select id="tpl-category" v-model="spec.category_id" class="form-select">
+              <option :value="null">Uncategorised</option>
+              <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option>
+            </select>
+            <div class="form-text">
+              The game mode, to sort templates by. Categories are managed under
+              <router-link :to="{ name: 'categories' }">System › Category management</router-link>.
+            </div>
           </div>
           <p v-if="!editing" class="small text-secondary">
             A new template starts in <strong>Test</strong>, where it is free to change.

@@ -42,6 +42,14 @@ export function groupByStage(items) {
     .filter((g) => g.items.length)
 }
 
+// The category filter on the Server templates page (#223): 'all', 'none'
+// (Uncategorised), or a category id (a <select> may hand it over as a string).
+export function filterByCategory(items, filter) {
+  if (filter === 'all' || filter == null || filter === '') return items
+  if (filter === 'none') return items.filter((i) => i.category_id == null)
+  return items.filter((i) => i.category_id === Number(filter))
+}
+
 // The one move up a stage offers, or null in Prod.
 export function promoteAction(stage) {
   if (stage === 'test') return { label: 'To Dev', release: false }
