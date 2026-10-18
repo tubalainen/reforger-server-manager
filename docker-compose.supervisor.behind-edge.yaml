@@ -1,0 +1,28 @@
+# The Server Supervisor served by the shared edge (#204) — goes WITH
+# docker-compose.supervisor.yaml:
+#
+#   docker compose -f docker-compose.supervisor.yaml -f docker-compose.supervisor.behind-edge.yaml up -d
+#
+# rsm adds it for you (`sudo rsm edge add --supervisor DOMAIN`). What it changes:
+#
+#   * The Supervisor joins one more network, rsm-supervisor-proxy, which the
+#     edge joins too. rsm creates it with the subnet in PROXY_SUBNET (.env).
+#     It is not the network the Supervisor shares with its observer: that one
+#     keeps having nobody else on it.
+#   * It believes X-Forwarded-For from that subnet only, so login throttling
+#     sees each real client, not the edge.
+#   * It is on the internet now, so it refuses to start on a weak password,
+#     like any exposed install (the page itself stays on 127.0.0.1 as before).
+services:
+  supervisor:
+    environment:
+      WEB_BIND: "0.0.0.0"
+      TRUSTED_PROXIES: ${PROXY_SUBNET:?set PROXY_SUBNET in .env (rsm edge add --supervisor does)}
+    networks:
+      - supervisor
+      - proxy
+
+networks:
+  proxy:
+    name: rsm-supervisor-proxy
+    external: true

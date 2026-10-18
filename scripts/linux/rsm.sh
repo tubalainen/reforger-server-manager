@@ -86,6 +86,10 @@ stack_dir() {  # the folder of a registered stack
     ( RSM_DIR=''; . "$(stack_conf "$1")"; printf '%s' "$RSM_DIR" )
 }
 
+stack_compose() {  # the compose file name a registered stack runs
+    ( RSM_COMPOSE=''; . "$(stack_conf "$1")"; printf '%s' "$RSM_COMPOSE" )
+}
+
 # Load one stack: its folder becomes the working directory.
 use_stack() {
     STACK_CONF=$(stack_conf "$1") || die "there is no stack named '$1' (see: rsm stacks)"
@@ -115,7 +119,27 @@ pick_stack() {
     die "this machine has several stacks ($(printf '%s ' $_names | sed 's/ $//')); say which with --stack NAME$_hint"
 }
 
-dc() { docker compose -f "$RSM_COMPOSE" "$@"; }
+# A VPS stack served by the shared edge (#204) keeps its own Caddy off with an
+# override next to its compose file; its presence is what says so.
+STACK_EDGE_OVERRIDE=docker-compose.vps.behind-edge.yaml
+
+dc() {
+    if [ -f "$STACK_EDGE_OVERRIDE" ]; then
+        docker compose -f "$RSM_COMPOSE" -f "$STACK_EDGE_OVERRIDE" "$@"
+    else
+        docker compose -f "$RSM_COMPOSE" "$@"
+    fi
+}
+
+# Set KEY=VALUE in ./.env: the line is replaced if there is one, else added.
+set_env() {
+    if grep -q "^$1=" .env 2>/dev/null; then
+        sed -i "s|^$1=.*|$1=$2|" .env
+    else
+        [ ! -s .env ] || [ -z "$(tail -c1 .env)" ] || echo >> .env
+        printf '%s=%s\n' "$1" "$2" >> .env
+    fi
+}
 
 # Where a stack's setup files come from: the release it runs. A pinned
 # MANAGER_VERSION=vX.Y.Z gets that release's files — a newer compose file can
@@ -150,11 +174,19 @@ Reforger Server Manager — for whoever manages this machine
   rsm ports               every stack's GUI port and UDP ranges, and any overlap
   rsm add-stack NAME      set up another install next to the others
        [--dir DIR] [--web-port N] [--bind local|lan]
+       [--domain DOMAIN]  on a VPS: its GUI at https://DOMAIN, through the edge
   rsm remove-stack NAME   remove one (asks before deleting its data)
 
   With more than one stack, name it: rsm --stack NAME <command>.
   start, stop, restart, status, update and check also take --all
-  (update --all updates the Server Supervisor too).
+  (update --all updates the Server Supervisor and the edge too).
+
+  The shared edge: one HTTPS front (ports 80, 443) for several stacks on a VPS:
+  rsm edge                       what it serves
+  rsm edge add STACK DOMAIN      serve a stack's GUI at https://DOMAIN  [--email ADDRESS]
+  rsm edge add --supervisor DOMAIN   and the Server Supervisor's page
+  rsm edge remove STACK | --supervisor
+  rsm edge start | stop | restart | logs | update | uninstall
 
   The Server Supervisor: every stack on one read-only page (port 7090):
   rsm supervisor install  set it up  [--dir DIR] [--web-port N] [--bind local|lan]
@@ -244,27 +276,34 @@ check_setup_files() {
         fi
     fi
 
-    # The compose file: offer a refresh only when it actually differs.
-    if curl -fsSL "$RAW/$RSM_COMPOSE" -o "$tmp/compose" 2>/dev/null &&
-       ! cmp -s "$tmp/compose" "$RSM_COMPOSE"; then
-        echo
-        echo "  Your $RSM_COMPOSE differs from this release's:"
-        if command -v diff >/dev/null 2>&1; then
-            diff -u "$RSM_COMPOSE" "$tmp/compose" | sed -n '3,25p' | sed 's/^/    /'
-        fi
-        if have_tty && [ "$(ask_tty '  Replace it (a backup is kept)? [y/N] ')" = "y" ]; then
-            backup="$RSM_COMPOSE.bak-$(date +%Y%m%d%H%M%S)"
-            cp "$RSM_COMPOSE" "$backup"
-            cp "$tmp/compose" "$RSM_COMPOSE"
-            echo "  Replaced. Previous file kept as $backup"
-            compose_replaced=1
-        else
-            echo "  Left as-is. Refresh it later with:"
-            echo "    curl -fsSL $RAW/$RSM_COMPOSE -o $RSM_DIR/$RSM_COMPOSE"
-        fi
-    fi
+    # The compose file, and the edge override when there is one: offer a
+    # refresh only when it actually differs.
+    offer_refresh "$RSM_COMPOSE" "$tmp/compose"
+    [ ! -f "$STACK_EDGE_OVERRIDE" ] || offer_refresh "$STACK_EDGE_OVERRIDE" "$tmp/override"
 
     rm -rf "$tmp"; trap - EXIT
+}
+
+# offer_refresh FILE SCRATCH — FILE as this release ships it, when it differs
+# from the copy here; sets compose_replaced when it is replaced.
+offer_refresh() {
+    curl -fsSL "$RAW/$1" -o "$2" 2>/dev/null || return 0
+    cmp -s "$2" "$1" && return 0
+    echo
+    echo "  Your $1 differs from this release's:"
+    if command -v diff >/dev/null 2>&1; then
+        diff -u "$1" "$2" | sed -n '3,25p' | sed 's/^/    /'
+    fi
+    if have_tty && [ "$(ask_tty '  Replace it (a backup is kept)? [y/N] ')" = "y" ]; then
+        _backup="$1.bak-$(date +%Y%m%d%H%M%S)"
+        cp "$1" "$_backup"
+        cp "$2" "$1"
+        echo "  Replaced. Previous file kept as $_backup"
+        compose_replaced=1
+    else
+        echo "  Left as-is. Refresh it later with:"
+        echo "    curl -fsSL $RAW/$1 -o $RSM_DIR/$1"
+    fi
 }
 
 # Docker Engine 26 is the first that can mount one folder of a volume, which is
@@ -445,20 +484,26 @@ cmd_stacks() {
 
 cmd_add_stack() {
     _name=${1:-}
-    [ -n "$_name" ] || die "usage: rsm add-stack NAME [--dir DIR] [--web-port N] [--bind local|lan]"
+    [ -n "$_name" ] || die "usage: rsm add-stack NAME [--dir DIR] [--web-port N] [--bind local|lan] [--domain DOMAIN]"
     shift
     valid_stack_name "$_name" ||
         die "'$_name' is not a valid stack name: use 1-31 lower-case letters, digits and underscores, starting with a letter or digit, no dashes (e.g. team2)"
-    _dir=/opt/rsm-$_name; _web=''; _bind=''
+    _dir=/opt/rsm-$_name; _web=''; _bind=''; _domain=''
     while [ $# -gt 0 ]; do
         case "$1" in
             --dir) [ $# -ge 2 ] || die "--dir needs a folder"; _dir=$2; shift 2 ;;
             --web-port) [ $# -ge 2 ] || die "--web-port needs a number"; _web=$2; shift 2 ;;
             --bind) [ $# -ge 2 ] || die "--bind needs local or lan"; _bind=$2; shift 2 ;;
+            --domain) [ $# -ge 2 ] || die "--domain needs a domain name"; _domain=$(site_address "$2") || exit 1; shift 2 ;;
             *) die "add-stack: unknown option '$1'" ;;
         esac
     done
     [ "$(id -u)" = "0" ] || die "add-stack needs root: sudo rsm add-stack $_name"
+    if [ -n "$_domain" ]; then
+        [ -z "$_bind" ] || die "--domain and --bind do not go together: with a domain the GUI is reached through the edge only"
+        _used=$(edge_site_named_by "$_domain")
+        [ -z "$_used" ] || die "$_domain is already the address of $(site_label "$_used")"
+    fi
     if stack_conf "$_name" >/dev/null 2>&1; then die "there already is a stack named '$_name'"; fi
     if [ -e "$_dir" ] && [ -n "$(ls -A "$_dir" 2>/dev/null)" ]; then
         die "$_dir already exists and is not empty; choose another with --dir"
@@ -498,26 +543,41 @@ cmd_add_stack() {
     _public=$(env_value_in "$_first_env" PUBLIC_ADDRESS)
     _tz=$(env_value_in "$_first_env" TZ)
 
-    # A VPS install sits behind its own Caddy on ports 80 and 443. A second stack
-    # has no HTTPS front of its own yet (#204, phase 4): its GUI must stay on this
+    # A VPS install sits behind Caddy on ports 80 and 443, and only one program
+    # can hold them. With --domain the new stack is served by the shared edge
+    # (rsm edge), which takes them over. Without, its GUI must stay on this
     # machine, reached through an SSH tunnel, never plain HTTP on the internet.
-    for _s in $(stack_names); do
-        if [ "$( RSM_COMPOSE=''; . "$(stack_conf "$_s")"; printf '%s' "$RSM_COMPOSE" )" = docker-compose.vps.yaml ]; then
-            echo "Note: this machine runs the VPS setup. The new stack gets no HTTPS front of"
-            echo "its own yet, so its GUI is reachable only from this machine (an SSH tunnel)."
-            [ "$_bind" = local ] || die "--bind lan would put its GUI on the internet without HTTPS; use --bind local"
-            confirm "Set it up anyway?" n || { echo "Cancelled."; return 0; }
-            break
-        fi
-    done
+    if [ -z "$_domain" ]; then
+        for _s in $(stack_names); do
+            if [ "$(stack_compose "$_s")" = docker-compose.vps.yaml ]; then
+                echo "Note: this machine runs the VPS setup. Without --domain the new stack's GUI"
+                echo "is reachable only from this machine (an SSH tunnel). With --domain DOMAIN the"
+                echo "shared edge serves it over HTTPS at that domain."
+                [ "$_bind" = local ] || die "--bind lan would put its GUI on the internet without HTTPS; use --bind local, or --domain"
+                confirm "Set it up without a domain?" n || { echo "Cancelled."; return 0; }
+                break
+            fi
+        done
+    fi
+
+    _compose=docker-compose.yaml
+    _subnet=''
+    if [ -n "$_domain" ]; then
+        _compose=docker-compose.vps.yaml
+        _subnet=$(free_proxy_subnet) || die "no free 172.31.x.0/24 subnet left for its proxy network"
+    fi
 
     echo "Setting up stack '$_name' in $_dir"
-    echo "  GUI port $_web (TCP); game $_game, A2S $_a2s, RCON $_rcon (UDP)"
+    if [ -n "$_domain" ]; then
+        echo "  GUI at $(site_url "$_domain") through the shared edge; game $_game, A2S $_a2s, RCON $_rcon (UDP)"
+    else
+        echo "  GUI port $_web (TCP); game $_game, A2S $_a2s, RCON $_rcon (UDP)"
+    fi
     confirm "Go ahead?" y || { echo "Cancelled."; return 0; }
 
     _raw="https://raw.githubusercontent.com/$REPO/${RSM_REF:-main}"
     mkdir -p "$_dir/data" "$_dir/serverfiles/stable" "$_dir/serverfiles/experimental"
-    curl -fsSL "$_raw/docker-compose.yaml" -o "$_dir/docker-compose.yaml" ||
+    curl -fsSL "$_raw/$_compose" -o "$_dir/$_compose" ||
         die "could not download the compose file"
     curl -fsSL "$_raw/.env.example" -o "$_dir/.env.example" ||
         die "could not download .env.example"
@@ -539,13 +599,18 @@ cmd_add_stack() {
         "$_dir/.env"
     [ -z "$_public" ] || sed -i "s|^PUBLIC_ADDRESS=.*|PUBLIC_ADDRESS=$_public|" "$_dir/.env"
     [ -z "$_tz" ] || sed -i "s|^TZ=.*|TZ=$_tz|" "$_dir/.env"
+    [ -z "$_domain" ] || sed -i "s|^SITE_ADDRESS=.*|SITE_ADDRESS=$_domain|" "$_dir/.env"
     printf '\n# Keeps Docker Compose from mixing this install up with another (#204).\nCOMPOSE_PROJECT_NAME=%s\n' \
         "$_name" >> "$_dir/.env"
+    [ -z "$_subnet" ] ||
+        printf '# Its proxy network, which the shared edge joins; the manager trusts it.\nPROXY_SUBNET=%s\n' \
+            "$_subnet" >> "$_dir/.env"
     chmod 600 "$_dir/.env"
 
     mkdir -p "$REGISTRY"
-    printf 'RSM_DIR=%s\nRSM_COMPOSE=%s\n' "$_dir" docker-compose.yaml > "$REGISTRY/$_name.conf"
+    printf 'RSM_DIR=%s\nRSM_COMPOSE=%s\n' "$_dir" "$_compose" > "$REGISTRY/$_name.conf"
     chmod 644 "$REGISTRY/$_name.conf"
+    [ -z "$_domain" ] || _bind=edge
 
     if command -v ufw >/dev/null 2>&1; then
         _g=$(printf '%s' "$_game" | tr - :); _q=$(printf '%s' "$_a2s" | tr - :)
@@ -560,6 +625,25 @@ cmd_add_stack() {
         fi
     else
         echo "No ufw here: open UDP $_game and $_a2s in your firewall yourself."
+    fi
+
+    if [ -n "$_domain" ]; then
+        # The manager first, without its own Caddy: compose makes the proxy
+        # network the edge then joins. The edge serves it from there.
+        ( cd "$_dir" && { docker compose -f "$_compose" pull -q manager 2>/dev/null ||
+                          docker compose -f "$_compose" pull manager; } &&
+          docker compose -f "$_compose" up -d manager )
+        cmd_edge_add "$_name" "$_domain" ||
+            die "stack '$_name' is set up but not served yet; finish with: sudo rsm edge add $_name $_domain"
+        echo
+        echo "Stack '$_name' is up."
+        echo "  Web GUI  : $(site_url "$_domain")"
+        echo "  Username : admin"
+        echo "  Password : $_pass"
+        echo "             ^ give this to the team; they can change it under System > Account."
+        echo "  Players  : open UDP $_game and $_a2s in your provider's firewall too."
+        echo "  Manage it with: rsm <command> --stack $_name"
+        return 0
     fi
 
     ( cd "$_dir" && { docker compose pull -q 2>/dev/null || docker compose pull; } &&
@@ -588,7 +672,10 @@ cmd_remove_stack() {
     [ "$(id -u)" = "0" ] || die "remove-stack needs root: sudo rsm remove-stack $_name"
     echo "This stops stack '$_name' and removes its containers."
     confirm "Continue?" n || { echo "Cancelled."; return 0; }
+    stack_off_edge
     dc down --remove-orphans || true
+    # Behind the edge its proxy network is external to it: `down` leaves it.
+    [ ! -f "$STACK_EDGE_OVERRIDE" ] || docker network rm "$STACK-proxy" >/dev/null 2>&1 || true
     _game=$(env_value GAME_PORT_RANGE)
     _a2s=$(env_value A2S_PORT_RANGE)
     echo
@@ -611,8 +698,10 @@ cmd_remove_stack() {
     fi
     if [ -z "$(stack_names)" ]; then
         rmdir "$REGISTRY" 2>/dev/null || true
-        if supervisor_installed; then
-            echo "That was the last stack. The Server Supervisor is still installed: sudo rsm supervisor remove"
+        if supervisor_installed || edge_installed; then
+            echo "That was the last stack. Still installed:"
+            ! supervisor_installed || echo "  the Server Supervisor:  sudo rsm supervisor remove"
+            ! edge_installed || echo "  the shared edge:        sudo rsm edge uninstall"
         else
             rm -f /usr/local/bin/rsm
             echo "That was the last stack: the rsm command was removed too."
@@ -637,7 +726,16 @@ use_supervisor() {
     RAW="https://raw.githubusercontent.com/$REPO/$(files_ref)"
 }
 
-sdc() { docker compose -f "$SUPERVISOR_COMPOSE" "$@"; }
+# Served by the shared edge (#204), it has this override next to its file.
+SUPERVISOR_EDGE_OVERRIDE=docker-compose.supervisor.behind-edge.yaml
+
+sdc() {
+    if [ -f "$SUPERVISOR_EDGE_OVERRIDE" ]; then
+        docker compose -f "$SUPERVISOR_COMPOSE" -f "$SUPERVISOR_EDGE_OVERRIDE" "$@"
+    else
+        docker compose -f "$SUPERVISOR_COMPOSE" "$@"
+    fi
+}
 
 supervisor_url() {
     _port=$(env_value WEB_PORT); _port=${_port:-7090}
@@ -731,36 +829,57 @@ cmd_supervisor_remove() {
     [ "$(id -u)" = "0" ] || die "this needs root: sudo rsm supervisor remove"
     echo "This removes the Server Supervisor. The stacks and their servers are not touched."
     confirm "Continue?" n || { echo "Cancelled."; return 0; }
+    if [ -n "$(edge_address_of @supervisor)" ]; then
+        ( use_edge && edge_drop_site @supervisor && edge_apply ) ||
+            echo "rsm: could not take it off the shared edge (see: rsm edge)" >&2
+    fi
     sdc down --volumes --remove-orphans || true
+    docker network rm rsm-supervisor-proxy >/dev/null 2>&1 || true
     cd /
     rm -rf "$RSM_DIR"
     rm -f "$SUPERVISOR_CONF"
     echo "Removed the Server Supervisor and $RSM_DIR."
-    if [ -z "$(stack_names)" ]; then
+    if [ -z "$(stack_names)" ] && ! edge_installed; then
         rm -f /usr/local/bin/rsm
         echo "No stack is left either: the rsm command was removed too."
     fi
 }
 
-# A newer compose file for the Supervisor, offered like a stack's.
-check_supervisor_compose() {
-    tmp=$(mktemp) || return 0
-    if curl -fsSL "$RAW/$SUPERVISOR_COMPOSE" -o "$tmp" 2>/dev/null && ! cmp -s "$tmp" "$SUPERVISOR_COMPOSE"; then
+# FILE as this release ships it, offered when it differs from the copy here.
+# True when it was replaced (a backup is kept); the caller applies it.
+offer_and_replace() {
+    _tmp=$(mktemp) || return 1
+    _replaced=1
+    if curl -fsSL "$RAW/$1" -o "$_tmp" 2>/dev/null && ! cmp -s "$_tmp" "$1"; then
         echo
-        echo "  Your $SUPERVISOR_COMPOSE differs from this release's:"
-        command -v diff >/dev/null 2>&1 &&
-            diff -u "$SUPERVISOR_COMPOSE" "$tmp" | sed -n '3,25p' | sed 's/^/    /'
+        echo "  Your $1 differs from this release's:"
+        if command -v diff >/dev/null 2>&1; then
+            diff -u "$1" "$_tmp" | sed -n '3,25p' | sed 's/^/    /'
+        fi
         if confirm "  Replace it (a backup is kept) and apply it?" n; then
-            cp "$SUPERVISOR_COMPOSE" "$SUPERVISOR_COMPOSE.bak-$(date +%Y%m%d%H%M%S)"
-            cp "$tmp" "$SUPERVISOR_COMPOSE"
-            sdc up -d --remove-orphans
-            echo "  Replaced and applied."
+            cp "$1" "$1.bak-$(date +%Y%m%d%H%M%S)"
+            cp "$_tmp" "$1"
+            echo "  Replaced."
+            _replaced=0
         else
             echo "  Left as-is. Refresh it later with:"
-            echo "    curl -fsSL $RAW/$SUPERVISOR_COMPOSE -o $RSM_DIR/$SUPERVISOR_COMPOSE"
+            echo "    curl -fsSL $RAW/$1 -o $RSM_DIR/$1"
         fi
     fi
-    rm -f "$tmp"
+    rm -f "$_tmp"
+    return $_replaced
+}
+
+# A newer compose file for the Supervisor (and its edge override), offered
+# like a stack's.
+check_supervisor_compose() {
+    _changed=0
+    if offer_and_replace "$SUPERVISOR_COMPOSE"; then _changed=1; fi
+    if [ -f "$SUPERVISOR_EDGE_OVERRIDE" ] && offer_and_replace "$SUPERVISOR_EDGE_OVERRIDE"; then _changed=1; fi
+    if [ "$_changed" = 1 ]; then
+        sdc up -d --remove-orphans
+        echo "  Applied."
+    fi
 }
 
 cmd_supervisor() {
@@ -775,7 +894,11 @@ cmd_supervisor() {
         start)   sdc up -d; echo "Page: $(supervisor_url)" ;;
         stop)    sdc stop ;;
         restart) sdc down && sdc up -d ;;
-        status)  sdc ps; echo; echo "Page: $(supervisor_url)" ;;
+        status)
+            sdc ps; echo; echo "Page: $(supervisor_url)"
+            _a=$(edge_address_of @supervisor)
+            [ -z "$_a" ] || echo "Also: $(site_url "$_a")   (the shared edge)"
+            ;;
         logs)
             if [ $# -eq 0 ]; then sdc logs -f --tail 200 supervisor; else sdc logs -f --tail 200 "$@"; fi
             ;;
@@ -785,6 +908,456 @@ cmd_supervisor() {
             check_supervisor_compose
             ;;
         *) die "rsm supervisor: unknown command '$_sub' (install, start, stop, restart, status, logs, update, remove)" ;;
+    esac
+}
+
+# --------------------------------------------------------------------------- #
+# The shared edge (#204): one HTTPS front for several stacks on a VPS
+# --------------------------------------------------------------------------- #
+# Only one program can hold ports 80 and 443. On a VPS with one stack that is
+# the stack's own Caddy; with several it is the edge, an install of its own,
+# which serves each stack's manager (and the Supervisor, if asked) at a domain
+# of its own. It reaches each over that stack's own proxy network and nothing
+# else, so the stacks still share no network with each other.
+EDGE_CONF=${RSM_EDGE_CONF:-/etc/reforger-server-manager/edge.conf}
+EDGE_COMPOSE=docker-compose.edge.yaml
+EDGE_SITES_COMPOSE=docker-compose.edge.sites.yaml
+# What docker-compose.vps.yaml gives a stack whose .env names none.
+DEFAULT_PROXY_SUBNET=172.31.242.0/24
+
+edge_installed() { [ -r "$EDGE_CONF" ]; }
+
+edge_dir() { ( RSM_DIR=''; . "$EDGE_CONF"; printf '%s' "$RSM_DIR" ); }
+
+use_edge() {
+    edge_installed || die "there is no shared edge here (sudo rsm edge add STACK DOMAIN sets it up)"
+    RSM_DIR=$(edge_dir)
+    [ -d "$RSM_DIR" ] || die "the edge's folder '$RSM_DIR' is missing (from $EDGE_CONF)"
+    cd "$RSM_DIR"
+    RAW="https://raw.githubusercontent.com/$REPO/$(files_ref)"
+}
+
+edc() { docker compose -f "$EDGE_COMPOSE" -f "$EDGE_SITES_COMPOSE" "$@"; }
+
+# The sites it serves: lines "NAME ADDRESS" in its folder's `sites` file. NAME
+# is a stack, or @supervisor for the Server Supervisor.
+edge_sites() {
+    edge_installed || return 0
+    _f="$(edge_dir)/sites"
+    [ -r "$_f" ] || return 0
+    sed '/^[[:space:]]*$/d' "$_f"
+}
+edge_address_of() { edge_sites | awk -v n="$1" '$1 == n { print $2; exit }'; }
+edge_site_named_by() { edge_sites | awk -v a="$1" '$2 == a { print $1; exit }'; }
+
+edge_put_site() {  # edge_put_site NAME ADDRESS — adds it, or changes its address
+    _f="$(edge_dir)/sites"
+    { awk -v n="$1" '$1 != n && NF' "$_f" 2>/dev/null || true; printf '%s %s\n' "$1" "$2"; } > "$_f.new"
+    mv "$_f.new" "$_f"
+}
+edge_drop_site() {
+    _f="$(edge_dir)/sites"
+    { awk -v n="$1" '$1 != n && NF' "$_f" 2>/dev/null || true; } > "$_f.new"
+    mv "$_f.new" "$_f"
+}
+
+site_label() {
+    if [ "$1" = @supervisor ]; then printf 'the Server Supervisor'; else printf "stack '%s'" "$1"; fi
+}
+site_upstream() {  # the container a site is served from
+    if [ "$1" = @supervisor ]; then printf 'rsm-supervisor'; else printf '%s-manager' "$1"; fi
+}
+site_network() {  # the network the edge reaches it on
+    if [ "$1" = @supervisor ]; then printf 'rsm-supervisor-proxy'; else printf '%s-proxy' "$1"; fi
+}
+
+# A site's address: a domain name, lower case. http://DOMAIN is plain HTTP, for
+# testing — the login then crosses the network unencrypted.
+site_address() {
+    _a=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
+    _a=${_a#https://}
+    printf '%s' "$_a" | grep -Eq '^(http://)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$' ||
+        { echo "rsm: '$1' is not a domain name (e.g. team2.example.com)" >&2; return 1; }
+    printf '%s' "$_a"
+}
+site_url() {
+    case "$1" in http://*) printf '%s' "$1" ;; *) printf 'https://%s' "$1" ;; esac
+}
+
+check_dns() {
+    case "$1" in
+        http://*)
+            echo "  WARNING: $1 is plain HTTP — the login crosses the network unencrypted. Testing only."
+            return 0 ;;
+    esac
+    command -v getent >/dev/null 2>&1 || return 0
+    _r=$(getent ahosts "$1" 2>/dev/null | awk '{ print $1 }' | sort -u | tr '\n' ' ')
+    if [ -z "$_r" ]; then
+        echo "  Note: $1 does not resolve yet. Point its DNS record at this machine;"
+        echo "  Caddy keeps trying for the certificate until it does."
+    else
+        echo "  $1 resolves to $_r— that must be this machine for the certificate."
+    fi
+}
+
+# VPS stacks still on their own Caddy: each holds ports 80 and 443.
+own_caddy_stacks() {
+    for _s in $(stack_names); do
+        [ "$(stack_compose "$_s")" = docker-compose.vps.yaml ] || continue
+        [ -f "$(stack_dir "$_s")/$STACK_EDGE_OVERRIDE" ] && continue
+        echo "$_s"
+    done
+}
+
+# Every subnet this machine's Docker networks have, or a stack or the
+# Supervisor will ask for.
+used_subnets() {
+    _ids=$(docker network ls -q 2>/dev/null) || _ids=''
+    # shellcheck disable=SC2086
+    [ -z "$_ids" ] || docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}' $_ids 2>/dev/null || true
+    for _s in $(stack_names); do
+        [ "$(stack_compose "$_s")" = docker-compose.vps.yaml ] || continue
+        _p=$(env_value_in "$(stack_dir "$_s")/.env" PROXY_SUBNET)
+        echo "${_p:-$DEFAULT_PROXY_SUBNET}"
+    done
+    if supervisor_installed; then env_value_in "$(supervisor_dir)/.env" PROXY_SUBNET; echo; fi
+}
+
+# A 172.31.x.0/24 that meets none of them (IPv4 arithmetic in awk).
+free_proxy_subnet() {
+    used_subnets | tr ' ' '\n' | awk -v cands="$(seq 242 254 | tr '\n' ' ') $(seq 200 241 | tr '\n' ' ')" '
+        function ip(s,   a) { split(s, a, "."); return ((a[1] * 256 + a[2]) * 256 + a[3]) * 256 + a[4] }
+        /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\/[0-9]+$/ {
+            split($0, p, "/"); size = 2 ^ (32 - p[2])
+            n++; lo[n] = int(ip(p[1]) / size) * size; hi[n] = lo[n] + size - 1
+        }
+        END {
+            k = split(cands, c, " ")
+            for (i = 1; i <= k; i++) {
+                if (c[i] == "") continue
+                a = ip("172.31." c[i] ".0"); b = a + 255; ok = 1
+                for (j = 1; j <= n; j++) if (a <= hi[j] && lo[j] <= b) { ok = 0; break }
+                if (ok) { printf "172.31.%d.0/24", c[i]; exit 0 }
+            }
+            exit 1
+        }'
+}
+
+# A setup file into the current folder: from the release this install runs,
+# else (a release older than the file) from main.
+fetch_setup_file() {
+    curl -fsSL "$RAW/$1" -o "$1.new" 2>/dev/null ||
+        curl -fsSL "https://raw.githubusercontent.com/$REPO/${RSM_REF:-main}/$1" -o "$1.new" ||
+        { rm -f "$1.new"; die "could not download $1"; }
+    mv "$1.new" "$1"
+}
+
+# The two files Caddy reads, from `sites` (in the edge's folder).
+edge_write() {
+    _email=$(env_value EDGE_EMAIL)
+    mkdir -p caddy
+    {
+        echo "# Written by rsm from $RSM_DIR/sites — change it with rsm edge add / remove."
+        [ -z "$_email" ] || printf '{\n\temail %s\n}\n' "$_email"
+        sed '/^[[:space:]]*$/d' sites | while read -r _n _a; do
+            printf '\n%s {\n\treverse_proxy %s:8080\n}\n' "$_a" "$(site_upstream "$_n")"
+        done
+    } > caddy/Caddyfile.new
+    mv caddy/Caddyfile.new caddy/Caddyfile
+    _nets=$(sed '/^[[:space:]]*$/d' sites | while read -r _n _a; do site_network "$_n"; echo; done)
+    {
+        echo "# Written by rsm from $RSM_DIR/sites: the network of each site the edge serves."
+        if [ -z "$_nets" ]; then
+            echo "services: {}"
+        else
+            printf 'services:\n  caddy:\n    networks:\n'
+            for _w in $_nets; do printf '      - %s\n' "$_w"; done
+            echo "networks:"
+            for _w in $_nets; do printf '  %s:\n    external: true\n' "$_w"; done
+        fi
+    } > "$EDGE_SITES_COMPOSE"
+}
+
+# Write, (re)start and reload: a recreated container reads the new Caddyfile
+# as it starts, a kept one is told to.
+edge_apply() {
+    edge_write
+    if ! edc up -d --remove-orphans; then
+        echo "rsm: the edge did not start. If something else holds port 80 or 443:  ss -ltnp | grep -E ':(80|443) '" >&2
+        return 1
+    fi
+    _try=0
+    until _out=$(docker exec rsm-edge caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1); do
+        _try=$((_try + 1))
+        if [ "$_try" -ge 15 ]; then
+            printf '%s\n' "$_out" | tail -5 >&2
+            echo "rsm: Caddy did not take the new configuration (above): rsm edge logs" >&2
+            return 1
+        fi
+        sleep 1
+    done
+}
+
+edge_setup() {
+    _dir=${RSM_EDGE_DIR:-/opt/rsm-edge}
+    if [ -e "$_dir" ] && [ -n "$(ls -A "$_dir" 2>/dev/null)" ]; then
+        die "$_dir already exists and is not empty"
+    fi
+    _raw="https://raw.githubusercontent.com/$REPO/${RSM_REF:-main}"
+    mkdir -p "$_dir/caddy"
+    curl -fsSL "$_raw/$EDGE_COMPOSE" -o "$_dir/$EDGE_COMPOSE" || die "could not download $EDGE_COMPOSE"
+    cat > "$_dir/.env" <<'EOF'
+# The shared edge (rsm edge). Its sites are in ./sites; rsm writes the rest.
+# An address for Let's Encrypt's notices about the certificates (optional).
+EDGE_EMAIL=
+# The Caddy image. caddy:2-alpine follows Caddy 2's releases.
+CADDY_IMAGE=caddy:2-alpine
+EOF
+    : > "$_dir/sites"
+    mkdir -p "$(dirname "$EDGE_CONF")"
+    printf 'RSM_DIR=%s\n' "$_dir" > "$EDGE_CONF"
+    chmod 644 "$EDGE_CONF"
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | head -1 | grep -qi ' active'; then
+        echo "  Firewall: the edge needs TCP 80 and 443 (ufw allow 80/tcp, ufw allow 443/tcp)."
+        if confirm "  Allow them now?" y; then
+            ufw allow 80/tcp >/dev/null
+            ufw allow 443/tcp >/dev/null
+        fi
+    fi
+    echo "  The edge is set up in $_dir."
+}
+
+# Serve the stack this shell is in (use_stack) through the edge, at $1.
+stack_join_edge() {
+    if [ "$RSM_COMPOSE" != docker-compose.vps.yaml ]; then
+        # Same containers, volumes and data under the VPS file; only the way in
+        # changes. A proxy subnet first, while this stack is not counted yet.
+        _sub=$(env_value PROXY_SUBNET)
+        [ -n "$_sub" ] || _sub=$(free_proxy_subnet) || die "no free 172.31.x.0/24 subnet left for its proxy network"
+        fetch_setup_file docker-compose.vps.yaml
+        dc down || die "could not stop stack '$STACK'"
+        sed -i "s|^RSM_COMPOSE=.*|RSM_COMPOSE=docker-compose.vps.yaml|" "$STACK_CONF"
+        RSM_COMPOSE=docker-compose.vps.yaml
+        set_env PROXY_SUBNET "$_sub"
+    fi
+    set_env SITE_ADDRESS "$1"
+    mkdir -p data serverfiles/stable serverfiles/experimental
+    # Compose makes the proxy network (so the stack can take it back if the edge
+    # goes); from then on the override declares it external, never removed by
+    # this stack's `down` while the edge is on it.
+    if ! docker network inspect "$STACK-proxy" >/dev/null 2>&1; then
+        docker compose -f "$RSM_COMPOSE" up -d manager || die "stack '$STACK' did not start"
+    fi
+    fetch_setup_file "$STACK_EDGE_OVERRIDE"
+    docker rm -f "$STACK-caddy" >/dev/null 2>&1 || true
+    dc up -d
+}
+
+# Stop the edge serving the stack this shell is in, if it does.
+stack_off_edge() {
+    [ -n "$(edge_address_of "$STACK")" ] || return 0
+    if ( use_edge && edge_drop_site "$STACK" && edge_apply ); then
+        echo "  The shared edge no longer serves stack '$STACK'."
+    else
+        echo "rsm: could not take stack '$STACK' off the edge (see: rsm edge)" >&2
+    fi
+}
+
+supervisor_join_edge() {
+    _sub=$(env_value PROXY_SUBNET)
+    if [ -z "$_sub" ]; then
+        _sub=$(free_proxy_subnet) || die "no free 172.31.x.0/24 subnet left for its proxy network"
+        set_env PROXY_SUBNET "$_sub"
+    fi
+    if ! docker network inspect rsm-supervisor-proxy >/dev/null 2>&1; then
+        docker network create --subnet "$_sub" rsm-supervisor-proxy >/dev/null ||
+            die "could not create the network rsm-supervisor-proxy ($_sub)"
+    fi
+    fetch_setup_file "$SUPERVISOR_EDGE_OVERRIDE"
+    sdc up -d
+}
+
+supervisor_leave_edge() {
+    rm -f "$SUPERVISOR_EDGE_OVERRIDE"
+    sdc up -d
+    docker network rm rsm-supervisor-proxy >/dev/null 2>&1 || true
+}
+
+cmd_edge_add() {
+    _sup=0; _p1=''; _p2=''; _email=''
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --supervisor) _sup=1; shift ;;
+            --email) [ $# -ge 2 ] || die "--email needs an address"; _email=$2; shift 2 ;;
+            -*) die "edge add: unknown option '$1'" ;;
+            *)
+                if [ -z "$_p1" ]; then _p1=$1; elif [ -z "$_p2" ]; then _p2=$1; else die "edge add: too many arguments"; fi
+                shift ;;
+        esac
+    done
+    if [ "$_sup" = 1 ]; then
+        [ -z "$_p2" ] || die "usage: rsm edge add --supervisor DOMAIN"
+        _name=@supervisor; _addr=$_p1
+    else
+        _name=$_p1; _addr=$_p2
+    fi
+    [ -n "$_name" ] && [ -n "$_addr" ] ||
+        die "usage: rsm edge add STACK DOMAIN  |  rsm edge add --supervisor DOMAIN   [--email ADDRESS]"
+    [ "$(id -u)" = "0" ] || die "this needs root: sudo rsm edge add ..."
+    _addr=$(site_address "$_addr") || return 1
+    case "$_email" in ''|*@*.*) ;; *) die "--email needs an e-mail address" ;; esac
+    if [ "$_name" = @supervisor ]; then
+        supervisor_installed || die "the Server Supervisor is not installed here (sudo rsm supervisor install)"
+    else
+        stack_conf "$_name" >/dev/null 2>&1 || die "there is no stack named '$_name' (see: rsm stacks)"
+    fi
+    _other=$(edge_site_named_by "$_addr")
+    [ -z "$_other" ] || [ "$_other" = "$_name" ] || die "$_addr is already the address of $(site_label "$_other")"
+
+    # The edge takes ports 80 and 443 from every VPS stack still on its own
+    # Caddy: each moves behind it, at the address it is served at now.
+    _move=''
+    for _s in $(own_caddy_stacks); do
+        [ "$_s" != "$_name" ] || continue
+        _raw_sa=$(env_value_in "$(stack_dir "$_s")/.env" SITE_ADDRESS)
+        _sa=$(site_address "$_raw_sa" 2>/dev/null) ||
+            die "stack '$_s' holds ports 80 and 443 with its own Caddy, for SITE_ADDRESS='$_raw_sa', which is no domain name. Give it one first: sudo rsm edge add $_s DOMAIN"
+        [ "$_sa" != "$_addr" ] || die "$_addr is already stack '$_s''s address"
+        _o=$(edge_site_named_by "$_sa")
+        [ -z "$_o" ] || die "stack '$_s' serves $_sa, which is already the address of $(site_label "$_o")"
+        _move="$_move $_s=$_sa"
+    done
+
+    edge_installed || echo "The shared edge is set up first (in ${RSM_EDGE_DIR:-/opt/rsm-edge}); it takes ports 80 and 443."
+    echo "It will serve:"
+    echo "  $(site_url "$_addr")  ->  $(site_label "$_name")"
+    for _m in $_move; do
+        echo "  $(site_url "${_m#*=}")  ->  stack '${_m%%=*}' (its own Caddy is switched off)"
+    done
+    if [ "$_name" != @supervisor ] && [ "$(stack_compose "$_name")" != docker-compose.vps.yaml ]; then
+        echo "Stack '$_name' runs $(stack_compose "$_name"): it moves to the VPS compose file — the same"
+        echo "containers and data, but its GUI port closes; the edge is then the only way in."
+        echo "Its manager restarts, which stops its game servers (auto-start ones come back)."
+    fi
+    confirm "Go ahead?" y || { echo "Cancelled."; return 1; }
+    check_dns "$_addr"
+
+    edge_installed || edge_setup
+    [ -z "$_email" ] || ( use_edge && set_env EDGE_EMAIL "$_email" )
+    for _m in $_move; do
+        ( use_stack "${_m%%=*}" && stack_join_edge "${_m#*=}" ) || return 1
+        edge_put_site "${_m%%=*}" "${_m#*=}"
+    done
+    if [ "$_name" = @supervisor ]; then
+        ( use_supervisor && supervisor_join_edge ) || return 1
+    else
+        ( use_stack "$_name" && stack_join_edge "$_addr" ) || return 1
+    fi
+    edge_put_site "$_name" "$_addr"
+    ( use_edge && edge_apply ) || die "the sites are recorded; once the problem above is fixed: sudo rsm edge restart"
+    echo
+    cmd_edge_status
+}
+
+cmd_edge_remove() {
+    case "${1:-}" in
+        '') die "usage: rsm edge remove STACK  |  rsm edge remove --supervisor" ;;
+        --supervisor) _name=@supervisor ;;
+        *) _name=$1 ;;
+    esac
+    [ "$(id -u)" = "0" ] || die "this needs root: sudo rsm edge remove ..."
+    use_edge
+    _addr=$(edge_address_of "$_name")
+    [ -n "$_addr" ] || die "the edge does not serve $(site_label "$_name") (see: rsm edge)"
+    echo "The edge stops serving $(site_label "$_name") at $(site_url "$_addr")."
+    if [ "$_name" = @supervisor ]; then
+        echo "Its page stays on this machine (port 7090), as before."
+    else
+        echo "Its GUI is then out of reach: its own Caddy stays off, as the edge holds ports"
+        echo "80 and 443. Bring it back with: sudo rsm edge add $_name DOMAIN"
+    fi
+    confirm "Continue?" n || { echo "Cancelled."; return 1; }
+    edge_drop_site "$_name"
+    edge_apply || die "the edge did not take the change (above)"
+    [ "$_name" != @supervisor ] || ( use_supervisor && supervisor_leave_edge )
+    [ -n "$(edge_sites)" ] || echo "No site is left. Remove the edge with: sudo rsm edge uninstall"
+}
+
+cmd_edge_uninstall() {
+    [ "$(id -u)" = "0" ] || die "this needs root: sudo rsm edge uninstall"
+    use_edge
+    _stacks=$(edge_sites | awk '$1 != "@supervisor" { print $1 }')
+    _count=$(printf '%s\n' "$_stacks" | sed '/^$/d' | wc -l)
+    [ "$_count" -le 1 ] ||
+        die "the edge serves $_count stacks, and without it only one can hold ports 80 and 443. Take all but one off it first (sudo rsm edge remove STACK; their GUIs are then out of reach), or keep it."
+    _sup=$(edge_address_of @supervisor)
+    echo "This removes the shared edge and its certificates."
+    [ -z "$_stacks" ] || echo "Stack '$_stacks' gets its own Caddy back, for $(site_url "$(edge_address_of "$_stacks")")."
+    [ -z "$_sup" ] || echo "The Server Supervisor stops being served at $(site_url "$_sup")."
+    confirm "Continue?" n || { echo "Cancelled."; return 1; }
+    edc down --volumes --remove-orphans || true
+    [ -z "$_sup" ] || ( use_supervisor && supervisor_leave_edge ) || true
+    if [ -n "$_stacks" ]; then
+        ( use_stack "$_stacks" && rm -f "$STACK_EDGE_OVERRIDE" && dc up -d ) ||
+            echo "rsm: stack '$_stacks' did not get its own Caddy back; try: sudo rsm restart --stack $_stacks" >&2
+    fi
+    cd /
+    rm -rf "$RSM_DIR"
+    rm -f "$EDGE_CONF"
+    echo "Removed the shared edge."
+    for _s in $(stack_names); do
+        if [ -f "$(stack_dir "$_s")/$STACK_EDGE_OVERRIDE" ] && [ "$_s" != "$_stacks" ]; then
+            echo "Stack '$_s' still has its own Caddy off and no way in. To give it its own Caddy"
+            echo "back (only one stack can have ports 80 and 443): rm $(stack_dir "$_s")/$STACK_EDGE_OVERRIDE"
+            echo "then: sudo rsm restart --stack $_s"
+        fi
+    done
+}
+
+cmd_edge_status() {
+    if ! edge_installed; then
+        echo "There is no shared edge on this machine."
+        echo "Set one up with: sudo rsm edge add STACK DOMAIN"
+        return 0
+    fi
+    _state=$(docker inspect -f '{{.State.Status}}' rsm-edge 2>/dev/null) || _state=absent
+    echo "The shared edge ($(edge_dir)): $_state"
+    printf '%-40s %s\n' ADDRESS SERVES
+    edge_sites | while read -r _n _a; do
+        _st=$(docker inspect -f '{{.State.Status}}' "$(site_upstream "$_n")" 2>/dev/null) || _st=absent
+        printf '%-40s %s (%s)\n' "$(site_url "$_a")" "$(site_label "$_n")" "$_st"
+    done
+}
+
+check_edge_compose() {
+    if offer_and_replace "$EDGE_COMPOSE"; then
+        edc up -d --remove-orphans
+        echo "  Applied."
+    fi
+    return 0
+}
+
+cmd_edge() {
+    _sub=${1:-status}
+    [ $# -eq 0 ] || shift
+    case "$_sub" in
+        add) cmd_edge_add "$@"; return ;;
+        remove) cmd_edge_remove "$@"; return ;;
+        uninstall) cmd_edge_uninstall; return ;;
+        status|list) cmd_edge_status; return ;;
+    esac
+    use_edge
+    case "$_sub" in
+        start)   edge_apply ;;
+        stop)    edc stop ;;
+        restart) edge_write; edc up -d --remove-orphans; edc restart ;;
+        logs)    edc logs -f --tail 200 caddy ;;
+        update)
+            edc pull
+            edc up -d
+            check_edge_compose
+            ;;
+        *) die "rsm edge: unknown command '$_sub' (add, remove, status, start, stop, restart, logs, update, uninstall)" ;;
     esac
 }
 
@@ -836,7 +1409,9 @@ stack_cmd() {
             fi
             echo "This removes the Reforger Server Manager containers on this host."
             [ "$(ask_tty 'Continue? [y/N] ')" = "y" ] || { echo "Cancelled."; exit 0; }
+            stack_off_edge
             dc down --remove-orphans || true
+            [ ! -f "$STACK_EDGE_OVERRIDE" ] || docker network rm "$STACK-proxy" >/dev/null 2>&1 || true
             echo
             echo "Containers removed. Your data is still in $RSM_DIR:"
             echo "  data/        manager database, server configs, saves and logs"
@@ -846,9 +1421,16 @@ stack_cmd() {
             if [ "$(ask_tty 'Delete all data? [y/N] ')" = "y" ]; then
                 cd /
                 rm -rf "$RSM_DIR"
-                rm -f "$STACK_CONF" /usr/local/bin/rsm
+                rm -f "$STACK_CONF"
                 rmdir "$REGISTRY" 2>/dev/null || true
-                echo "Removed $RSM_DIR and the rsm command."
+                if edge_installed || supervisor_installed; then
+                    echo "Removed $RSM_DIR. The rsm command stays for what is left:"
+                    ! edge_installed || echo "  the shared edge:        sudo rsm edge uninstall"
+                    ! supervisor_installed || echo "  the Server Supervisor:  sudo rsm supervisor remove"
+                else
+                    rm -f /usr/local/bin/rsm
+                    echo "Removed $RSM_DIR and the rsm command."
+                fi
             else
                 echo "Kept $RSM_DIR. Re-run an installer to use it again."
                 echo "Remove the command itself with: rm -f /usr/local/bin/rsm $STACK_CONF"
@@ -893,6 +1475,7 @@ case "$CMD" in
     add-stack) cmd_add_stack "$@"; exit 0 ;;
     remove-stack) cmd_remove_stack "$@"; exit 0 ;;
     supervisor) cmd_supervisor "$@"; exit 0 ;;
+    edge) cmd_edge "$@"; exit $? ;;
     start|stop|restart|status|update|check) ALLOWS_ALL=1 ;;
     logs|config|reset-password|uninstall)
         [ "$ALL" = 0 ] || die "'$CMD' works on one stack at a time: use --stack NAME" ;;
@@ -916,6 +1499,11 @@ if [ "$ALL" = 1 ]; then
         echo "== the Server Supervisor"
         ( use_supervisor && sdc pull && sdc up -d && check_supervisor_compose ) ||
             _failed="$_failed supervisor"
+        echo
+    fi
+    if [ "$CMD" = update ] && edge_installed; then
+        echo "== the shared edge"
+        ( use_edge && edc pull && edc up -d && check_edge_compose ) || _failed="$_failed edge"
         echo
     fi
     [ "$CMD" != update ] || self_update

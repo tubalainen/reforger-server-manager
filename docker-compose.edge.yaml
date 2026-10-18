@@ -1,0 +1,51 @@
+# Reforger edge — one shared HTTPS front for several stacks on a VPS (#204).
+#
+# A VPS that hosts more than one team cannot give each stack its own Caddy:
+# only one program can listen on ports 80 and 443. The edge is that one
+# program. It serves each stack's manager at a domain of its own (and, if you
+# like, the Server Supervisor), gets and renews every certificate, and is the
+# only thing on the web. Each stack behind it switches its own Caddy off with
+# docker-compose.vps.behind-edge.yaml.
+#
+# It is its own install, for whoever manages the machine. `sudo rsm edge add
+# STACK DOMAIN` sets it up and writes the two files it reads:
+#
+#   caddy/Caddyfile                   one site per domain
+#   docker-compose.edge.sites.yaml    the networks it joins: each stack's own
+#                                     <stack>-proxy network, nothing else
+#
+# By hand (after writing those two yourself):
+#   docker compose -f docker-compose.edge.yaml -f docker-compose.edge.sites.yaml up -d
+name: rsm-edge
+
+services:
+  caddy:
+    image: ${CADDY_IMAGE:-caddy:2-alpine}
+    container_name: rsm-edge
+    restart: unless-stopped
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+    ports:
+      # 80 is required even on an HTTPS-only site: Let's Encrypt validates over
+      # it, and Caddy redirects http->https from it.
+      - "80:80"
+      - "443:443"
+    # It is the internet-facing part: as little as it needs. Root in the
+    # container, but with no capability beyond binding ports 80 and 443.
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      # The folder, not the file: rsm rewrites the Caddyfile and reloads, and a
+      # file mount would keep showing the old one.
+      - ./caddy:/etc/caddy:ro
+      # Certificates live here. Keep this volume — losing it means re-issuing
+      # every one, which will eventually hit Let's Encrypt's rate limits.
+      - edge-data:/data
+      - edge-config:/config
+
+volumes:
+  edge-data:
+    name: rsm-edge-data
+  edge-config:
+    name: rsm-edge-config

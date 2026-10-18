@@ -81,7 +81,7 @@ for _conf in "$LEGACY_CONF" "$REGISTRY"/*.conf; do
     [ -r "$_conf" ] || continue
     _dir=$( RSM_DIR=''; . "$_conf"; printf '%s' "$RSM_DIR" )
     if [ -n "$_dir" ] && [ "$_dir" != "$INSTALL_DIR" ] && [ -d "$_dir" ]; then
-        die "This machine already has an install in $_dir. For another team's install next to it, run:  sudo rsm add-stack NAME"
+        die "This machine already has an install in $_dir. For another team's install next to it, at a domain of its own, run:  sudo rsm add-stack NAME --domain DOMAIN"
     fi
 done
 for tool in curl tr head sed; do
@@ -311,8 +311,12 @@ say "  /usr/local/bin/rsm  (try: rsm status)"
 # --------------------------------------------------------------------------- #
 step "Starting"
 cd "$INSTALL_DIR"
-docker compose -f "$COMPOSE_FILE" pull -q 2>/dev/null || docker compose -f "$COMPOSE_FILE" pull
-docker compose -f "$COMPOSE_FILE" up -d
+# Re-run on an install the shared edge serves (rsm edge, #204): its own Caddy
+# stays off, the edge holds ports 80 and 443.
+set -- -f "$COMPOSE_FILE"
+[ ! -f docker-compose.vps.behind-edge.yaml ] || set -- "$@" -f docker-compose.vps.behind-edge.yaml
+docker compose "$@" pull -q 2>/dev/null || docker compose "$@" pull
+docker compose "$@" up -d
 
 if [ -n "$DOMAIN" ]; then URL="https://$DOMAIN"; else URL="http://${PUBLIC_IP:-<this-server-ip>}"; fi
 
@@ -328,7 +332,7 @@ fi
 say ""
 say "  Manage it with:  rsm start | stop | status | logs | update | config | uninstall"
 say "  Another team on this machine, with its own GUI, ports and data:"
-say "                   sudo rsm add-stack NAME"
+say "                   sudo rsm add-stack NAME --domain DOMAIN"
 [ -n "$DOMAIN" ] && say "  Watch the certificate being issued:  rsm logs caddy"
 say ""
 printf '%s  ONE MORE FIREWALL — your VPS provider has its own%s\n' "$Y$B" "$N"

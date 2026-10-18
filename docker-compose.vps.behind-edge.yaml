@@ -1,0 +1,23 @@
+# A VPS stack served by the shared edge (#204) — goes WITH docker-compose.vps.yaml:
+#
+#   docker compose -f docker-compose.vps.yaml -f docker-compose.vps.behind-edge.yaml up -d
+#
+# rsm adds it for you (`sudo rsm edge add STACK DOMAIN`) and uses it from then
+# on. What it changes:
+#
+#   * The stack's own Caddy stays off: the edge (docker-compose.edge.yaml) holds
+#     ports 80 and 443 and serves this stack's manager at its domain.
+#   * The proxy network is joined by the edge, so it outlives this stack's
+#     `down` — it is declared external here and is never removed by it. It
+#     keeps its pinned PROXY_SUBNET, which the manager trusts (TRUSTED_PROXIES)
+#     and the edge's address on it falls in.
+#
+# The manager and its game servers are otherwise exactly as in the VPS file.
+services:
+  caddy:
+    # A profile nobody turns on: the service is defined but never started.
+    profiles: [own-caddy]
+
+networks:
+  proxy:
+    external: true
