@@ -4,12 +4,13 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import Response
-from pydantic import Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from sqlmodel import Session, func, select
 
 import auth
+import categories_api
 from mod_templates_api import ModTemplateSpec
-from models import Instance, ModTemplate, Template, get_engine
+from models import Instance, ModTemplate, Template, TemplateCategory, get_engine
 from services import (
     change_log,
     config_validator,
@@ -30,9 +31,15 @@ _LOCKED_DETAIL = (
 
 
 class TemplateSave(TemplateSpec):
-    """What the editor saves: the spec plus an optional change comment (#223)."""
+    """What the editor saves: the spec plus an optional change comment and its
+    category (#223). A save that leaves category_id out keeps the category."""
 
     comment: str = Field("", max_length=stages.NOTE_MAX)
+    category_id: int | None = None
+
+
+class CategoryChoice(BaseModel):
+    category_id: int | None = None
 
 
 def stage_error(exc: stages.StageError) -> HTTPException:
@@ -99,6 +106,8 @@ def _out(t: Template, session: Session) -> dict:
         # the editor's warnings (#29).
         "extras_paths": config_validator.unknown_paths(json.loads(t.config_json)),
         **stages.stage_fields(t, stages.names_of(session, Template)),
+        "category_id": t.category_id,
+        "category": categories_api.name_of(session, t.category_id),
         "created_at": t.created_at.isoformat(),
         "updated_at": t.updated_at.isoformat(),
     }
@@ -166,6 +175,7 @@ async def list_templates(request: Request, _user: str = Depends(auth.require_ses
         ).all())
         # every Prod template's released versions, for the version pickers (#223)
         versions = stages.version_list(session, stages.TEMPLATES)
+        categories = stages.names_of(session, TemplateCategory)
         return [
             {"id": t.id, "name": t.name, "description": t.description,
              "updated_at": t.updated_at.isoformat(),
@@ -173,6 +183,8 @@ async def list_templates(request: Request, _user: str = Depends(auth.require_ses
              # how many servers run it: the release dialog says they move along
              "server_count": servers.get(t.id, 0),
              "versions": versions.get(t.id, []),
+             "category_id": t.category_id,
+             "category": categories.get(t.category_id),
              # someone else is editing this right now (#102) — the list polls,
              # so the badge and the disabled Edit button stay current
              "locked": edit_locks.held_by_other(t.id, cid),
@@ -234,6 +246,7 @@ async def create_template(spec: TemplateSave, _user: str = Depends(auth.require_
     with Session(get_engine()) as session:
         if session.exec(select(Template).where(Template.name == spec.name)).first():
             raise HTTPException(status_code=409, detail=f"A template named '{spec.name}' already exists")
+        categories_api.require(session, spec.category_id)
         t = Template(
             name=spec.name, description=spec.description, config_json=config_json,
             scenario_name=spec.scenario_name,
@@ -242,6 +255,7 @@ async def create_template(spec: TemplateSave, _user: str = Depends(auth.require_
             mods_json=_mods_json(spec),
             extras_json=json.dumps(spec.extras),
             stage=stages.TEST,  # new work always starts in Test (#223)
+            category_id=spec.category_id,
         )
         session.add(t)
         session.flush()  # assign the id before the log references it
@@ -311,6 +325,7 @@ async def copy_template(
             stage=stages.TEST,
             based_on_id=based_on_id,
             based_on_version=based_on_version,
+            category_id=src.category_id,
         )
         session.add(t)
         session.flush()  # assign the id before the log references it
@@ -449,6 +464,10 @@ async def update_template(
         ).first()
         if clash:
             raise HTTPException(status_code=409, detail=f"A template named '{spec.name}' already exists")
+        old_category = t.category_id
+        if "category_id" in spec.model_fields_set:
+            categories_api.require(session, spec.category_id)
+            t.category_id = spec.category_id
         before = change_log.snapshot(t)  # capture before mutating (#112)
         t.name = spec.name
         t.description = spec.description
@@ -461,13 +480,45 @@ async def update_template(
         t.updated_at = datetime.now(UTC)
         # Log what this edit changed; writes nothing when nothing changed (#112).
         # A comment rides along only on a save that changed something (#223).
-        if change_log.record_update(session, t.id, before, change_log.snapshot(t), t.updated_at):
+        changed = change_log.record_update(session, t.id, before, change_log.snapshot(t), t.updated_at)
+        if t.category_id != old_category:
+            changed = True
+            change_log.record_lines(session, t.id, [categories_api.change_line(
+                categories_api.name_of(session, old_category),
+                categories_api.name_of(session, t.category_id),
+            )], t.updated_at)
+        if changed:
             change_log.record_lines(session, t.id, stages.note_items(spec.comment), t.updated_at)
         # Keep the Mods Overview registry current with this template's mods (#131).
         mod_registry.register_mods(session, [m.model_dump() for m in spec.mods])
         session.add(t)
         session.commit()
         session.refresh(t)
+        return _out(t, session)
+
+
+@router.put("/{template_id}/category")
+async def set_category(
+    template_id: int, body: CategoryChoice, _user: str = Depends(auth.require_session)
+):
+    """File a template under a category, in any stage (#223): a category is only
+    a label, so even a Prod template's can change. It is logged, and it does not
+    count as a change to what servers run."""
+    with Session(get_engine()) as session:
+        t = session.get(Template, template_id)
+        if not t:
+            raise HTTPException(status_code=404, detail="Template not found")
+        categories_api.require(session, body.category_id)
+        if body.category_id != t.category_id:
+            line = categories_api.change_line(
+                categories_api.name_of(session, t.category_id),
+                categories_api.name_of(session, body.category_id),
+            )
+            t.category_id = body.category_id
+            session.add(t)
+            change_log.record_lines(session, t.id, [line], datetime.now(UTC))
+            session.commit()
+            session.refresh(t)
         return _out(t, session)
 
 

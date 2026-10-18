@@ -8,7 +8,7 @@ import MenuButton from '../components/MenuButton.vue'
 import NewFromProdDialog from '../components/NewFromProdDialog.vue'
 import ReleaseDialog from '../components/ReleaseDialog.vue'
 import StageBadge from '../components/StageBadge.vue'
-import { groupByStage, isLocked, promoteAction, versionsText } from '../stages'
+import { filterByCategory, groupByStage, isLocked, promoteAction, versionsText } from '../stages'
 
 const router = useRouter()
 const templates = ref([])
@@ -20,8 +20,19 @@ let poll = null
 // The modal itself is shared with the Mod Templates page (#166).
 const logTemplate = ref(null)
 
+// Game-mode categories (#223): a filter for the page, a badge per row.
+const categories = ref([])
+const categoryFilter = ref('all') // 'all' | 'none' | a category id
+async function loadCategories() {
+  try {
+    categories.value = await api('/api/template-categories')
+  } catch {
+    /* no filter without them; the list itself still works */
+  }
+}
+
 // Grouped Prod, Dev, Test (#223), so what is golden is never in doubt.
-const groups = computed(() => groupByStage(templates.value))
+const groups = computed(() => groupByStage(filterByCategory(templates.value, categoryFilter.value)))
 const prods = computed(() => templates.value.filter((t) => t.stage === 'prod'))
 
 async function load() {
@@ -94,6 +105,28 @@ async function promoted() {
   await load()
 }
 
+// "Change category…" works in every stage: it is only a label (#223).
+const recategorising = ref(null) // { template, categoryId, busy, error }
+function openCategory(t) {
+  recategorising.value = { template: t, categoryId: t.category_id ?? '', busy: false, error: '' }
+}
+async function saveCategory() {
+  const r = recategorising.value
+  r.busy = true
+  r.error = ''
+  try {
+    await api(`/api/templates/${r.template.id}/category`, {
+      method: 'PUT',
+      body: { category_id: r.categoryId === '' ? null : Number(r.categoryId) },
+    })
+    recategorising.value = null
+    await Promise.all([load(), loadCategories()])
+  } catch (e) {
+    r.error = e.message
+    r.busy = false
+  }
+}
+
 const newFromProd = ref(false)
 function createdFromProd(created) {
   newFromProd.value = false
@@ -118,7 +151,7 @@ async function clearLocks() {
 // Poll like the Instances view does, so another user's changes — and who is
 // editing what — show up within a few seconds (#102).
 onMounted(async () => {
-  await load()
+  await Promise.all([load(), loadCategories()])
   poll = setInterval(load, 5000)
 })
 onUnmounted(() => clearInterval(poll))
@@ -145,6 +178,21 @@ onUnmounted(() => clearInterval(poll))
           </li>
         </MenuButton>
       </div>
+    </div>
+
+    <div v-if="categories.length && templates.length" class="d-flex align-items-center gap-2 mb-2">
+      <label for="category-filter" class="small text-secondary text-nowrap">Category</label>
+      <select
+        id="category-filter"
+        v-model="categoryFilter"
+        class="form-select form-select-sm"
+        style="width: auto"
+      >
+        <option value="all">All categories</option>
+        <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option>
+        <option value="none">Uncategorised</option>
+      </select>
+      <router-link :to="{ name: 'categories' }" class="small text-nowrap">Manage…</router-link>
     </div>
 
     <p class="text-secondary small">
@@ -187,6 +235,10 @@ onUnmounted(() => clearInterval(poll))
       </div>
     </div>
 
+    <p v-else-if="!groups.length" class="text-secondary">
+      No templates in this category.
+    </p>
+
     <template v-else>
       <section v-for="g in groups" :key="g.stage" class="mb-4">
         <h2 class="h6 d-flex align-items-center gap-2 mb-2">
@@ -203,6 +255,11 @@ onUnmounted(() => clearInterval(poll))
               <div class="fw-semibold">
                 {{ t.name }}
                 <StageBadge v-if="isLocked(t)" stage="prod" :version="t.prod_version" class="ms-1" />
+                <span
+                  v-if="t.category"
+                  class="badge rounded-pill border text-body-secondary fw-normal ms-1"
+                  title="Category"
+                >{{ t.category }}</span>
                 <span v-if="t.locked" class="badge text-bg-warning ms-1">✎ being edited</span>
               </div>
               <div class="small text-secondary">
@@ -236,6 +293,7 @@ onUnmounted(() => clearInterval(poll))
               >{{ promoteAction(t.stage).label }}</button>
               <MenuButton label="⋯" aria-label="More actions">
                 <li><button class="dropdown-item" @click="logTemplate = t">Change log</button></li>
+                <li><button class="dropdown-item" @click="openCategory(t)">Change category…</button></li>
                 <li>
                   <button
                     class="dropdown-item"
@@ -294,5 +352,36 @@ onUnmounted(() => clearInterval(poll))
       @close="newFromProd = false"
       @created="createdFromProd"
     />
+
+    <!-- Change category (#223): any stage, Prod included -->
+    <div v-if="recategorising" class="modal d-block" tabindex="-1" style="background: rgba(0,0,0,.5)">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">Category of "{{ recategorising.template.name }}"</h5>
+            <button type="button" class="btn-close" aria-label="Close" @click="recategorising = null"></button>
+          </div>
+          <div class="modal-body">
+            <div v-if="recategorising.error" class="alert alert-danger py-2 small">
+              {{ recategorising.error }}
+            </div>
+            <select v-model="recategorising.categoryId" class="form-select" aria-label="Category">
+              <option value="">Uncategorised</option>
+              <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option>
+            </select>
+            <p class="small text-secondary mt-2 mb-0">
+              Only a label: servers on this template are not affected, and it works for a
+              Prod template too. The change log records it.
+            </p>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-outline-secondary" @click="recategorising = null">Cancel</button>
+            <button class="btn btn-primary" :disabled="recategorising.busy" @click="saveCategory">
+              {{ recategorising.busy ? 'Saving…' : 'Save' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>

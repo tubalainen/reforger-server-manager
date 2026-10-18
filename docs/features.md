@@ -34,6 +34,7 @@ Key template capabilities include:
   a version (v1, v2, …), and a changed copy is released as the next version of the original.
   Saves in Dev carry a comment in the change log.
 - Run a server on the latest release of a Prod template, or pin it to an older version.
+- File templates under game-mode categories (built-in or your own) and show one category at a time.
 
 ## Server operations
 

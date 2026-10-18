@@ -544,6 +544,15 @@ const faq = [
             template…</em> starts the same way, from the latest version or an older one.
           </li>
           <li class="mb-2">
+            <strong>Categories:</strong> file a template under a game mode (Game Master,
+            HQC, Conflict, COE, Escapist, Freedom Fighters, or your own) on the Save step, or
+            with <em>Change category…</em> in its <em>⋯</em> menu, which works for a Prod
+            template too because a category is only a label. The Server templates page can
+            show one category at a time. Add, rename and delete categories under
+            <router-link :to="{ name: 'categories' }">System › Category management</router-link>;
+            deleting one leaves its templates Uncategorised.
+          </li>
+          <li class="mb-2">
             <strong>Copy:</strong> <em>Copy to Test</em> in a template's <em>⋯</em> menu
             duplicates it into a new "Copy of…" one in Test and opens it for editing — start
             a variant (a different scenario, an extra mod, tighter settings) from a known-good

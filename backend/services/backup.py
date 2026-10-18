@@ -35,7 +35,13 @@ from datetime import UTC, datetime
 from sqlmodel import Session, select
 
 import config
-from models import ModTemplate, ModTemplateVersion, Template, TemplateVersion
+from models import (
+    ModTemplate,
+    ModTemplateVersion,
+    Template,
+    TemplateCategory,
+    TemplateVersion,
+)
 from services import change_log, mod_registry, stages
 from services.template_service import ModEntry, ModListEntry
 
@@ -137,10 +143,13 @@ def _stage_entry(session: Session, kind, row, names: dict[int, str], content) ->
 
 
 def _template_entry(session: Session, t: Template, names: dict[int, str]) -> dict:
+    category = session.get(TemplateCategory, t.category_id) if t.category_id else None
     return {
         "name": t.name,
         **_template_content(t),
         **_stage_entry(session, stages.TEMPLATES, t, names, _template_content),
+        # by name, so it lands in the same category on another manager (#223)
+        "category": category.name if category else None,
         # Informational only — an imported template is a new row with its own
         # timestamps; these say when the original was made and last touched.
         "created_at": t.created_at.isoformat(),
@@ -297,6 +306,7 @@ def _read_template(raw, index: int) -> dict:
         "name": name,
         **_read_template_content(raw, label),
         **_read_stage(raw, label, _read_template_content),
+        "category": _str(raw.get("category"), f"{label}: category", limit=60) or None,
     }
 
 
@@ -584,6 +594,19 @@ def _as_copy_of(row, existing) -> None:
     row.based_on_id, row.based_on_version = stages.based_on_for(existing)
 
 
+def _category_id(session: Session, name: str | None) -> int | None:
+    """The category named in a file, created here if this manager lacks it."""
+    if not name:
+        return None
+    for row in session.exec(select(TemplateCategory)).all():
+        if row.name.lower() == name.lower():
+            return row.id
+    row = TemplateCategory(name=name)
+    session.add(row)
+    session.flush()
+    return row.id
+
+
 def _apply_template(session: Session, entry: dict, existing: Template | None, when):
     """Write one server template row from a backup entry."""
     target = existing or Template(name=entry["name"], config_json="{}")
@@ -591,6 +614,8 @@ def _apply_template(session: Session, entry: dict, existing: Template | None, wh
     target.name = entry["name"]
     for col, value in _template_columns(entry).items():
         setattr(target, col, value)
+    if entry.get("category") or existing is None:  # an older file keeps the category here
+        target.category_id = _category_id(session, entry.get("category"))
     target.updated_at = when
     if existing is None:
         target.created_at = when

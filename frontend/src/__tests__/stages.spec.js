@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   defaultReleaseTarget,
+  filterByCategory,
   groupByStage,
   isLocked,
   promoteAction,
@@ -102,5 +103,15 @@ describe('versionOptions', () => {
   it('offers nothing outside Prod', () => {
     expect(versionOptions({ stage: 'dev', versions: [] })).toEqual([])
     expect(versionOptions(undefined)).toEqual([])
+  })
+})
+
+describe('filterByCategory (#223)', () => {
+  const items = [{ id: 1, category_id: 3 }, { id: 2, category_id: null }, { id: 3, category_id: 4 }]
+  it('shows all, the uncategorised, or one category', () => {
+    expect(filterByCategory(items, 'all')).toBe(items)
+    expect(filterByCategory(items, 'none').map((i) => i.id)).toEqual([2])
+    expect(filterByCategory(items, '3').map((i) => i.id)).toEqual([1])
+    expect(filterByCategory(items, 4).map((i) => i.id)).toEqual([3])
   })
 })

@@ -10,6 +10,7 @@ import ModsOverview from './views/ModsOverview.vue'
 import ModTemplates from './views/ModTemplates.vue'
 import ModTemplateEditor from './views/ModTemplateEditor.vue'
 import Account from './views/Account.vue'
+import Categories from './views/Categories.vue'
 import Backup from './views/Backup.vue'
 import Downloads from './views/Downloads.vue'
 import Network from './views/Network.vue'
@@ -67,7 +68,8 @@ const router = createRouter({
         { path: 'server-files', name: 'server-files', component: Downloads },
         { path: 'network', name: 'network', component: Network },
         { path: 'export', name: 'backup', component: Backup },
-        { path: 'account', name: 'account', component: Account },
+        { path: 'categories', name: 'categories', component: Categories },
+      { path: 'account', name: 'account', component: Account },
       ],
     },
     { path: '/help', name: 'guide', component: Guide },

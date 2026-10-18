@@ -195,3 +195,10 @@ def test_instances_gain_a_template_version_column():
             select(models.Instance).where(models.Instance.name == "Tuba Server Instance 1")
         ).one()
         assert keep.template_version is None
+
+def test_templates_gain_a_category_column():
+    """#223 phase C: existing templates start Uncategorised."""
+    engine = _make_pre88_engine()
+    _init_like_startup(engine)
+    with Session(engine) as s:
+        assert s.get(models.Template, 9).category_id is None

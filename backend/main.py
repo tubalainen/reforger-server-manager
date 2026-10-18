@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request
 
 import auth
 import backup_api
+import categories_api
 import config
 import instances_api
 import mod_templates_api
@@ -168,6 +169,7 @@ app.include_router(auth.router)
 app.include_router(serverfiles_api.router)
 app.include_router(workshop_api.router)
 app.include_router(templates_api.router)
+app.include_router(categories_api.router)
 app.include_router(mods_api.router)
 app.include_router(mod_templates_api.router)
 app.include_router(backup_api.router)
