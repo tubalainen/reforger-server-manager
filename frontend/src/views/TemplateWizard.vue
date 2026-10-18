@@ -10,6 +10,7 @@ import MenuButton from '../components/MenuButton.vue'
 import ModIdLink from '../components/ModIdLink.vue'
 import SaveCommentDialog from '../components/SaveCommentDialog.vue'
 import StageBadge from '../components/StageBadge.vue'
+import { groupByStage, versionOptions } from '../stages'
 
 // CodeMirror is ~130 KB gzipped and only needed once someone clicks "Edit JSON",
 // which most users never will — so it gets its own chunk instead of riding along
@@ -1126,9 +1127,15 @@ const modTemplateLoad = reactive({
   error: '',
   list: [],
   selectedId: '',
+  version: null,  // a Prod list's released version to load (#223); null = latest
   mods: [],       // the selected mod template's mods, fetched on selection
   replace: false, // false = add to the list, true = replace it
 })
+// Grouped Prod, Dev, Test, and for the picked Prod list, its versions (#223).
+const modListGroups = computed(() => groupByStage(modTemplateLoad.list))
+const modListVersions = computed(() =>
+  versionOptions(modTemplateLoad.list.find((t) => t.id === modTemplateLoad.selectedId)),
+)
 
 async function loadModTemplates() {
   modTemplateLoad.loading = true
@@ -1147,17 +1154,19 @@ async function openModTemplates() {
   await loadModTemplates() // refresh, but keep whatever is already picked
 }
 
-async function selectModTemplate(id) {
+async function selectModTemplate(id, version = null) {
   // A <select> hands back its value as a string; the ids from the API are
   // numbers, and the picked template is looked up by identity — so keep the id
   // in the shape the list has it in.
   modTemplateLoad.selectedId = id === '' || id === null ? '' : Number(id)
+  modTemplateLoad.version = version
   modTemplateLoad.mods = []
   modTemplateLoad.error = ''
   if (!id) return
   modTemplateLoad.loading = true
   try {
-    modTemplateLoad.mods = (await api(`/api/mod-templates/${id}`)).mods
+    const query = version != null ? `?version=${version}` : ''
+    modTemplateLoad.mods = (await api(`/api/mod-templates/${id}${query}`)).mods
   } catch (e) {
     modTemplateLoad.error = e.message
   } finally {
@@ -1183,7 +1192,8 @@ function applyModTemplateResult(result) {
   const chosen = modTemplateLoad.list.find((t) => t.id === modTemplateLoad.selectedId)
   spec.mods = result.mods
   modTemplateLoad.open = false
-  const parts = [chosen ? `Loaded "${chosen.name}".` : 'Loaded the mod list.']
+  const which = chosen && modTemplateLoad.version != null ? ` v${modTemplateLoad.version}` : ''
+  const parts = [chosen ? `Loaded "${chosen.name}"${which}.` : 'Loaded the mod list.']
   if (result.added.length) parts.push(`${result.added.length} mod(s) added.`)
   if (result.removed.length) parts.push(`${result.removed.length} removed.`)
   if (result.relocked.length) parts.push(`${result.relocked.length} version lock(s) changed.`)
@@ -2038,25 +2048,53 @@ onBeforeUnmount(() => {
                 </div>
 
                 <template v-else>
-                  <div class="list-group mb-3">
-                    <label
-                      v-for="mt in modTemplateLoad.list"
-                      :key="mt.id"
-                      class="list-group-item d-flex align-items-center gap-2"
+                  <!-- Grouped Prod, Dev, Test (#223) -->
+                  <div v-for="g in modListGroups" :key="g.stage" class="mb-3">
+                    <div class="small mb-1"><StageBadge :stage="g.stage" /></div>
+                    <div class="list-group">
+                      <label
+                        v-for="mt in g.items"
+                        :key="mt.id"
+                        class="list-group-item d-flex align-items-center gap-2"
+                      >
+                        <input
+                          class="form-check-input mt-0 flex-shrink-0"
+                          type="radio"
+                          :value="mt.id"
+                          :checked="modTemplateLoad.selectedId === mt.id"
+                          @change="selectModTemplate(mt.id)"
+                        />
+                        <span class="text-truncate">
+                          <span class="fw-semibold">{{ mt.name }}</span>
+                          <StageBadge
+                            v-if="mt.stage === 'prod'"
+                            stage="prod"
+                            :version="mt.prod_version"
+                            class="ms-1"
+                          />
+                          <span class="badge text-bg-secondary ms-1">{{ mt.mod_count }} mods</span>
+                          <small class="text-secondary d-block">{{ mt.description }}</small>
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+                  <div v-if="modListVersions.length > 2" class="mb-3">
+                    <label for="mt-version" class="form-label small mb-1">Version</label>
+                    <select
+                      id="mt-version"
+                      class="form-select form-select-sm"
+                      :value="modTemplateLoad.version"
+                      @change="selectModTemplate(
+                        modTemplateLoad.selectedId,
+                        $event.target.value === '' ? null : Number($event.target.value),
+                      )"
                     >
-                      <input
-                        class="form-check-input mt-0 flex-shrink-0"
-                        type="radio"
-                        :value="mt.id"
-                        :checked="modTemplateLoad.selectedId === mt.id"
-                        @change="selectModTemplate(mt.id)"
-                      />
-                      <span class="text-truncate">
-                        <span class="fw-semibold">{{ mt.name }}</span>
-                        <span class="badge text-bg-secondary ms-1">{{ mt.mod_count }} mods</span>
-                        <small class="text-secondary d-block">{{ mt.description }}</small>
-                      </span>
-                    </label>
+                      <option
+                        v-for="o in modListVersions"
+                        :key="String(o.value)"
+                        :value="o.value ?? ''"
+                      >{{ o.label }}</option>
+                    </select>
                   </div>
 
                   <div class="form-check small">

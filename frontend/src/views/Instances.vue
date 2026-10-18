@@ -5,6 +5,7 @@ import { api } from '../api'
 import DeleteServerDialog from '../components/DeleteServerDialog.vue'
 import Sparkline from '../components/Sparkline.vue'
 import StageBadge from '../components/StageBadge.vue'
+import { groupByStage, versionOptions } from '../stages'
 import { formatBytes, formatUptime } from '../format'
 import { attentionItems, branchLabel } from '../overview'
 import { serverStatus } from '../status'
@@ -27,7 +28,7 @@ const error = ref('')
 const showCreate = ref(false)
 const orphanedData = ref('')
 const create = reactive({
-  name: '', template_id: null, branch: 'stable',
+  name: '', template_id: null, template_version: null, branch: 'stable',
   customPorts: false, game_port: null, a2s_port: null, rcon_port: null,
   busy: false, error: '',
 })
@@ -183,7 +184,9 @@ async function openCreate() {
   create.branch = 'stable'
   create.error = ''
   await loadTemplates()
-  create.template_id = templates.value[0]?.id ?? null
+  // Prod first (#223): a golden template is the usual start for a new server.
+  create.template_id = groupByStage(templates.value)[0]?.items[0]?.id ?? null
+  create.template_version = null
   showCreate.value = true
 }
 
@@ -193,6 +196,7 @@ async function submitCreate() {
   create.error = ''
   try {
     const body = { name: create.name, template_id: create.template_id, branch: create.branch }
+    if (create.template_version != null) body.template_version = create.template_version
     if (create.customPorts) {
       body.game_port = create.game_port
       body.a2s_port = create.a2s_port
@@ -220,6 +224,9 @@ async function onDeleted() {
 }
 
 const hasTemplates = computed(() => templates.value.length > 0)
+const createVersions = computed(() =>
+  versionOptions(templates.value.find((t) => t.id === create.template_id)),
+)
 
 onMounted(async () => {
   await Promise.all([load(), loadTemplates()])
@@ -457,8 +464,24 @@ onUnmounted(() => clearInterval(poll))
               </div>
               <div class="mb-3">
                 <label class="form-label">Template</label>
-                <select v-model="create.template_id" class="form-select">
-                  <option v-for="t in templates" :key="t.id" :value="t.id">{{ t.name }}</option>
+                <select
+                  v-model="create.template_id"
+                  class="form-select"
+                  @change="create.template_version = null"
+                >
+                  <optgroup v-for="g in groupByStage(templates)" :key="g.stage" :label="g.label">
+                    <option v-for="t in g.items" :key="t.id" :value="t.id">{{ t.name }}</option>
+                  </optgroup>
+                </select>
+                <select
+                  v-if="createVersions.length"
+                  v-model="create.template_version"
+                  class="form-select mt-2"
+                  aria-label="Template version"
+                >
+                  <option v-for="o in createVersions" :key="String(o.value)" :value="o.value">
+                    {{ o.label }}
+                  </option>
                 </select>
               </div>
               <div class="mb-3">

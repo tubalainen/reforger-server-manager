@@ -162,6 +162,8 @@ class Instance(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(index=True, unique=True)
     template_id: int = Field(foreign_key="template.id")
+    # A Prod template's version this server is pinned to (#223); None = latest.
+    template_version: int | None = None
     branch: str = "stable"  # stable | experimental
     game_port: int
     a2s_port: int
@@ -265,6 +267,10 @@ def _migrate(engine) -> None:
             conn.execute(text(
                 "ALTER TABLE instance ADD COLUMN last_scheduled_restart DATETIME"
             ))
+            conn.commit()
+        # pinned Prod template version (#223); NULL = run the latest
+        if "template_version" not in icols:
+            conn.execute(text("ALTER TABLE instance ADD COLUMN template_version INTEGER"))
             conn.commit()
         # engine launch parameters per template (issue #20)
         tcols = {row[1] for row in conn.execute(text("PRAGMA table_info(template)"))}

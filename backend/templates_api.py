@@ -164,12 +164,15 @@ async def list_templates(request: Request, _user: str = Depends(auth.require_ses
         servers = dict(session.exec(
             select(Instance.template_id, func.count()).group_by(Instance.template_id)
         ).all())
+        # every Prod template's released versions, for the version pickers (#223)
+        versions = stages.version_list(session, stages.TEMPLATES)
         return [
             {"id": t.id, "name": t.name, "description": t.description,
              "updated_at": t.updated_at.isoformat(),
              **stages.stage_fields(t, names),
              # how many servers run it: the release dialog says they move along
              "server_count": servers.get(t.id, 0),
+             "versions": versions.get(t.id, []),
              # someone else is editing this right now (#102) — the list polls,
              # so the badge and the disabled Edit button stay current
              "locked": edit_locks.held_by_other(t.id, cid),
@@ -271,7 +274,11 @@ def _unique_copy_name(session: Session, source_name: str) -> str:
 
 
 @router.post("/{template_id}/copy", status_code=201)
-async def copy_template(template_id: int, _user: str = Depends(auth.require_session)):
+async def copy_template(
+    template_id: int,
+    body: stages.CopyFrom | None = None,
+    _user: str = Depends(auth.require_session),
+):
     """Duplicate a template into a new one under a fresh "Copy of …" name (#129).
 
     Copies the stored config, scenario, launch params, enriched mod list and the
@@ -280,22 +287,27 @@ async def copy_template(template_id: int, _user: str = Depends(auth.require_sess
 
     A copy always lands in Test, whatever stage the original is in, and remembers
     the Prod template it stems from so its release can default to "next version
-    of" that one (#223).
+    of" that one (#223). `version` copies an older released version instead.
     """
+    version = body.version if body else None
     with Session(get_engine()) as session:
         src = session.get(Template, template_id)
         if not src:
             raise HTTPException(status_code=404, detail="Template not found")
-        based_on_id, based_on_version = stages.based_on_for(src)
+        try:
+            content = stages.content_of(session, stages.TEMPLATES, src, version)
+        except stages.StageError as exc:
+            raise stage_error(exc) from exc
+        based_on_id, based_on_version = stages.based_on_for(src, version)
         t = Template(
             name=_unique_copy_name(session, src.name),
-            description=src.description,
-            config_json=src.config_json,
-            scenario_name=src.scenario_name,
-            scenario_player_count=src.scenario_player_count,
-            launch_params_json=src.launch_params_json,
-            mods_json=src.mods_json,
-            extras_json=src.extras_json,
+            description=content.description,
+            config_json=content.config_json,
+            scenario_name=content.scenario_name,
+            scenario_player_count=content.scenario_player_count,
+            launch_params_json=content.launch_params_json,
+            mods_json=content.mods_json,
+            extras_json=content.extras_json,
             stage=stages.TEST,
             based_on_id=based_on_id,
             based_on_version=based_on_version,
@@ -303,7 +315,7 @@ async def copy_template(template_id: int, _user: str = Depends(auth.require_sess
         session.add(t)
         session.flush()  # assign the id before the log references it
         # the copy starts its own log (#112), saying where it came from
-        change_log.record_creation(session, t, stages.copied_from(src))
+        change_log.record_creation(session, t, stages.copied_from(src, version))
         session.commit()
         session.refresh(t)
         return _out(t, session)
@@ -530,15 +542,42 @@ async def template_changelog(
         return change_log.entries(session, template_id, q)
 
 
-@router.get("/{template_id}/config.json")
-async def download_config(template_id: int, _user: str = Depends(auth.require_session)):
+@router.get("/{template_id}/versions")
+async def template_versions(template_id: int, _user: str = Depends(auth.require_session)):
+    """A Prod template's released versions, newest first, with their notes and
+    the servers pinned to each (#223)."""
     with Session(get_engine()) as session:
         t = session.get(Template, template_id)
         if not t:
             raise HTTPException(status_code=404, detail="Template not found")
+        pinned: dict[int, list[str]] = {}
+        for inst in session.exec(select(Instance).where(Instance.template_id == template_id)).all():
+            if inst.template_version:
+                pinned.setdefault(inst.template_version, []).append(inst.name)
+        return [
+            {**v, "pinned_by": pinned.get(v["version"], [])}
+            for v in stages.version_list(session, stages.TEMPLATES, [template_id]).get(template_id, [])
+        ]
+
+
+@router.get("/{template_id}/config.json")
+async def download_config(
+    template_id: int,
+    version: int | None = None,
+    _user: str = Depends(auth.require_session),
+):
+    with Session(get_engine()) as session:
+        t = session.get(Template, template_id)
+        if not t:
+            raise HTTPException(status_code=404, detail="Template not found")
+        try:
+            content = stages.content_of(session, stages.TEMPLATES, t, version)
+        except stages.StageError as exc:
+            raise stage_error(exc) from exc
         # Re-dump to guarantee pretty output regardless of how it was stored
-        pretty = json.dumps(json.loads(t.config_json), indent=2)
-        safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in t.name) or "config"
+        pretty = json.dumps(json.loads(content.config_json), indent=2)
+        name = f"{t.name} v{version}" if version else t.name
+        safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in name) or "config"
         return Response(
             content=pretty,
             media_type="application/json",

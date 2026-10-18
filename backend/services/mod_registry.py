@@ -33,7 +33,7 @@ from models import (
     _utcnow,
     get_engine,
 )
-from services import change_log, template_service
+from services import change_log, stages, template_service
 from services.template_service import TemplateSpec
 from services.workshop_service import WorkshopError, normalize_asset_id, workshop
 
@@ -161,22 +161,18 @@ def overview(session: Session) -> list[dict]:
     # modId -> server templates index.
     shelves = list(session.exec(select(ModTemplate)).all())
 
-    # modId -> [{id, name}]  and  (template_id, modId) -> version
+    # modId -> [{id, name}]
     mod_templates: dict[str, list[dict]] = {}
-    tmpl_mod_version: dict[tuple[int, str], str | None] = {}
-    tmpl_by_id: dict[int, Template] = {}
     # modId -> does any template's entry mark it as publishing its own scenario(s)?
     # A DB-only hint (#131) so the overview can flag scenario-carrying mods even
     # when the Workshop (and thus the live type badge) is unreachable.
     mod_provides: dict[str, bool] = {}
     for t in templates:
-        tmpl_by_id[t.id] = t
         for m in _enriched_mods(t):
             mid = _norm(m.get("modId"))
             if not mid:
                 continue
             mod_templates.setdefault(mid, []).append({"id": t.id, "name": t.name})
-            tmpl_mod_version[(t.id, mid)] = m.get("version")
             if m.get("provides_scenarios"):
                 mod_provides[mid] = True
 
@@ -188,21 +184,21 @@ def overview(session: Session) -> list[dict]:
             if mid:
                 mod_shelves.setdefault(mid, []).append({"id": mt.id, "name": mt.name})
 
-    # modId -> [{id, name, template, version}] via each instance's template
+    # modId -> [{id, name, template, version}] via what each instance runs: its
+    # template, or the older Prod version it is pinned to (#223)
     mod_instances: dict[str, list[dict]] = {}
-    for inst in instances:
-        t = tmpl_by_id.get(inst.template_id)
-        if not t:
-            continue
-        for m in _enriched_mods(t):
+    by_id = {i.id: i for i in instances}
+    for inst_id, target in stages.run_targets(session, instances).items():
+        inst = by_id[inst_id]
+        for m in _enriched_mods(target.content):
             mid = _norm(m.get("modId"))
             if not mid:
                 continue
             mod_instances.setdefault(mid, []).append({
                 "id": inst.id,
                 "name": inst.name,
-                "template": t.name,
-                "version": tmpl_mod_version.get((t.id, mid)),
+                "template": target.label,
+                "version": m.get("version"),
             })
 
     rows = session.exec(select(ModRegistryEntry).order_by(ModRegistryEntry.name)).all()

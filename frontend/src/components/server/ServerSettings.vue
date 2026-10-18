@@ -9,10 +9,12 @@ import {
   LOCKED_WHILE_RUNNING,
   mergeIncoming,
   normaliseTimes,
+  pickTemplate,
   planSave,
   settingsFrom,
   validate,
 } from '../../settingsForm'
+import { groupByStage, versionOptions } from '../../stages'
 import StoredData from '../StoredData.vue'
 
 // A server's settings as one form with one Save (#189). Edit anything, see what is
@@ -101,6 +103,12 @@ const templateOptions = computed(() =>
 )
 const hasSavedData = computed(() => !!savedData.value.files)
 const templateById = (id) => templates.value.find((t) => t.id === id)
+// Grouped Prod, Dev, Test (#223); a Prod template also offers its versions.
+const templateGroups = computed(() => groupByStage(templateOptions.value))
+const versionChoices = computed(() => versionOptions(templateById(draft.value.template_id)))
+function chooseTemplate(id) {
+  draft.value = pickTemplate(draft.value, Number(id))
+}
 
 // Warn when the new template writes to a different persistent save (#31)
 const hiveWarning = computed(() => {
@@ -241,14 +249,33 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
             <div>
               <select
                 id="set-template"
-                v-model.number="draft.template_id"
+                :value="draft.template_id"
                 class="form-select"
                 :class="{ 'rsm-changed': isChanged('template_id') }"
                 :disabled="isLocked('template_id')"
                 :aria-describedby="isLocked('template_id') ? 'lock-note' : undefined"
+                @change="chooseTemplate($event.target.value)"
               >
-                <option v-for="t in templateOptions" :key="t.id" :value="t.id">{{ t.name }}</option>
+                <optgroup v-for="g in templateGroups" :key="g.stage" :label="g.label">
+                  <option v-for="t in g.items" :key="t.id" :value="t.id">{{ t.name }}</option>
+                </optgroup>
               </select>
+              <!-- A Prod template runs its latest release unless pinned to an older one (#223) -->
+              <select
+                v-if="versionChoices.length"
+                id="set-template-version"
+                v-model="draft.template_version"
+                class="form-select mt-2"
+                :class="{ 'rsm-changed': isChanged('template_version') }"
+                :disabled="isLocked('template_version')"
+                aria-label="Template version"
+              >
+                <option v-for="o in versionChoices" :key="String(o.value)" :value="o.value">{{ o.label }}</option>
+              </select>
+              <div v-if="versionChoices.length" class="form-text">
+                <em>Latest</em> follows every new release on the next restart; a version
+                stays exactly as it was released.
+              </div>
               <div v-if="hiveWarning" class="form-text text-warning">⚠ {{ hiveWarning }}</div>
               <div v-else class="form-text">
                 A different template can read a different saved world; you will be asked before it changes.

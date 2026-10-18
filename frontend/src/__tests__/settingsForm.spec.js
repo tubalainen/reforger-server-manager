@@ -3,8 +3,10 @@ import { describe, expect, it } from 'vitest'
 import {
   changedFields,
   describeSteps,
+  LOCKED_WHILE_RUNNING,
   mergeIncoming,
   normaliseTimes,
+  pickTemplate,
   planSave,
   settingsFrom,
   validate,
@@ -145,5 +147,34 @@ describe('step labels', () => {
     expect(describeSteps([label('name'), label('ports'), label('template')])).toBe(
       'the name, the ports and the template',
     )
+  })
+})
+
+describe('template versions (#223)', () => {
+  it('reads the pin, null meaning latest', () => {
+    expect(settingsFrom(inst()).template_version).toBeNull()
+    expect(settingsFrom(inst({ template_version: 2 })).template_version).toBe(2)
+  })
+
+  it('saves a version-only change through the template step', () => {
+    const base = settingsFrom(inst({ template_version: null }))
+    const draft = { ...base, template_version: 1 }
+    expect(changedFields(base, draft)).toEqual(['template_version'])
+    const [step] = planSave(base, draft)
+    expect(step).toMatchObject({
+      key: 'template',
+      label: 'template version',
+      path: '/template',
+      body: { template_id: 1, template_version: 1 },
+    })
+  })
+
+  it('is locked while the server runs, like the template', () => {
+    expect(LOCKED_WHILE_RUNNING).toContain('template_version')
+  })
+
+  it('starts another template at latest', () => {
+    const draft = pickTemplate({ ...settingsFrom(inst()), template_version: 3 }, 2)
+    expect(draft).toMatchObject({ template_id: 2, template_version: null })
   })
 })

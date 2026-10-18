@@ -29,6 +29,8 @@ router = APIRouter(prefix="/api/instances", tags=["instances"])
 class CreateInstance(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     template_id: int
+    # A Prod template's released version to pin (#223); omit for "latest"
+    template_version: int | None = None
     branch: str = "stable"
     # Optional explicit host ports; omit to auto-lease from the .env ranges
     game_port: int | None = Field(default=None, ge=1, le=65535)
@@ -54,6 +56,8 @@ class UpdatePorts(BaseModel):
 
 class SetTemplate(BaseModel):
     template_id: int
+    # A Prod template's released version to pin (#223); None = latest
+    template_version: int | None = None
     # Archive the saved game data before repointing the instance (#179). The GUI
     # ticks this by default when there is anything to save, because the save the
     # old scenario built is exactly what a template swap orphans.
@@ -106,7 +110,7 @@ async def create_instance(body: CreateInstance, _user: str = Depends(auth.requir
         inst, parked = await asyncio.to_thread(
             instance_service.create_instance,
             body.name, body.template_id, body.branch,
-            body.game_port, body.a2s_port, body.rcon_port,
+            body.game_port, body.a2s_port, body.rcon_port, body.template_version,
         )
     except InstanceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -204,7 +208,8 @@ async def set_template(
                 instance_backup.SOURCE_TEMPLATE_SWITCH,
             )
         await asyncio.to_thread(
-            instance_service.set_instance_template, instance_id, body.template_id
+            instance_service.set_instance_template,
+            instance_id, body.template_id, body.template_version,
         )
     except InstanceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

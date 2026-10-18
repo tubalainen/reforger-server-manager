@@ -33,6 +33,7 @@ Key template capabilities include:
 - Move templates and mod lists through Test, Dev and Prod. Prod is locked; each release is
   a version (v1, v2, …), and a changed copy is released as the next version of the original.
   Saves in Dev carry a comment in the change log.
+- Run a server on the latest release of a Prod template, or pin it to an older version.
 
 ## Server operations
 

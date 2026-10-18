@@ -73,6 +73,20 @@ export function staleCopyWarning(item, target) {
     + `Releasing it replaces v${target.prod_version}'s content with this copy's.`
 }
 
+// A Prod item's version picker: "Latest (v4)" first (null = follow new releases),
+// then every released version, newest first, with its date and note (#223).
+export function versionOptions(item) {
+  if (!item || item.stage !== 'prod') return []
+  const clip = (s) => (s.length > 40 ? `${s.slice(0, 39)}…` : s)
+  return [
+    { value: null, label: `Latest${item.prod_version ? ` (v${item.prod_version})` : ''}` },
+    ...(item.versions || []).map((v) => ({
+      value: v.version,
+      label: [`v${v.version}`, v.released, v.note && clip(v.note)].filter(Boolean).join(' · '),
+    })),
+  ]
+}
+
 // The words for "release as new" vs "release into", for the dialog's choices.
 export function releaseSummary(item, target, noun = 'template') {
   if (!target) return `'${item.name}' becomes a new Prod ${noun} at v1.`

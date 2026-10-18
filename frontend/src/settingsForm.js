@@ -4,10 +4,12 @@
 // Kept free of Vue so all of it can be tested on its own.
 
 // Fields that rebuild the container, so the backend refuses them while it runs.
-export const LOCKED_WHILE_RUNNING = ['branch', 'template_id', 'game_port', 'a2s_port', 'rcon_port']
+export const LOCKED_WHILE_RUNNING = [
+  'branch', 'template_id', 'template_version', 'game_port', 'a2s_port', 'rcon_port',
+]
 
 const FIELDS = [
-  'name', 'branch', 'template_id',
+  'name', 'branch', 'template_id', 'template_version',
   'game_port', 'a2s_port', 'rcon_port',
   'auto_restart', 'auto_start', 'restart_times',
 ]
@@ -31,6 +33,8 @@ export function settingsFrom(inst) {
     name: inst.name,
     branch: inst.branch,
     template_id: inst.template_id,
+    // the Prod version it is pinned to (#223); null = latest
+    template_version: inst.template_version ?? null,
     game_port: inst.game_port,
     a2s_port: inst.a2s_port,
     rcon_port: inst.rcon_port,
@@ -59,6 +63,11 @@ export function mergeIncoming(baseline, draft, inst) {
   const next = {}
   for (const f of FIELDS) next[f] = same(draft[f], baseline[f]) ? incoming[f] : draft[f]
   return { baseline: incoming, draft: next }
+}
+
+// Picking another template starts it at "latest": a pin belongs to one template.
+export function pickTemplate(draft, id) {
+  return { ...draft, template_id: id, template_version: null }
 }
 
 const PORT_FIELDS = ['game_port', 'a2s_port', 'rcon_port']
@@ -117,12 +126,12 @@ export function planSave(baseline, draft) {
       body: { game_port: draft.game_port, a2s_port: draft.a2s_port, rcon_port: draft.rcon_port },
     })
   }
-  if (touched(['template_id'])) {
+  if (touched(['template_id', 'template_version'])) {
     steps.push({
       key: 'template',
-      label: STEP_LABEL.template,
+      label: changed.has('template_id') ? STEP_LABEL.template : 'template version',
       path: '/template',
-      body: { template_id: draft.template_id },
+      body: { template_id: draft.template_id, template_version: draft.template_version ?? null },
     })
   }
   if (touched(['auto_restart', 'auto_start'])) {
