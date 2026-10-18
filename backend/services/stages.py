@@ -359,7 +359,8 @@ class RunTarget:
 def run_targets(session: Session, instances) -> dict[int, RunTarget]:
     """What each instance runs, in two queries however many there are."""
     instances = list(instances)
-    template_ids = {i.template_id for i in instances}
+    # None: a server whose template was deleted runs nothing.
+    template_ids = {i.template_id for i in instances if i.template_id is not None}
     templates = {
         t.id: t for t in session.exec(select(Template).where(Template.id.in_(template_ids))).all()
     }

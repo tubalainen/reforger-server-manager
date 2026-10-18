@@ -103,3 +103,15 @@ describe('sparkline', () => {
     expect(g.line).toBe('M2,18L98,2')
   })
 })
+
+describe('attentionItems: a server without a template (#223)', () => {
+  it('asks for a template, with a way to its Settings', () => {
+    const items = attentionItems([
+      { id: 4, name: 'Orphan', branch: 'stable', server_files_ready: true, template_id: null },
+      { id: 5, name: 'Fine', branch: 'stable', server_files_ready: true, template_id: 2 },
+    ])
+    expect(items.map((i) => i.key)).toEqual(['no-template-4'])
+    expect(items[0].action).toEqual({ kind: 'settings', id: 4 })
+    expect(items[0].text).toContain('No template selected')
+  })
+})

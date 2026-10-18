@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   defaultReleaseTarget,
+  deleteTemplatePrompt,
   filterByCategory,
   groupByStage,
   isLocked,
@@ -113,5 +114,28 @@ describe('filterByCategory (#223)', () => {
     expect(filterByCategory(items, 'none').map((i) => i.id)).toEqual([2])
     expect(filterByCategory(items, '3').map((i) => i.id)).toEqual([1])
     expect(filterByCategory(items, 4).map((i) => i.id)).toEqual([3])
+  })
+})
+
+describe('deleteTemplatePrompt (#223)', () => {
+  it('is the plain question without servers', () => {
+    expect(deleteTemplatePrompt('Conflict')).toBe('Delete template "Conflict"?')
+  })
+  it('names one server and says what happens to it', () => {
+    const text = deleteTemplatePrompt('Conflict', [{ name: 'Everon', status: 'exited' }])
+    expect(text).toContain('This server uses it:')
+    expect(text).toContain('• Everon')
+    expect(text).not.toContain('shut down')
+    expect(text).toContain('It is left with no template selected.')
+  })
+  it('warns that running servers are shut down', () => {
+    const text = deleteTemplatePrompt('Conflict', [
+      { name: 'Everon', status: 'running' },
+      { name: 'Arland', status: 'exited' },
+    ])
+    expect(text).toContain('These 2 servers use it:')
+    expect(text).toContain('• Everon (running: it will be shut down)')
+    expect(text).toContain('• Arland\n')
+    expect(text).toContain('the running one is shut down now')
   })
 })

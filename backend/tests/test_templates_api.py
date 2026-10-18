@@ -102,14 +102,104 @@ def test_copy_requires_auth(client):
     assert client.post("/api/templates/1/copy").status_code == 401
 
 
-def test_delete_blocked_while_instance_uses_template(logged_in):
+def test_delete_of_a_template_in_use_asks_first(logged_in):
     tid = logged_in.post("/api/templates", json=_spec("InUse")).json()["id"]
     logged_in.post("/api/instances", json={"name": "bound", "template_id": tid})
+    # Without force it is refused, naming the server it would leave without one.
     r = logged_in.delete(f"/api/templates/{tid}")
     assert r.status_code == 409
-    assert "bound" in r.json()["detail"]  # names the offending instance
-    # still there
+    assert "bound" in r.json()["detail"]
     assert logged_in.get(f"/api/templates/{tid}").status_code == 200
+    servers = logged_in.get(f"/api/templates/{tid}/servers").json()
+    assert [s["name"] for s in servers] == ["bound"]
+
+
+def test_deleting_a_template_in_use_leaves_its_servers_without_one(logged_in):
+    """#223: the server keeps its data and settings, shows no template, and
+    cannot start until one is chosen."""
+    tid = logged_in.post("/api/templates", json=_spec("Doomed")).json()["id"]
+    sid = logged_in.post("/api/instances", json={"name": "orphan", "template_id": tid}).json()["id"]
+    assert logged_in.delete(f"/api/templates/{tid}?force=true").status_code == 204
+    assert logged_in.get(f"/api/templates/{tid}").status_code == 404
+
+    view = logged_in.get(f"/api/instances/{sid}").json()
+    assert view["template_id"] is None
+    assert view["template_name"] is None
+    assert view["template_stage"] is None
+    listed = next(i for i in logged_in.get("/api/instances/summary").json()["servers"] if i["id"] == sid)
+    assert listed["template_id"] is None
+
+    # A new template must not inherit the orphan (SQLite reuses the highest id).
+    again = logged_in.post("/api/templates", json=_spec("Fresh")).json()["id"]
+    assert logged_in.get(f"/api/instances/{sid}").json()["template_id"] is None
+    # Choosing a template puts it back to work.
+    r = logged_in.put(f"/api/instances/{sid}/template", json={"template_id": again})
+    assert r.status_code == 200, r.text
+    assert logged_in.get(f"/api/instances/{sid}").json()["template_name"] == "Fresh"
+
+
+def test_a_server_without_a_template_cannot_start(logged_in, monkeypatch):
+    from services import docker_service, instance_service
+    tid = logged_in.post("/api/templates", json=_spec("Gone")).json()["id"]
+    sid = logged_in.post("/api/instances", json={"name": "idle", "template_id": tid}).json()["id"]
+    logged_in.delete(f"/api/templates/{tid}?force=true")
+    monkeypatch.setattr(docker_service, "ping", lambda: True)
+    with pytest.raises(instance_service.InstanceError, match="no template"):
+        instance_service.start_instance(sid)
+
+
+def test_deleting_the_template_stops_its_running_server(logged_in, monkeypatch):
+    from sqlmodel import Session
+
+    from models import Instance, get_engine
+    from services import docker_service, instance_service
+    tid = logged_in.post("/api/templates", json=_spec("Live")).json()["id"]
+    sid = logged_in.post("/api/instances", json={"name": "live", "template_id": tid}).json()["id"]
+    with Session(get_engine()) as s:
+        inst = s.get(Instance, sid)
+        inst.desired_state = "running"
+        s.add(inst)
+        s.commit()
+    stopped = []
+
+    def stop(instance_id):
+        # Unlinked before it is stopped, so nothing can start it again from the template.
+        with Session(get_engine()) as s:
+            assert s.get(Instance, instance_id).template_id is None
+        stopped.append(instance_id)
+
+    monkeypatch.setattr(docker_service, "ping", lambda: True)
+    monkeypatch.setattr(instance_service, "container_status", lambda _id: "running")
+    monkeypatch.setattr(instance_service, "stop_instance", stop)
+    servers = logged_in.get(f"/api/templates/{tid}/servers").json()
+    assert servers == [{"id": sid, "name": "live", "status": "running"}]
+    assert logged_in.delete(f"/api/templates/{tid}?force=true").status_code == 204
+    assert stopped == [sid]
+    with Session(get_engine()) as s:
+        inst = s.get(Instance, sid)
+        assert (inst.template_id, inst.template_version, inst.desired_state) == (None, None, "stopped")
+
+    # Crash recovery leaves a server without a template alone.
+    started = []
+    with Session(get_engine()) as s:
+        inst = s.get(Instance, sid)
+        inst.desired_state = "running"
+        s.add(inst)
+        s.commit()
+    monkeypatch.setattr(instance_service, "container_status", lambda _id: "exited")
+    monkeypatch.setattr(instance_service, "server_files_ready", lambda _b: True)
+    monkeypatch.setattr(instance_service, "start_instance", lambda i: started.append(i))
+    instance_service.reconcile_and_recover()
+    assert started == []
+    # ...while one with a template, in the same state, is recovered.
+    other = logged_in.post("/api/templates", json=_spec("Still here")).json()["id"]
+    with Session(get_engine()) as s:
+        inst = s.get(Instance, sid)
+        inst.template_id = other
+        s.add(inst)
+        s.commit()
+    instance_service.reconcile_and_recover()
+    assert started == [sid]
 
 
 def test_list_reports_persistence_and_hive(logged_in):

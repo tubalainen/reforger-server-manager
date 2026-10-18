@@ -97,7 +97,7 @@ onMounted(async () => {
   }
 })
 const templateOptions = computed(() =>
-  templates.value.length
+  templates.value.length || props.inst.template_id == null
     ? templates.value
     : [{ id: props.inst.template_id, name: props.inst.template_name || 'Current template' }],
 )
@@ -256,6 +256,8 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
                 :aria-describedby="isLocked('template_id') ? 'lock-note' : undefined"
                 @change="chooseTemplate($event.target.value)"
               >
+                <!-- Its template was deleted (#223): nothing chosen until one is -->
+                <option v-if="draft.template_id == null" value="" disabled>No template selected — choose one</option>
                 <optgroup v-for="g in templateGroups" :key="g.stage" :label="g.label">
                   <option v-for="t in g.items" :key="t.id" :value="t.id">{{ t.name }}</option>
                 </optgroup>
@@ -475,7 +477,7 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
           </div>
           <div class="modal-body">
             <p class="mb-2">
-              <strong>{{ templateById(baseline.template_id)?.name || inst.template_name }}</strong>
+              <strong>{{ templateById(baseline.template_id)?.name || inst.template_name || 'No template' }}</strong>
               → <strong>{{ templateById(draft.template_id)?.name }}</strong>
             </p>
             <p class="small text-secondary">

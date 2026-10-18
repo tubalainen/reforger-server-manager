@@ -464,7 +464,8 @@ def set_instance_template(
 def instances_using_template(template_id: int) -> list[dict]:
     """Instances bound to a template, as [{id, name, status}] (issue #31).
 
-    Used to block deleting a template that instances still reference.
+    What deleting the template would leave without one, for the confirmation
+    that names them (#223).
     """
     with Session(get_engine()) as session:
         insts = [i for i in _all_instances(session) if i.template_id == template_id]
@@ -477,6 +478,41 @@ def instances_using_template(template_id: int) -> list[dict]:
         }
         for i in insts
     ]
+
+
+def detach_template(template_id: int) -> list[dict]:
+    """Leave every server on a template that is being deleted without one (#223).
+
+    They keep their data and settings, and cannot start until a template is
+    chosen in their Settings. Each is unlinked and marked stopped FIRST, so
+    nothing (crash recovery, a schedule, an auto-update restart) brings it back
+    up from the template while it is shut down; then any that is up is stopped.
+    Returns [{id, name, was_running}].
+    """
+    with Session(get_engine()) as session:
+        insts = [i for i in _all_instances(session) if i.template_id == template_id]
+        for inst in insts:
+            inst.template_id = None
+            inst.template_version = None
+            inst.desired_state = "stopped"
+            session.add(inst)
+        session.commit()
+        servers = [(i.id, i.name) for i in insts]
+    docker_up = docker_service.ping()
+    out = []
+    for instance_id, name in servers:
+        was_running = docker_up and container_status(instance_id) == "running"
+        if was_running:
+            logger.info("Stopping %s: its template is being deleted", name)
+        # Every one, not only those running: one in Docker's restart loop is
+        # 'restarting', and its restart policy would bring it back. Stopping a
+        # stopped container does nothing.
+        if docker_up:
+            stop_instance(instance_id)
+        else:
+            forget_seen_running(instance_id)
+        out.append({"id": instance_id, "name": name, "was_running": was_running})
+    return out
 
 
 def edit_instance(
@@ -524,7 +560,10 @@ def _run_target(session: Session, inst: Instance) -> stages.RunTarget:
     pinned to (#223)."""
     target = stages.run_target(session, inst)
     if target is None:
-        raise InstanceError("This server's template no longer exists")
+        raise InstanceError(
+            "This server has no template: its template was deleted. "
+            "Choose one in its Settings first."
+        )
     return target
 
 
@@ -700,12 +739,12 @@ def start_instance(instance_id: int) -> None:
         inst = session.get(Instance, instance_id)
         if not inst:
             raise InstanceError("Server not found")
+        target = _run_target(session, inst)  # first: without a template nothing else matters
         if not server_files_ready(inst.branch):
             raise InstanceError(
                 f"The {inst.branch} server files are not downloaded yet — "
                 "download them on the Downloads tab first"
             )
-        target = _run_target(session, inst)
         template_config = target.content.config_json
         # "Name v3" for a Prod template, so the Supervisor shows the version (#223)
         template_name = target.label
@@ -1968,8 +2007,8 @@ def reconcile_and_recover() -> None:
     with Session(get_engine()) as session:
         instances = _all_instances(session)
     for inst in instances:
-        if inst.desired_state != "running":
-            continue
+        if inst.desired_state != "running" or inst.template_id is None:
+            continue  # nothing to run without a template (#223)
         status = container_status(inst.id)
         if status == "running":
             _seen_running.add(inst.id)  # remember it for crash detection

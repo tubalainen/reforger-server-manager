@@ -8,7 +8,9 @@ import MenuButton from '../components/MenuButton.vue'
 import NewFromProdDialog from '../components/NewFromProdDialog.vue'
 import ReleaseDialog from '../components/ReleaseDialog.vue'
 import StageBadge from '../components/StageBadge.vue'
-import { filterByCategory, groupByStage, isLocked, promoteAction, versionsText } from '../stages'
+import {
+  deleteTemplatePrompt, filterByCategory, groupByStage, isLocked, promoteAction, versionsText,
+} from '../stages'
 
 const router = useRouter()
 const templates = ref([])
@@ -29,12 +31,8 @@ watch(error, async (msg) => {
   errorEl.value?.scrollIntoView({ behavior: 'smooth', block: 'center' })
 })
 
-// A template servers still use cannot be deleted (the backend refuses); say so
-// on the menu item instead of letting the click fail.
-function deleteLabel(t) {
-  if (!t.server_count) return 'Delete'
-  return `Delete (used by ${t.server_count} server${t.server_count === 1 ? '' : 's'})`
-}
+// The template being deleted: that can take a while when it shuts servers down.
+const deleting = ref(0)
 let poll = null
 
 // --- Change log (#112): a read-only, searchable history per template ---
@@ -68,18 +66,33 @@ async function load() {
 }
 
 async function remove(t) {
-  if (!confirm(`Delete template "${t.name}"?`)) return
+  error.value = ''
+  // Servers on it are left without a template, and running ones are stopped
+  // (#223): ask the server first which they are, so the prompt can name them.
+  let servers = []
+  if (t.server_count) {
+    try {
+      servers = await api(`/api/templates/${t.id}/servers`)
+    } catch (e) {
+      error.value = e.message
+      return
+    }
+  }
+  if (!confirm(deleteTemplatePrompt(t.name, servers))) return
   // Prod is the golden copy: ask a second time, and say what goes with it (#223).
   if (isLocked(t) && !confirm(
     `"${t.name}" is a Prod template. Deleting it also deletes ${versionsText(t.prod_version)} `
     + 'and its change log, for good.\n\nReally delete it?',
   )) return
-  error.value = ''
+  deleting.value = t.id
   try {
-    await api(`/api/templates/${t.id}`, { method: 'DELETE' })
+    // force: the user has just agreed to leave those servers without one.
+    await api(`/api/templates/${t.id}${servers.length ? '?force=true' : ''}`, { method: 'DELETE' })
     await load()
   } catch (e) {
     error.value = e.message
+  } finally {
+    deleting.value = 0
   }
 }
 
@@ -348,11 +361,10 @@ onUnmounted(() => clearInterval(poll))
                   <!-- text-danger would outrank the grey of a disabled item -->
                   <button
                     class="dropdown-item"
-                    :class="{ 'text-danger': !t.locked && !t.server_count }"
-                    :disabled="t.locked || t.server_count > 0"
-                    :title="t.server_count ? 'Delete those servers, or switch them to another template, first' : ''"
+                    :class="{ 'text-danger': !t.locked && deleting !== t.id }"
+                    :disabled="t.locked || deleting === t.id"
                     @click="remove(t)"
-                  >{{ deleteLabel(t) }}</button>
+                  >{{ deleting === t.id ? 'Deleting…' : 'Delete' }}</button>
                 </li>
               </MenuButton>
             </div>

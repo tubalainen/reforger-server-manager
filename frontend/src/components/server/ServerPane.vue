@@ -119,6 +119,9 @@ const attention = computed(() => {
 async function runAttention(item) {
   const a = item.action
   if (a.kind === 'restart') return action('restart')
+  if (a.kind === 'settings') {
+    return router.push({ name: 'instance-detail', params: tabParams(a.id, 'settings') })
+  }
   if (a.kind === 'update') {
     // Start the download, then watch it where downloads are shown (#177).
     try {
@@ -130,7 +133,12 @@ async function runAttention(item) {
   }
   router.push({ name: 'server-files' })
 }
-const ATTENTION_BUTTON = { restart: 'Restart now', update: 'Update server files', 'server-files': 'Server files' }
+const ATTENTION_BUTTON = {
+  restart: 'Restart now',
+  update: 'Update server files',
+  'server-files': 'Server files',
+  settings: 'Choose a template',
+}
 
 // The ⋯ menu. Bootstrap's dropdown needs its JavaScript, which the app does not ship
 // (#175), so Vue opens and closes it.
@@ -209,7 +217,8 @@ onUnmounted(() => {
             </span>
           </div>
           <div class="d-flex flex-wrap align-items-center gap-2 small text-secondary mt-1">
-            <span>{{ row?.scenario_name || inst.template_name || '—' }}</span>
+            <span v-if="inst.template_id == null" class="text-warning">No template selected</span>
+            <span v-else>{{ row?.scenario_name || inst.template_name || '—' }}</span>
             <StageBadge :stage="inst.template_stage" :version="inst.template_prod_version" />
             <span aria-hidden="true">·</span>
             <span class="text-capitalize">{{ inst.branch }}</span>
@@ -227,7 +236,8 @@ onUnmounted(() => {
           <button
             v-if="!running"
             class="btn btn-success"
-            :disabled="!inst.server_files_ready || !!pending"
+            :disabled="!inst.server_files_ready || inst.template_id == null || !!pending"
+            :title="inst.template_id == null ? 'Choose a template in Settings first' : ''"
             @click="action('start')"
           >Start</button>
           <template v-else>

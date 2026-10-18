@@ -38,6 +38,18 @@ export function attentionItems(servers = [], updates = [], autoDownload = false)
     }
   }
 
+  // Its template was deleted (#223): it cannot start until one is chosen.
+  for (const s of servers) {
+    if (s.template_id === null) {
+      items.push({
+        key: `no-template-${s.id}`,
+        subject: s.name,
+        text: 'No template selected: its template was deleted. Choose one in its Settings to start it again.',
+        action: { kind: 'settings', id: s.id },
+      })
+    }
+  }
+
   // Missing server files block every server on that branch, so say it once per branch.
   const missing = {}
   for (const s of servers) {

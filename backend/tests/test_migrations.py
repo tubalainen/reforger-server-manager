@@ -202,3 +202,54 @@ def test_templates_gain_a_category_column():
     _init_like_startup(engine)
     with Session(engine) as s:
         assert s.get(models.Template, 9).category_id is None
+
+
+def _make_pre223_engine():
+    """A database as v0.75 left it: today's tables, but instance.template_id
+    NOT NULL, with one server on template 9."""
+    import sqlalchemy as sa
+
+    db = Path(tempfile.mkdtemp(prefix="rsm-mig-")) / "manager.db"
+    engine = create_engine(f"sqlite:///{db}", connect_args={"check_same_thread": False})
+    SQLModel.metadata.create_all(
+        engine, tables=[t for t in SQLModel.metadata.sorted_tables if t.name != "instance"]
+    )
+    md = sa.MetaData()
+    models.Template.__table__.to_metadata(md)  # for the foreign key; not created
+    old = models.Instance.__table__.to_metadata(md)
+    old.c.template_id.nullable = False
+    old.create(engine)  # with its indexes, ix_instance_name among them
+    with Session(engine) as s:
+        s.add(models.Template(id=9, name="Tuba", config_json="{}"))
+        s.add(models.Instance(
+            name="Kept", template_id=9, branch="stable",
+            game_port=2001, a2s_port=17777, rcon_port=19999,
+        ))
+        s.commit()
+    return engine
+
+
+def test_template_id_becomes_nullable_and_rows_survive():
+    """#223: deleting a template leaves its servers without one."""
+    engine = _make_pre223_engine()
+    with engine.connect() as conn:
+        assert {r[1]: r[3] for r in conn.execute(text("PRAGMA table_info(instance)"))}["template_id"] == 1
+    _init_like_startup(engine)
+    _init_like_startup(engine)  # and a second startup changes nothing
+    with engine.connect() as conn:
+        assert {r[1]: r[3] for r in conn.execute(text("PRAGMA table_info(instance)"))}["template_id"] == 0
+        tables = {r[0] for r in conn.execute(text("SELECT name FROM sqlite_master WHERE type = 'table'"))}
+        assert not any(t.startswith("instance_legacy") for t in tables)
+    with Session(engine) as s:
+        kept = s.exec(select(models.Instance)).one()
+        assert (kept.name, kept.template_id, kept.game_port) == ("Kept", 9, 2001)
+        kept.template_id = None
+        s.add(kept)
+        s.commit()
+        assert s.get(models.Instance, kept.id).template_id is None
+    # The rebuilt table kept its unique name index.
+    import pytest
+    from sqlalchemy.exc import IntegrityError
+    with Session(engine) as s, pytest.raises(IntegrityError):
+        s.add(models.Instance(name="Kept", branch="stable", game_port=2003, a2s_port=17779, rcon_port=20000))
+        s.commit()
