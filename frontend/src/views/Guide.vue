@@ -367,7 +367,9 @@ const faq = [
        ports and data, and neither can see or touch the other's servers. Whoever manages the
        machine adds one with sudo rsm add-stack NAME on Linux, or with the Windows installer's
        -Stack NAME. Each manager's ports must stay inside its own ranges, which is why a port
-       outside them is refused (System › Ports & firewall lists any that were set before).`,
+       outside them is refused (System › Ports & firewall lists any that were set before).
+       On a VPS each team gets a domain of its own since v0.75.0: sudo rsm add-stack NAME
+       --domain DOMAIN, and one shared Caddy (the edge) serves every team's GUI over HTTPS.`,
   },
   {
     q: 'Why is the web GUI only reachable on localhost?',
@@ -559,6 +561,15 @@ const faq = [
             base instead of rebuilding it from scratch. Editing or deleting the copy never
             touches the original.
           </li>
+          <li class="mb-2">
+            <strong>Deleting a template servers use:</strong> <em>Delete</em> in its
+            <em>⋯</em> menu first names every server on it and says which are running. Once
+            you confirm, those servers are left with <strong>No template selected</strong>,
+            and any that is running is shut down. They keep their saves, backups, ports and
+            settings, and cannot start until you choose a template in their
+            <em>Settings</em>; the Servers page lists each under <em>Needs attention</em>
+            with a <em>Choose a template</em> button.
+          </li>
           <li>
             <strong>Change log:</strong> every template keeps a searchable history of what
             changed and when — mods added or removed, the scenario, and each setting
@@ -654,8 +665,8 @@ const faq = [
             <em>Saves</em> (backups and the saved game on disk) and <em>Settings</em> (name,
             game version, template, ports, restart behaviour and schedule, clearing mods and
             logs, and deleting the server). Anything the server needs from you — a restart
-            after a template edit, missing server files — sits under the header with its
-            button.
+            after a template edit, missing server files, a template to choose after its own
+            was deleted — sits under the header with its button.
           </li>
           <li class="mb-2">
             <strong>Changing settings:</strong> the Settings tab is one form. Edit as much as
