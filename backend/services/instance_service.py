@@ -1051,6 +1051,8 @@ def instance_view(
     containers: dict | None = None,
     docker_up: bool | None = None,
     template_updated_at=None,
+    template_stage: str | None = None,
+    template_prod_version: int | None = None,
 ) -> dict:
     # docker_up/containers are passed in by list_views, which resolves them ONCE for
     # the whole page. This used to ping the daemon per instance, inside a list
@@ -1069,6 +1071,9 @@ def instance_view(
         "branch": inst.branch,
         "template_id": inst.template_id,
         "template_name": template_name,
+        # the template's release stage and version, for the badge (#223)
+        "template_stage": template_stage,
+        "template_prod_version": template_prod_version,
         # True when the template has been edited since this running server
         # started, so its live config is stale until restarted (#116).
         "template_changed": template_changed,
@@ -1565,6 +1570,8 @@ def instances_summary() -> dict:
             "connect": None,
             "template_id": inst.template_id,
             "template_name": template.name if template else None,
+            "template_stage": template.stage if template else None,
+            "template_prod_version": template.prod_version if template else None,
             "scenario_name": template.scenario_name if template else "",
             "max_players": _max_players(template.config_json) if template else None,
             "template_changed": False,
@@ -1631,16 +1638,17 @@ def list_views() -> list[dict]:
     containers = docker_service.instance_containers() if docker_up else {}
     with Session(get_engine()) as session:
         instances = _all_instances(session)
-        templates = session.exec(select(Template)).all()
-        names = {t.id: t.name for t in templates}
-        updated = {t.id: t.updated_at for t in templates}
-        return [
-            instance_view(
-                i, names.get(i.template_id), containers, docker_up,
-                updated.get(i.template_id),
-            )
-            for i in instances
-        ]
+        templates = {t.id: t for t in session.exec(select(Template)).all()}
+        views = []
+        for i in instances:
+            t = templates.get(i.template_id)
+            views.append(instance_view(
+                i, t.name if t else None, containers, docker_up,
+                t.updated_at if t else None,
+                template_stage=t.stage if t else None,
+                template_prod_version=t.prod_version if t else None,
+            ))
+        return views
 
 
 def set_restart_settings(

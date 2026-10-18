@@ -12,7 +12,7 @@ from sqlmodel import Session
 
 import auth
 from models import get_engine
-from services import backup, edit_locks
+from services import backup, edit_locks, stages
 
 router = APIRouter(prefix="/api/backup", tags=["backup"])
 
@@ -85,5 +85,7 @@ async def import_backup(
             )
         except backup.LockedError as exc:
             raise HTTPException(status_code=423, detail=str(exc)) from exc
+        except stages.StageError as exc:  # overwriting a Prod template (#223)
+            raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
         except backup.BackupError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -4,18 +4,19 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import Response
-from pydantic import ValidationError
-from sqlmodel import Session, select
+from pydantic import Field, ValidationError
+from sqlmodel import Session, func, select
 
 import auth
 from mod_templates_api import ModTemplateSpec
-from models import ModTemplate, Template, get_engine
+from models import Instance, ModTemplate, Template, get_engine
 from services import (
     change_log,
     config_validator,
     edit_locks,
     instance_service,
     mod_registry,
+    stages,
     template_service,
 )
 from services.template_service import TemplateSpec
@@ -27,6 +28,15 @@ _LOCKED_DETAIL = (
     "or use 'Clear edit locks' on the Templates page if a lock is stuck."
 )
 
+
+class TemplateSave(TemplateSpec):
+    """What the editor saves: the spec plus an optional change comment (#223)."""
+
+    comment: str = Field("", max_length=stages.NOTE_MAX)
+
+
+def stage_error(exc: stages.StageError) -> HTTPException:
+    return HTTPException(status_code=exc.status, detail=str(exc))
 
 def _client_id(request: Request) -> str:
     """The per-tab id the frontend sends on every request; '' for bare curl."""
@@ -61,7 +71,7 @@ def _drop_mission_header(extras: dict) -> dict:
     return out
 
 
-def _out(t: Template) -> dict:
+def _out(t: Template, session: Session) -> dict:
     spec = template_service.spec_from_config(t.config_json)
     spec["scenario_name"] = t.scenario_name
     spec["scenario_player_count"] = t.scenario_player_count
@@ -88,6 +98,7 @@ def _out(t: Template) -> dict:
         # load without re-deriving "what counts as custom" in JS and drifting from
         # the editor's warnings (#29).
         "extras_paths": config_validator.unknown_paths(json.loads(t.config_json)),
+        **stages.stage_fields(t, stages.names_of(session, Template)),
         "created_at": t.created_at.isoformat(),
         "updated_at": t.updated_at.isoformat(),
     }
@@ -149,9 +160,16 @@ async def list_templates(request: Request, _user: str = Depends(auth.require_ses
     cid = _client_id(request)
     with Session(get_engine()) as session:
         rows = session.exec(select(Template).order_by(Template.name)).all()
+        names = {t.id: t.name for t in rows}
+        servers = dict(session.exec(
+            select(Instance.template_id, func.count()).group_by(Instance.template_id)
+        ).all())
         return [
             {"id": t.id, "name": t.name, "description": t.description,
              "updated_at": t.updated_at.isoformat(),
+             **stages.stage_fields(t, names),
+             # how many servers run it: the release dialog says they move along
+             "server_count": servers.get(t.id, 0),
              # someone else is editing this right now (#102) — the list polls,
              # so the badge and the disabled Edit button stay current
              "locked": edit_locks.held_by_other(t.id, cid),
@@ -185,8 +203,14 @@ async def lock_template(
     if not edit_locks.valid_client_id(cid):
         raise HTTPException(status_code=400, detail="Missing or invalid X-Client-Id header")
     with Session(get_engine()) as session:
-        if not session.get(Template, template_id):
+        t = session.get(Template, template_id)
+        if not t:
             raise HTTPException(status_code=404, detail="Template not found")
+        # Prod is never edited, so it is never "being edited" either (#223).
+        try:
+            stages.ensure_editable(t)
+        except stages.StageError as exc:
+            raise stage_error(exc) from exc
     if not edit_locks.acquire(template_id, cid):
         raise HTTPException(status_code=423, detail=_LOCKED_DETAIL)
     return {"ok": True}
@@ -202,7 +226,7 @@ async def unlock_template(
 
 
 @router.post("", status_code=201)
-async def create_template(spec: TemplateSpec, _user: str = Depends(auth.require_session)):
+async def create_template(spec: TemplateSave, _user: str = Depends(auth.require_session)):
     config_json = template_service.render_config_json(spec)
     with Session(get_engine()) as session:
         if session.exec(select(Template).where(Template.name == spec.name)).first():
@@ -214,6 +238,7 @@ async def create_template(spec: TemplateSpec, _user: str = Depends(auth.require_
             launch_params_json=spec.launch.model_dump_json(),
             mods_json=_mods_json(spec),
             extras_json=json.dumps(spec.extras),
+            stage=stages.TEST,  # new work always starts in Test (#223)
         )
         session.add(t)
         session.flush()  # assign the id before the log references it
@@ -222,7 +247,7 @@ async def create_template(spec: TemplateSpec, _user: str = Depends(auth.require_
         mod_registry.register_mods(session, [m.model_dump() for m in spec.mods])
         session.commit()
         session.refresh(t)
-        return _out(t)
+        return _out(t, session)
 
 
 def _unique_copy_name(session: Session, source_name: str) -> str:
@@ -252,11 +277,16 @@ async def copy_template(template_id: int, _user: str = Depends(auth.require_sess
     Copies the stored config, scenario, launch params, enriched mod list and the
     custom-key overlay verbatim, so the copy is a faithful, independently editable
     twin. It gets its own change log, seeded like any freshly created template.
+
+    A copy always lands in Test, whatever stage the original is in, and remembers
+    the Prod template it stems from so its release can default to "next version
+    of" that one (#223).
     """
     with Session(get_engine()) as session:
         src = session.get(Template, template_id)
         if not src:
             raise HTTPException(status_code=404, detail="Template not found")
+        based_on_id, based_on_version = stages.based_on_for(src)
         t = Template(
             name=_unique_copy_name(session, src.name),
             description=src.description,
@@ -266,13 +296,17 @@ async def copy_template(template_id: int, _user: str = Depends(auth.require_sess
             launch_params_json=src.launch_params_json,
             mods_json=src.mods_json,
             extras_json=src.extras_json,
+            stage=stages.TEST,
+            based_on_id=based_on_id,
+            based_on_version=based_on_version,
         )
         session.add(t)
         session.flush()  # assign the id before the log references it
-        change_log.record_creation(session, t)  # the copy starts its own log (#112)
+        # the copy starts its own log (#112), saying where it came from
+        change_log.record_creation(session, t, stages.copied_from(src))
         session.commit()
         session.refresh(t)
-        return _out(t)
+        return _out(t, session)
 
 
 def _mods_without_scenarios(mods: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -376,13 +410,13 @@ async def get_template(template_id: int, _user: str = Depends(auth.require_sessi
         t = session.get(Template, template_id)
         if not t:
             raise HTTPException(status_code=404, detail="Template not found")
-        return _out(t)
+        return _out(t, session)
 
 
 @router.put("/{template_id}")
 async def update_template(
     template_id: int,
-    spec: TemplateSpec,
+    spec: TemplateSave,
     request: Request,
     _user: str = Depends(auth.require_session),
 ):
@@ -394,6 +428,10 @@ async def update_template(
         t = session.get(Template, template_id)
         if not t:
             raise HTTPException(status_code=404, detail="Template not found")
+        try:
+            stages.ensure_editable(t)  # Prod is locked (#223)
+        except stages.StageError as exc:
+            raise stage_error(exc) from exc
         clash = session.exec(
             select(Template).where(Template.name == spec.name, Template.id != template_id)
         ).first()
@@ -410,13 +448,43 @@ async def update_template(
         t.extras_json = json.dumps(spec.extras)
         t.updated_at = datetime.now(UTC)
         # Log what this edit changed; writes nothing when nothing changed (#112).
-        change_log.record_update(session, t.id, before, change_log.snapshot(t), t.updated_at)
+        # A comment rides along only on a save that changed something (#223).
+        if change_log.record_update(session, t.id, before, change_log.snapshot(t), t.updated_at):
+            change_log.record_lines(session, t.id, stages.note_items(spec.comment), t.updated_at)
         # Keep the Mods Overview registry current with this template's mods (#131).
         mod_registry.register_mods(session, [m.model_dump() for m in spec.mods])
         session.add(t)
         session.commit()
         session.refresh(t)
-        return _out(t)
+        return _out(t, session)
+
+
+@router.post("/{template_id}/promote")
+async def promote_template(
+    template_id: int,
+    body: stages.Promote,
+    request: Request,
+    _user: str = Depends(auth.require_session),
+):
+    """Move a template one stage up: Test → Dev, or release Dev to Prod (#223).
+
+    Releasing into an existing Prod template uses the Dev one up, so the answer
+    is the template it became — its id can differ from the one in the path.
+    """
+    with Session(get_engine()) as session:
+        t = session.get(Template, template_id)
+        if not t:
+            raise HTTPException(status_code=404, detail="Template not found")
+        try:
+            result = stages.promote(
+                session, stages.TEMPLATES, t,
+                note=body.note, into_id=body.into_id, client_id=_client_id(request),
+            )
+        except stages.StageError as exc:
+            raise stage_error(exc) from exc
+        session.commit()
+        session.refresh(result)
+        return _out(result, session)
 
 
 @router.delete("/{template_id}", status_code=204)
@@ -442,6 +510,8 @@ async def delete_template(
                 ),
             )
         change_log.delete_for_template(session, template_id)  # the log dies with it (#112)
+        stages.delete_versions(session, stages.TEMPLATES, template_id)
+        session.flush()
         session.delete(t)
         session.commit()
 

@@ -158,3 +158,30 @@ def test_fallback_rebuild_when_drop_column_unavailable(monkeypatch):
         ))
         s.commit()
         assert s.exec(select(models.Instance)).all()  # insert succeeded
+
+
+def test_existing_templates_and_mod_lists_land_in_dev():
+    """#223: what exists before stages lands in Dev; new rows start in Test."""
+    engine = _make_pre88_engine()
+    with engine.connect() as conn:
+        conn.execute(text(
+            "CREATE TABLE modtemplate (id INTEGER PRIMARY KEY, name VARCHAR NOT NULL UNIQUE,"
+            " description VARCHAR NOT NULL DEFAULT '', mods_json VARCHAR NOT NULL DEFAULT '[]',"
+            " created_at DATETIME, updated_at DATETIME)"
+        ))
+        conn.execute(text(
+            "INSERT INTO modtemplate (id, name, created_at, updated_at)"
+            " VALUES (3, 'Pack', '2026-07-19 10:00:00', '2026-07-19 10:00:00')"
+        ))
+        conn.commit()
+    _init_like_startup(engine)
+    _init_like_startup(engine)  # and a second startup changes nothing
+
+    with Session(engine) as s:
+        old = s.get(models.Template, 9)
+        pack = s.get(models.ModTemplate, 3)
+        assert (old.stage, old.prod_version, old.based_on_id) == ("dev", None, None)
+        assert (pack.stage, pack.prod_version) == ("dev", None)
+        s.add(models.Template(name="Fresh", config_json="{}"))
+        s.commit()
+        assert s.exec(select(models.Template).where(models.Template.name == "Fresh")).one().stage == "test"

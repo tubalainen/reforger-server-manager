@@ -30,6 +30,9 @@ Key template capabilities include:
 - Create reusable mod lists and apply them to server templates.
 - Track known mods, dependency relationships, usage, update status, and local Workshop storage.
 - Keep template change logs and see which servers still use an older revision.
+- Move templates and mod lists through Test, Dev and Prod. Prod is locked; each release is
+  a version (v1, v2, …), and a changed copy is released as the next version of the original.
+  Saves in Dev carry a comment in the change log.
 
 ## Server operations
 

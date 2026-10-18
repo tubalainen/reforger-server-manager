@@ -8,6 +8,8 @@ import CollapsibleCard from '../components/CollapsibleCard.vue'
 import HelpTip from '../components/HelpTip.vue'
 import MenuButton from '../components/MenuButton.vue'
 import ModIdLink from '../components/ModIdLink.vue'
+import SaveCommentDialog from '../components/SaveCommentDialog.vue'
+import StageBadge from '../components/StageBadge.vue'
 
 // CodeMirror is ~130 KB gzipped and only needed once someone clicks "Edit JSON",
 // which most users never will — so it gets its own chunk instead of riding along
@@ -73,18 +75,59 @@ const saving = ref(false)
 const locked = ref(false)
 let lockTimer = null
 
+// ---- Release stage (#223) ---------------------------------------------------
+// A Prod template opens read-only: it is never edited, only copied. `readOnly`
+// is what every input and Save button goes by — someone else's edit lock makes
+// the page read-only in just the same way.
+const stage = ref('')
+const prodVersion = ref(null)
+const isProd = computed(() => stage.value === 'prod')
+const readOnly = computed(() => locked.value || isProd.value)
+const goneNotice = ref('')
+
 async function heartbeatLock() {
   try {
     await api(`/api/templates/${props.id}/lock`, { method: 'POST' })
     locked.value = false
   } catch (e) {
     if (e.status === 423) locked.value = true
+    // Released to Prod (409) or released into another template (404) from
+    // somewhere else: stop editing, say why.
+    else if (e.status === 409) {
+      stage.value = 'prod'
+      stopLock()
+      goneNotice.value = 'This template was released to Prod in another session, so it is read-only now.'
+    } else if (e.status === 404) {
+      locked.value = true
+      stopLock()
+      goneNotice.value = 'This template no longer exists: it was released into a Prod template, or deleted, in another session.'
+    }
     // anything else (network blip): keep the current state, next beat retries
   }
 }
 
+function stopLock() {
+  clearInterval(lockTimer)
+  lockTimer = null
+}
+
+// Copy a Prod template into Test and open the copy (#223).
+const copyingToTest = ref(false)
+async function copyToTest() {
+  copyingToTest.value = true
+  error.value = ''
+  try {
+    const created = await api(`/api/templates/${props.id}/copy`, { method: 'POST' })
+    router.push({ name: 'template-edit', params: { id: created.id } })
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    copyingToTest.value = false
+  }
+}
+
 function releaseLock() {
-  if (!editing.value || locked.value) return
+  if (!editing.value || readOnly.value) return
   // keepalive lets the request outlive a closing tab; best-effort by design
   fetch(`/api/templates/${props.id}/lock`, {
     method: 'DELETE',
@@ -1365,19 +1408,34 @@ async function importConfigFile(event) {
 const savedFlash = ref(false)
 let savedFlashTimer = null
 
-async function persistTemplate() {
+async function persistTemplate(comment = '') {
   if (editing.value) {
-    await api(`/api/templates/${props.id}`, { method: 'PUT', body: spec })
+    await api(`/api/templates/${props.id}`, { method: 'PUT', body: { ...spec, comment } })
   } else {
     await api('/api/templates', { method: 'POST', body: spec })
   }
 }
 
-async function save() {
+// A Dev template asks what changed before it saves (#223); Test just saves.
+const commentFor = ref(null) // 'save' | 'stay' while the comment dialog is open
+function requestSave(kind) {
+  if (stage.value === 'dev') {
+    commentFor.value = kind
+    return
+  }
+  return kind === 'save' ? save() : saveAndStay()
+}
+async function saveWithComment(comment) {
+  const kind = commentFor.value
+  commentFor.value = null
+  return kind === 'save' ? save(comment) : saveAndStay(comment)
+}
+
+async function save(comment = '') {
   error.value = ''
   saving.value = true
   try {
-    await persistTemplate()
+    await persistTemplate(comment)
     router.push({ name: 'templates' })
   } catch (e) {
     error.value = e.message
@@ -1390,11 +1448,11 @@ async function save() {
 // setting change doesn't need a trip to step 4. Only offered while editing —
 // a new template can't be saved before it's named, and that happens on step 4,
 // where the classic save-and-return button already is.
-async function saveAndStay() {
+async function saveAndStay(comment = '') {
   error.value = ''
   saving.value = true
   try {
-    await persistTemplate()
+    await persistTemplate(comment)
     savedFlash.value = true
     clearTimeout(savedFlashTimer)
     savedFlashTimer = setTimeout(() => (savedFlash.value = false), 2500)
@@ -1422,11 +1480,16 @@ const canNext = computed(() => {
 
 onMounted(async () => {
   if (editing.value) {
-    await heartbeatLock()
-    lockTimer = setInterval(heartbeatLock, 30000)
-    window.addEventListener('pagehide', releaseLock)
     try {
+      // Load first: a Prod template is read-only and takes no edit lock (#223).
       const t = await api(`/api/templates/${props.id}`)
+      stage.value = t.stage || ''
+      prodVersion.value = t.prod_version ?? null
+      if (!isProd.value) {
+        await heartbeatLock()
+        lockTimer = setInterval(heartbeatLock, 30000)
+        window.addEventListener('pagehide', releaseLock)
+      }
       const launchDefaults = { ...spec.launch }
       Object.assign(spec, t.spec)
       // merge launch onto defaults so older templates (empty launch) keep keys
@@ -1451,7 +1514,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   clearTimeout(savedFlashTimer)
-  clearInterval(lockTimer)
+  stopLock()
   window.removeEventListener('pagehide', releaseLock)
   releaseLock()
 })
@@ -1462,7 +1525,10 @@ onBeforeUnmount(() => {
     <!-- Header: what is being edited. Saving lives in the action bar under the step. -->
     <div class="d-flex flex-wrap align-items-center gap-3 mb-3">
       <div class="me-auto" style="min-width: 0">
-        <h1 class="h3 mb-0">{{ editing ? 'Edit template' : 'New template' }}</h1>
+        <h1 class="h3 mb-0">
+          {{ isProd ? 'View template' : editing ? 'Edit template' : 'New template' }}
+          <StageBadge :stage="stage" :version="prodVersion" class="fs-6 align-middle ms-1" />
+        </h1>
         <div class="small text-secondary text-truncate">
           {{ spec.name || (editing ? '' : 'Not named yet') }}<template
             v-if="spec.scenario_id"
@@ -1470,11 +1536,24 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <button class="btn btn-outline-secondary" @click="router.push({ name: 'templates' })">
-        Cancel
+        {{ isProd ? 'Back' : 'Cancel' }}
       </button>
     </div>
 
-    <div v-if="locked" class="alert alert-warning py-2">
+    <div v-if="goneNotice" class="alert alert-warning py-2">{{ goneNotice }}</div>
+    <div
+      v-else-if="isProd"
+      class="alert alert-success py-2 d-flex flex-wrap align-items-center justify-content-between gap-2"
+    >
+      <span>
+        This template is in Prod, so it is locked: you can look, not change. To change it,
+        copy it to Test, take the copy through Dev and release it as the next version.
+      </span>
+      <button class="btn btn-sm btn-success" :disabled="copyingToTest" @click="copyToTest">
+        {{ copyingToTest ? 'Copying…' : 'Copy to Test' }}
+      </button>
+    </div>
+    <div v-else-if="locked" class="alert alert-warning py-2">
       🔒 This template is being edited in another session, so Save is disabled here.
       You can still look around — this page unlocks by itself when the other editor leaves.
     </div>
@@ -1502,6 +1581,7 @@ onBeforeUnmount(() => {
       <div class="col-lg-7">
         <!-- STEP 1: SCENARIO -->
         <div v-show="step === 1">
+          <fieldset :disabled="readOnly">
           <!-- Import an existing config.json to pre-fill the wizard (issue #35) -->
           <div v-if="!editing" class="card bg-body-tertiary mb-3">
             <div class="card-body py-2">
@@ -1640,10 +1720,12 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </div>
+          </fieldset>
         </div>
 
         <!-- STEP 2: MODS -->
         <div v-show="step === 2">
+          <fieldset :disabled="readOnly">
           <p class="text-secondary">
             Add mods on top of the scenario.
             <HelpTip label="How mods and their badges work">
@@ -1848,7 +1930,7 @@ onBeforeUnmount(() => {
                 'opacity-50': drag.from === i,
                 'border-primary border-2': drag.over === i && drag.from !== i && drag.from >= 0,
               }"
-              draggable="true"
+              :draggable="!readOnly"
               @dragstart="onDragStart(i, $event)"
               @dragover="onDragOver(i, $event)"
               @drop="onDrop(i)"
@@ -1916,6 +1998,7 @@ onBeforeUnmount(() => {
               ></span>
             </li>
           </ul>
+          </fieldset>
         </div>
 
         <!-- Load a saved mod template (#166) -->
@@ -2183,6 +2266,7 @@ onBeforeUnmount(() => {
 
         <!-- STEP 3: SETTINGS -->
         <div v-show="step === 3">
+          <fieldset :disabled="readOnly">
           <!-- Say it out loud when picking a scenario moved a number the user
                may have set themselves (#65) — never change it silently. -->
           <div v-if="maxPlayersNotice" class="alert alert-info py-2 small">
@@ -2269,8 +2353,10 @@ onBeforeUnmount(() => {
           </div>
             </div>
           </div>
+          </fieldset>
 
-          <CollapsibleCard v-model="showAdvanced" title="Advanced settings" class="mt-3">
+          <!-- Each card locks its own body, so a read-only one still folds open (#223) -->
+          <CollapsibleCard v-model="showAdvanced" title="Advanced settings" class="mt-3" :disabled="readOnly">
             <div class="row g-3">
               <div class="col-md-4">
                 <label class="form-label">Min grass distance <small class="text-secondary">(≥ 50)</small></label>
@@ -2419,7 +2505,7 @@ onBeforeUnmount(() => {
             </div>
           </CollapsibleCard>
 
-          <CollapsibleCard v-model="showLaunch" title="Engine launch parameters" class="mt-3">
+          <CollapsibleCard v-model="showLaunch" title="Engine launch parameters" class="mt-3" :disabled="readOnly">
             <div>
               <p class="text-secondary small">
                 Command-line parameters passed to the server engine (blank = engine default).
@@ -2459,7 +2545,7 @@ onBeforeUnmount(() => {
             </div>
           </CollapsibleCard>
 
-          <CollapsibleCard v-model="showAccess" title="Player access" :summary="accessSummary"
+          <CollapsibleCard v-model="showAccess" title="Player access" :summary="accessSummary" :disabled="readOnly"
             :summary-class="spec.player_whitelist.length ? 'text-warning-emphasis' : 'text-secondary'" class="mt-3">
             <div>
               <p class="small text-secondary">
@@ -2486,10 +2572,10 @@ onBeforeUnmount(() => {
                     v-model="adminInput"
                     class="form-control"
                     placeholder="76561198000000000 or 7f9b0a4c-1d2e-4f6a-8b3c-9d0e1f2a3b4c"
-                    :disabled="locked"
+                    :disabled="readOnly"
                     @keyup.enter="addAdminIds"
                   />
-                  <button class="btn btn-outline-primary" :disabled="locked || !adminInput.trim()" @click="addAdminIds">
+                  <button class="btn btn-outline-primary" :disabled="readOnly || !adminInput.trim()" @click="addAdminIds">
                     Add
                   </button>
                 </div>
@@ -2512,7 +2598,7 @@ onBeforeUnmount(() => {
                       class="btn-close btn-close-white"
                       style="font-size: 0.55rem"
                       aria-label="Remove admin"
-                      :disabled="locked"
+                      :disabled="readOnly"
                       @click="dropAdmin(id)"
                     ></button>
                   </span>
@@ -2536,7 +2622,7 @@ onBeforeUnmount(() => {
                       v-model="whitelistInput.id"
                       class="form-control"
                       placeholder="Identity id"
-                      :disabled="locked"
+                      :disabled="readOnly"
                       @keyup.enter="addWhitelistPlayers"
                     />
                   </div>
@@ -2545,14 +2631,14 @@ onBeforeUnmount(() => {
                       v-model="whitelistInput.name"
                       class="form-control"
                       placeholder="Name (optional)"
-                      :disabled="locked"
+                      :disabled="readOnly"
                       @keyup.enter="addWhitelistPlayers"
                     />
                   </div>
                   <div class="col-md-2 d-grid">
                     <button
                       class="btn btn-outline-primary"
-                      :disabled="locked || !whitelistInput.id.trim()"
+                      :disabled="readOnly || !whitelistInput.id.trim()"
                       @click="addWhitelistPlayers"
                     >
                       Add
@@ -2578,7 +2664,7 @@ onBeforeUnmount(() => {
                     </span>
                     <button
                       class="btn btn-sm btn-outline-secondary"
-                      :disabled="locked"
+                      :disabled="readOnly"
                       @click="dropWhitelistPlayer(p.identityId)"
                     >
                       Remove
@@ -2601,7 +2687,7 @@ onBeforeUnmount(() => {
                       v-model="banInput.id"
                       class="form-control"
                       placeholder="Identity id"
-                      :disabled="locked"
+                      :disabled="readOnly"
                       @keyup.enter="addBannedPlayers"
                     />
                   </div>
@@ -2610,7 +2696,7 @@ onBeforeUnmount(() => {
                       v-model="banInput.name"
                       class="form-control"
                       placeholder="Name (optional)"
-                      :disabled="locked"
+                      :disabled="readOnly"
                       @keyup.enter="addBannedPlayers"
                     />
                   </div>
@@ -2619,14 +2705,14 @@ onBeforeUnmount(() => {
                       v-model="banInput.reason"
                       class="form-control"
                       placeholder="Reason (optional)"
-                      :disabled="locked"
+                      :disabled="readOnly"
                       @keyup.enter="addBannedPlayers"
                     />
                   </div>
                   <div class="col-md-2 d-grid">
                     <button
                       class="btn btn-outline-danger"
-                      :disabled="locked || !banInput.id.trim()"
+                      :disabled="readOnly || !banInput.id.trim()"
                       @click="addBannedPlayers"
                     >
                       Ban
@@ -2647,7 +2733,7 @@ onBeforeUnmount(() => {
                     </span>
                     <button
                       class="btn btn-sm btn-outline-secondary"
-                      :disabled="locked"
+                      :disabled="readOnly"
                       @click="dropBannedPlayer(p.identityId)"
                     >
                       Unban
@@ -2659,7 +2745,7 @@ onBeforeUnmount(() => {
             </div>
           </CollapsibleCard>
 
-          <CollapsibleCard v-model="showMissionHeader" title="Mission header"
+          <CollapsibleCard v-model="showMissionHeader" title="Mission header" :disabled="readOnly"
             :summary="missionHeaderCount ? `${missionHeaderCount} override${missionHeaderCount === 1 ? '' : 's'}` : ''" class="mt-3">
             <div>
               <p class="small text-secondary">
@@ -2689,7 +2775,7 @@ onBeforeUnmount(() => {
                     JSON
                   </button>
                 </div>
-                <button class="btn btn-sm btn-outline-primary" :disabled="locked" @click="openPaste">
+                <button class="btn btn-sm btn-outline-primary" :disabled="readOnly" @click="openPaste">
                   Paste from AMP or a config…
                 </button>
               </div>
@@ -2704,7 +2790,7 @@ onBeforeUnmount(() => {
                     <input
                       v-model="row.key"
                       class="form-control form-control-sm font-monospace"
-                      :disabled="locked"
+                      :disabled="readOnly"
                       @change="commitHeaderRows"
                     />
                     <div v-if="describeRow(row.key)" class="form-text">
@@ -2718,7 +2804,7 @@ onBeforeUnmount(() => {
                     <select
                       class="form-select form-select-sm"
                       :value="row.kind"
-                      :disabled="locked || row.kind === 'json'"
+                      :disabled="readOnly || row.kind === 'json'"
                       @change="changeHeaderRowKind(row, $event.target.value)"
                     >
                       <option value="number">Number</option>
@@ -2734,14 +2820,14 @@ onBeforeUnmount(() => {
                       type="number"
                       step="any"
                       class="form-control form-control-sm"
-                      :disabled="locked"
+                      :disabled="readOnly"
                       @change="commitHeaderRows"
                     />
                     <input
                       v-else-if="row.kind === 'string'"
                       v-model="row.value"
                       class="form-control form-control-sm"
-                      :disabled="locked"
+                      :disabled="readOnly"
                       @change="commitHeaderRows"
                     />
                     <div v-else-if="row.kind === 'boolean'" class="form-check mt-1">
@@ -2750,7 +2836,7 @@ onBeforeUnmount(() => {
                         v-model="row.value"
                         class="form-check-input"
                         type="checkbox"
-                        :disabled="locked"
+                        :disabled="readOnly"
                         @change="commitHeaderRows"
                       />
                       <label :for="'mh-' + i" class="form-check-label small">
@@ -2771,7 +2857,7 @@ onBeforeUnmount(() => {
                   <div class="col-md-1 d-grid">
                     <button
                       class="btn btn-sm btn-outline-secondary"
-                      :disabled="locked"
+                      :disabled="readOnly"
                       title="Remove this override"
                       @click="dropHeaderRow(i)"
                     >
@@ -2795,7 +2881,7 @@ onBeforeUnmount(() => {
                     v-model="headerPick.query"
                     class="form-control form-control-sm"
                     placeholder="Add a setting — search, or type any name"
-                    :disabled="locked"
+                    :disabled="readOnly"
                     @focus="headerPick.open = true"
                     @keyup.enter="addHeaderRow(headerMatches[0], headerPick.query)"
                   />
@@ -2844,7 +2930,7 @@ onBeforeUnmount(() => {
                   {{ headerJsonError }}
                 </div>
                 <div class="d-flex gap-2 mt-2">
-                  <button class="btn btn-sm btn-primary" :disabled="locked" @click="applyHeaderJson">
+                  <button class="btn btn-sm btn-primary" :disabled="readOnly" @click="applyHeaderJson">
                     Apply
                   </button>
                   <button class="btn btn-sm btn-outline-secondary" @click="headerView = 'rows'">
@@ -2862,6 +2948,7 @@ onBeforeUnmount(() => {
 
         <!-- STEP 4: SAVE -->
         <div v-show="step === 4">
+          <fieldset :disabled="readOnly">
           <div class="mb-3">
             <label class="form-label">Template name</label>
             <input v-model="spec.name" class="form-control" placeholder="e.g. Conflict Everon (stable)" />
@@ -2870,6 +2957,10 @@ onBeforeUnmount(() => {
             <label class="form-label">Description <small class="text-secondary">(optional)</small></label>
             <input v-model="spec.description" class="form-control" />
           </div>
+          <p v-if="!editing" class="small text-secondary">
+            A new template starts in <strong>Test</strong>, where it is free to change.
+          </p>
+          </fieldset>
         </div>
 
         <!-- One bar for moving and saving, under whichever step is open (#189) -->
@@ -2883,11 +2974,11 @@ onBeforeUnmount(() => {
               <span v-else class="rsm-bar-step">Step {{ step }} of {{ steps.length }} · {{ steps[step - 1] }}</span>
             </span>
             <button
-              v-if="editing && step > 1 && step < 4"
+              v-if="editing && step > 1 && step < 4 && !isProd"
               class="btn btn-outline-primary"
-              :disabled="saving || locked"
+              :disabled="saving || readOnly"
               title="Save the template and keep editing"
-              @click="saveAndStay"
+              @click="requestSave('stay')"
             >
               {{ saving ? 'Saving…' : 'Save changes' }}
             </button>
@@ -2896,7 +2987,12 @@ onBeforeUnmount(() => {
             </button>
             <template v-else>
               <button class="btn btn-outline-secondary" @click="downloadJson">Download config.json</button>
-              <button class="btn btn-primary" :disabled="!canNext || saving || locked" @click="save">
+              <button
+                v-if="!isProd"
+                class="btn btn-primary"
+                :disabled="!canNext || saving || readOnly"
+                @click="requestSave('save')"
+              >
                 {{ saving ? 'Saving…' : editing ? 'Save changes' : 'Save template' }}
               </button>
             </template>
@@ -2933,7 +3029,7 @@ onBeforeUnmount(() => {
               <button
                 v-else
                 class="btn btn-sm btn-outline-primary"
-                :disabled="!spec.scenario_id"
+                :disabled="!spec.scenario_id || readOnly"
                 title="Edit the raw config.json — including keys this GUI doesn't manage"
                 @click="startRawEdit"
               >
@@ -3112,6 +3208,13 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
+    <!-- A Dev save asks what changed, for the change log (#223) -->
+    <SaveCommentDialog
+      v-if="commentFor"
+      :busy="saving"
+      @save="saveWithComment"
+      @cancel="commentFor = null"
+    />
   </div>
 </template>
 

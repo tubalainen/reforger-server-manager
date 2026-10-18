@@ -15,7 +15,7 @@ from sqlmodel import Session, select
 
 import auth
 from models import ModTemplate, get_engine
-from services import change_log, mod_registry
+from services import change_log, mod_registry, stages
 from services.template_service import ModListEntry
 from services.workshop_service import normalize_asset_id
 
@@ -56,6 +56,16 @@ class ModTemplateSpec(BaseModel):
         return out
 
 
+class ModTemplateSave(ModTemplateSpec):
+    """What the editor saves: the list plus an optional change comment (#223)."""
+
+    comment: str = Field("", max_length=stages.NOTE_MAX)
+
+
+def _stage_error(exc: stages.StageError) -> HTTPException:
+    return HTTPException(status_code=exc.status, detail=str(exc))
+
+
 def _mods(mt: ModTemplate) -> list[dict]:
     try:
         mods = json.loads(mt.mods_json or "[]")
@@ -64,18 +74,19 @@ def _mods(mt: ModTemplate) -> list[dict]:
     return [m for m in mods if isinstance(m, dict) and m.get("modId")]
 
 
-def _out(mt: ModTemplate) -> dict:
+def _out(mt: ModTemplate, session: Session) -> dict:
     return {
         "id": mt.id,
         "name": mt.name,
         "description": mt.description,
         "mods": _mods(mt),
+        **stages.stage_fields(mt, stages.names_of(session, ModTemplate)),
         "created_at": mt.created_at.isoformat(),
         "updated_at": mt.updated_at.isoformat(),
     }
 
 
-def _summary(mt: ModTemplate) -> dict:
+def _summary(mt: ModTemplate, names: dict[int, str]) -> dict:
     mods = _mods(mt)
     return {
         "id": mt.id,
@@ -83,6 +94,7 @@ def _summary(mt: ModTemplate) -> dict:
         "description": mt.description,
         "mod_count": len(mods),
         "locked_count": sum(1 for m in mods if m.get("version")),
+        **stages.stage_fields(mt, names),
         "updated_at": mt.updated_at.isoformat(),
     }
 
@@ -105,17 +117,19 @@ def _require_free_name(session: Session, name: str, exclude_id: int | None = Non
 async def list_mod_templates(_user: str = Depends(auth.require_session)):
     with Session(get_engine()) as session:
         rows = session.exec(select(ModTemplate).order_by(ModTemplate.name)).all()
-        return [_summary(mt) for mt in rows]
+        names = {mt.id: mt.name for mt in rows}
+        return [_summary(mt, names) for mt in rows]
 
 
 @router.post("", status_code=201)
 async def create_mod_template(
-    spec: ModTemplateSpec, _user: str = Depends(auth.require_session)
+    spec: ModTemplateSave, _user: str = Depends(auth.require_session)
 ):
     with Session(get_engine()) as session:
         _require_free_name(session, spec.name)
         mt = ModTemplate(
-            name=spec.name, description=spec.description, mods_json=_mods_json(spec)
+            name=spec.name, description=spec.description, mods_json=_mods_json(spec),
+            stage=stages.TEST,  # new work always starts in Test (#223)
         )
         session.add(mt)
         session.flush()  # assign the id before the log references it
@@ -125,7 +139,71 @@ async def create_mod_template(
         mod_registry.register_mods(session, [m.model_dump() for m in spec.mods])
         session.commit()
         session.refresh(mt)
-        return _out(mt)
+        return _out(mt, session)
+
+
+def _unique_copy_name(session: Session, source_name: str) -> str:
+    """A free "Copy of …" name: "Copy of X", then "Copy of X (2)", … (#223)."""
+    taken = set(session.exec(select(ModTemplate.name)).all())
+    n = 1
+    while True:
+        suffix = "" if n == 1 else f" ({n})"
+        candidate = f"Copy of {source_name}"[: 100 - len(suffix)] + suffix
+        if candidate not in taken:
+            return candidate
+        n += 1
+
+
+@router.post("/{mod_template_id}/copy", status_code=201)
+async def copy_mod_template(
+    mod_template_id: int, _user: str = Depends(auth.require_session)
+):
+    """Duplicate a mod list into Test under a fresh "Copy of …" name (#223).
+
+    The copy remembers the Prod list it stems from, so its release can default
+    to "next version of" that one.
+    """
+    with Session(get_engine()) as session:
+        src = session.get(ModTemplate, mod_template_id)
+        if not src:
+            raise HTTPException(status_code=404, detail="Mod list not found")
+        based_on_id, based_on_version = stages.based_on_for(src)
+        mt = ModTemplate(
+            name=_unique_copy_name(session, src.name),
+            description=src.description,
+            mods_json=src.mods_json,
+            stage=stages.TEST,
+            based_on_id=based_on_id,
+            based_on_version=based_on_version,
+        )
+        session.add(mt)
+        session.flush()
+        change_log.record_mod_template_creation(session, mt, stages.copied_from(src))
+        session.commit()
+        session.refresh(mt)
+        return _out(mt, session)
+
+
+@router.post("/{mod_template_id}/promote")
+async def promote_mod_template(
+    mod_template_id: int,
+    body: stages.Promote,
+    _user: str = Depends(auth.require_session),
+):
+    """Move a mod list one stage up: Test → Dev, or release Dev to Prod (#223)."""
+    with Session(get_engine()) as session:
+        mt = session.get(ModTemplate, mod_template_id)
+        if not mt:
+            raise HTTPException(status_code=404, detail="Mod list not found")
+        try:
+            result = stages.promote(
+                session, stages.MOD_LISTS, mt, note=body.note, into_id=body.into_id
+            )
+        except stages.StageError as exc:
+            raise _stage_error(exc) from exc
+        session.commit()
+        session.refresh(result)
+        return _out(result, session)
 
 
 @router.get("/{mod_template_id}")
@@ -136,33 +214,40 @@ async def get_mod_template(
         mt = session.get(ModTemplate, mod_template_id)
         if not mt:
             raise HTTPException(status_code=404, detail="Mod list not found")
-        return _out(mt)
+        return _out(mt, session)
 
 
 @router.put("/{mod_template_id}")
 async def update_mod_template(
     mod_template_id: int,
-    spec: ModTemplateSpec,
+    spec: ModTemplateSave,
     _user: str = Depends(auth.require_session),
 ):
     with Session(get_engine()) as session:
         mt = session.get(ModTemplate, mod_template_id)
         if not mt:
             raise HTTPException(status_code=404, detail="Mod list not found")
+        try:
+            stages.ensure_editable(mt)  # Prod is locked (#223)
+        except stages.StageError as exc:
+            raise _stage_error(exc) from exc
         _require_free_name(session, spec.name, exclude_id=mod_template_id)
         before = change_log.mod_template_snapshot(mt)  # capture before mutating
         mt.name = spec.name
         mt.description = spec.description
         mt.mods_json = _mods_json(spec)
         mt.updated_at = datetime.now(UTC)
-        change_log.record_mod_template_update(
+        if change_log.record_mod_template_update(
             session, mt.id, before, change_log.mod_template_snapshot(mt), mt.updated_at
-        )
+        ):
+            change_log.record_mod_template_lines(
+                session, mt.id, stages.note_items(spec.comment), mt.updated_at
+            )
         mod_registry.register_mods(session, [m.model_dump() for m in spec.mods])
         session.add(mt)
         session.commit()
         session.refresh(mt)
-        return _out(mt)
+        return _out(mt, session)
 
 
 @router.delete("/{mod_template_id}", status_code=204)
@@ -177,6 +262,8 @@ async def delete_mod_template(
         if not mt:
             raise HTTPException(status_code=404, detail="Mod list not found")
         change_log.delete_for_mod_template(session, mod_template_id)
+        stages.delete_versions(session, stages.MOD_LISTS, mod_template_id)
+        session.flush()
         session.delete(mt)
         session.commit()
 

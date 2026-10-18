@@ -250,7 +250,10 @@ onMounted(load)
         <div class="ms-auto d-flex align-items-center gap-2">
           <select v-model="addTarget" class="form-select form-select-sm" style="width: auto">
             <option value="">Add selected to template…</option>
-            <option v-for="t in templates" :key="t.id" :value="t.id">{{ t.name }}</option>
+            <!-- Prod templates are locked (#223): only Test and Dev can take mods -->
+            <option v-for="t in templates.filter((x) => x.stage !== 'prod')" :key="t.id" :value="t.id">
+              {{ t.name }}
+            </option>
           </select>
           <button
             class="btn btn-sm btn-primary"

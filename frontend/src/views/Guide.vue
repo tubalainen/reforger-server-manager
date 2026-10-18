@@ -514,18 +514,39 @@ const faq = [
             handy for moving from a hand-managed server or another tool.
           </li>
           <li class="mb-2">
-            <strong>Copy:</strong> the <strong>Copy</strong> button on the templates list
-            duplicates a template into a new "Copy of…" one and opens it for editing — start
+            <strong>Test, Dev and Prod:</strong> every template is in one of three stages,
+            and the list groups them that way. A new template starts in
+            <strong>Test</strong>, where it is free to change. <em>To Dev</em> moves it on
+            to <strong>Dev</strong>, for testing on real servers: still editable, but every
+            save asks for a short comment for the change log. <em>Release…</em> puts it in
+            <strong>Prod</strong>, the golden copy: locked, so it can be viewed, copied and
+            deleted (deleting asks twice), never changed. Nothing ever goes back a stage.
+            Each release to Prod is a version: v1, v2 and so on. Servers can run a template
+            of any stage, and show its stage beside the template's name.
+          </li>
+          <li class="mb-2">
+            <strong>Changing a Prod template:</strong> copy it (<em>Copy to Test</em> in its
+            <em>⋯</em> menu or on its page). The copy lands in Test and remembers where it
+            came from. Take it through Dev, then <em>Release…</em> it as the
+            <em>next version of</em> the original. The original keeps its name and becomes
+            v2, the copy is used up, and its change log moves over. Servers on the original
+            pick the new version up on their next restart. <em>+ New template › Based on a
+            Prod template…</em> starts the same way.
+          </li>
+          <li class="mb-2">
+            <strong>Copy:</strong> <em>Copy to Test</em> in a template's <em>⋯</em> menu
+            duplicates it into a new "Copy of…" one in Test and opens it for editing — start
             a variant (a different scenario, an extra mod, tighter settings) from a known-good
-            base instead of rebuilding it from scratch. The copy is fully independent: editing
-            or deleting it never touches the original.
+            base instead of rebuilding it from scratch. Editing or deleting the copy never
+            touches the original.
           </li>
           <li>
             <strong>Change log:</strong> every template keeps a searchable history of what
             changed and when — mods added or removed, the scenario, and each setting
-            (old&nbsp;→&nbsp;new) — opened from the <strong>Change log</strong> button on the
-            templates list, newest first. It is read-only (it can't be edited or deleted) and
-            is removed only when the template is; times are shown in the server's timezone.
+            (old&nbsp;→&nbsp;new), with the comment given on each Dev save and each release —
+            opened from <strong>Change log</strong> in the template's <em>⋯</em> menu, newest
+            first. It is read-only (it can't be edited or deleted) and is removed only when the
+            template is; times are shown in the server's timezone.
           </li>
         </ul>
       </div>
@@ -553,12 +574,17 @@ const faq = [
           </li>
           <li class="mb-2">
             <strong>Or take it from a server template:</strong> happy with a template's mods?
-            Press <em>To mod list</em> on its row under
+            Choose <em>To mod list</em> in its <em>⋯</em> menu under
             <router-link :to="{ name: 'templates' }">Library › Server templates</router-link>. You get a
             new mod list named "&lt;template&gt; mods" with the same mods in the same order — minus
             the scenario's own mod, any other mod that carries scenarios, and the dependencies
             only those needed. It opens in the editor so you can rename or trim it; the template
             itself is not changed.
+          </li>
+          <li class="mb-2">
+            <strong>Test, Dev and Prod:</strong> mod lists move through the same three
+            stages as server templates. A Prod mod list is locked; copy it to change it,
+            and release the copy as its next version.
           </li>
           <li class="mb-2">
             <strong>Load it into a server template:</strong> open a template's

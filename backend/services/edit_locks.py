@@ -77,6 +77,12 @@ def release(template_id: int, client_id: str) -> None:
         del _locks[template_id]
 
 
+def drop(template_id: int) -> None:
+    """Forget a template's lock whoever holds it — for a template that no longer
+    exists as an editable thing (released to Prod, or merged into one, #223)."""
+    _locks.pop(template_id, None)
+
+
 def clear_all() -> int:
     """Force-release every lock (the GUI's reset button). Returns how many.
 

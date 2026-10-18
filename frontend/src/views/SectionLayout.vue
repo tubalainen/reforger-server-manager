@@ -59,5 +59,7 @@ onMounted(async () => {
       >v{{ version.version }} ↗</a>
     </nav>
   </div>
-  <router-view />
+  <!-- Keyed by path so going from one template to another (Copy to Test from a
+       Prod template's page, #223) opens the other one instead of reusing the page. -->
+  <router-view :key="route.path" />
 </template>

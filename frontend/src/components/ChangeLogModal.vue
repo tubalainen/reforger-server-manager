@@ -5,6 +5,7 @@
 // save event, the search box, and the "this can't be edited" promise.
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../api'
+import { categoryBadge as catBadge, filterEntries, groupEntries } from '../changelog'
 
 const props = defineProps({
   url: { type: String, required: true },   // e.g. /api/templates/7/changelog
@@ -17,34 +18,9 @@ const loading = ref(true)
 const error = ref('')
 const search = ref('')
 
-// Client-side search: the log is already loaded, so filtering is instant.
-const filtered = computed(() => {
-  const q = search.value.trim().toLowerCase()
-  if (!q) return entries.value
-  return entries.value.filter((e) => e.summary.toLowerCase().includes(q))
-})
-
-// Group consecutive lines from the same save (same timestamp) under one header.
-// Entries arrive newest-first with within-event order preserved, so same-stamp
-// rows stay contiguous.
-const groups = computed(() => {
-  const out = []
-  for (const e of filtered.value) {
-    const last = out[out.length - 1]
-    if (last && last.at === e.changed_at) last.items.push(e)
-    // `display` is pre-formatted server-side in the manager's timezone (#112).
-    else out.push({ at: e.changed_at, display: e.display, items: [e] })
-  }
-  return out
-})
-
-const CATEGORY = {
-  meta: { label: 'template', cls: 'text-bg-secondary' },
-  scenario: { label: 'scenario', cls: 'text-bg-success' },
-  mod: { label: 'mod', cls: 'text-bg-primary' },
-  setting: { label: 'setting', cls: 'text-bg-info' },
-}
-const catBadge = (c) => CATEGORY[c] || { label: c, cls: 'text-bg-secondary' }
+// Client-side search: the log is already loaded, so filtering is instant. Lines
+// from one save are grouped under its timestamp, with its comment (#223) on top.
+const groups = computed(() => groupEntries(filterEntries(entries.value, search.value)))
 
 onMounted(async () => {
   try {
@@ -84,8 +60,9 @@ onMounted(async () => {
             Nothing matches “{{ search }}”.
           </div>
           <div v-else class="d-flex flex-column gap-3">
-            <div v-for="g in groups" :key="g.at + g.items[0].id">
+            <div v-for="g in groups" :key="g.key">
               <div class="small text-secondary border-bottom pb-1 mb-2">{{ g.display }}</div>
+              <p v-for="(note, i) in g.notes" :key="i" class="rsm-note mb-2">“{{ note }}”</p>
               <ul class="list-unstyled mb-0 d-flex flex-column gap-1">
                 <li v-for="e in g.items" :key="e.id" class="d-flex align-items-start gap-2">
                   <span class="badge mt-1" :class="catBadge(e.category).cls" style="min-width: 4.5rem">
@@ -105,3 +82,11 @@ onMounted(async () => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.rsm-note {
+  font-style: italic;
+  border-left: 3px solid var(--bs-border-color);
+  padding-left: 0.5rem;
+}
+</style>

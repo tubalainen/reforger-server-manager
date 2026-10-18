@@ -3,6 +3,12 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
 import ChangeLogModal from '../components/ChangeLogModal.vue'
+import HelpTip from '../components/HelpTip.vue'
+import MenuButton from '../components/MenuButton.vue'
+import NewFromProdDialog from '../components/NewFromProdDialog.vue'
+import ReleaseDialog from '../components/ReleaseDialog.vue'
+import StageBadge from '../components/StageBadge.vue'
+import { groupByStage, isLocked, promoteAction, versionsText } from '../stages'
 
 const router = useRouter()
 const templates = ref([])
@@ -13,6 +19,10 @@ let poll = null
 // --- Change log (#112): a read-only, searchable history per template ---
 // The modal itself is shared with the Mod Templates page (#166).
 const logTemplate = ref(null)
+
+// Grouped Prod, Dev, Test (#223), so what is golden is never in doubt.
+const groups = computed(() => groupByStage(templates.value))
+const prods = computed(() => templates.value.filter((t) => t.stage === 'prod'))
 
 async function load() {
   try {
@@ -27,6 +37,11 @@ async function load() {
 
 async function remove(t) {
   if (!confirm(`Delete template "${t.name}"?`)) return
+  // Prod is the golden copy: ask a second time, and say what goes with it (#223).
+  if (isLocked(t) && !confirm(
+    `"${t.name}" is a Prod template. Deleting it also deletes ${versionsText(t.prod_version)} `
+    + 'and its change log, for good.\n\nReally delete it?',
+  )) return
   try {
     await api(`/api/templates/${t.id}`, { method: 'DELETE' })
     await load()
@@ -39,8 +54,8 @@ function download(t) {
   window.location.href = `/api/templates/${t.id}/config.json`
 }
 
-// Duplicate a template (#129): the backend clones it under a free "Copy of …"
-// name, then we jump straight into the copy's editor so it can be tweaked.
+// Duplicate a template (#129): the backend clones it into Test (#223) under a
+// free "Copy of …" name, then we jump straight into the copy's editor.
 const copying = ref(0)
 async function copy(t) {
   copying.value = t.id
@@ -72,6 +87,19 @@ async function makeModList(t) {
   }
 }
 
+// --- Moving up a stage (#223) ---
+const promoting = ref(null)
+async function promoted() {
+  promoting.value = null
+  await load()
+}
+
+const newFromProd = ref(false)
+function createdFromProd(created) {
+  newFromProd.value = false
+  router.push({ name: 'template-edit', params: { id: created.id } })
+}
+
 const anyLocked = computed(() => templates.value.some((t) => t.locked))
 
 // Stuck locks (a crashed tab, a closed laptop) expire on their own within
@@ -100,15 +128,44 @@ onUnmounted(() => clearInterval(poll))
   <div class="container">
     <div class="d-flex justify-content-between align-items-center mb-3">
       <h1 class="h3 mb-0">Server templates</h1>
-      <div class="btn-group">
+      <div class="d-flex gap-2">
         <button v-if="anyLocked" class="btn btn-outline-warning" @click="clearLocks">
           Clear edit locks
         </button>
-        <button class="btn btn-primary" @click="router.push({ name: 'template-new' })">
-          + New template
-        </button>
+        <MenuButton label="+ New template" button-class="btn btn-primary">
+          <li>
+            <button class="dropdown-item" @click="router.push({ name: 'template-new' })">
+              Blank template
+            </button>
+          </li>
+          <li>
+            <button class="dropdown-item" @click="newFromProd = true">
+              Based on a Prod template…
+            </button>
+          </li>
+        </MenuButton>
       </div>
     </div>
+
+    <p class="text-secondary small">
+      New templates start in Test, move to Dev for testing, and are released to Prod.
+      <HelpTip label="About Test, Dev and Prod">
+        <p><strong>Test</strong>: free to change.</p>
+        <p>
+          <strong>Dev</strong>: being tested on real servers. Still editable, and every
+          save asks for a comment for the change log.
+        </p>
+        <p>
+          <strong>Prod</strong>: released and locked, the golden copy. It can be copied
+          and deleted, never changed. Each release is a version (v1, v2, …).
+        </p>
+        <p>
+          To change a Prod template, copy it: the copy lands in Test. Take it through
+          Dev, then release it as the next version of the original. Servers on the
+          original pick it up on their next restart.
+        </p>
+      </HelpTip>
+    </p>
 
     <div v-if="error" class="alert alert-warning py-2">{{ error }}</div>
 
@@ -130,56 +187,90 @@ onUnmounted(() => clearInterval(poll))
       </div>
     </div>
 
-    <div v-else class="list-group">
-      <div
-        v-for="t in templates"
-        :key="t.id"
-        class="list-group-item d-flex justify-content-between align-items-center"
-      >
-        <div>
-          <div class="fw-semibold">
-            {{ t.name }}
-            <span v-if="t.locked" class="badge text-bg-warning ms-1">✎ being edited</span>
+    <template v-else>
+      <section v-for="g in groups" :key="g.stage" class="mb-4">
+        <h2 class="h6 d-flex align-items-center gap-2 mb-2">
+          <StageBadge :stage="g.stage" />
+          <span class="text-secondary fw-normal small">{{ g.hint }}</span>
+        </h2>
+        <div class="list-group">
+          <div
+            v-for="t in g.items"
+            :key="t.id"
+            class="list-group-item d-flex justify-content-between align-items-center gap-2 flex-wrap"
+          >
+            <div class="me-2">
+              <div class="fw-semibold">
+                {{ t.name }}
+                <StageBadge v-if="isLocked(t)" stage="prod" :version="t.prod_version" class="ms-1" />
+                <span v-if="t.locked" class="badge text-bg-warning ms-1">✎ being edited</span>
+              </div>
+              <div class="small text-secondary">
+                {{ t.description || 'No description' }}
+                <span v-if="t.based_on">
+                  · based on {{ t.based_on.name || 'a deleted template' }}<template v-if="t.based_on.version"> v{{ t.based_on.version }}</template>
+                </span>
+                <span v-if="t.server_count"> · {{ t.server_count }} server(s)</span>
+              </div>
+            </div>
+            <div class="d-flex gap-1">
+              <button
+                v-if="isLocked(t)"
+                class="btn btn-sm btn-outline-primary"
+                title="Prod templates are locked: open it read-only"
+                @click="router.push({ name: 'template-edit', params: { id: t.id } })"
+              >View</button>
+              <button
+                v-else
+                class="btn btn-sm btn-outline-primary"
+                :disabled="t.locked"
+                :title="t.locked ? 'Being edited in another session' : ''"
+                @click="router.push({ name: 'template-edit', params: { id: t.id } })"
+              >Edit</button>
+              <button
+                v-if="promoteAction(t.stage)"
+                class="btn btn-sm"
+                :class="promoteAction(t.stage).release ? 'btn-outline-success' : 'btn-outline-info'"
+                :disabled="t.locked"
+                @click="promoting = t"
+              >{{ promoteAction(t.stage).label }}</button>
+              <MenuButton label="⋯" aria-label="More actions">
+                <li><button class="dropdown-item" @click="logTemplate = t">Change log</button></li>
+                <li>
+                  <button
+                    class="dropdown-item"
+                    title="Download the rendered config.json. It contains the server, admin and RCON passwords in clear text — treat the file as a secret."
+                    @click="download(t)"
+                  >Download config.json</button>
+                </li>
+                <li>
+                  <button
+                    class="dropdown-item"
+                    :disabled="copying === t.id"
+                    title="Duplicate this template into a new, editable copy in Test"
+                    @click="copy(t)"
+                  >{{ copying === t.id ? 'Copying…' : 'Copy to Test' }}</button>
+                </li>
+                <li>
+                  <button
+                    class="dropdown-item"
+                    :disabled="makingList === t.id"
+                    title="Save this template's mods as a new mod list. The scenario's mod, and mods only it needs, are left out."
+                    @click="makeModList(t)"
+                  >{{ makingList === t.id ? 'Saving…' : 'To mod list' }}</button>
+                </li>
+                <li><hr class="dropdown-divider" /></li>
+                <li>
+                  <button class="dropdown-item text-danger" :disabled="t.locked" @click="remove(t)">
+                    Delete
+                  </button>
+                </li>
+              </MenuButton>
+            </div>
           </div>
-          <div class="small text-secondary">{{ t.description || 'No description' }}</div>
         </div>
-        <div class="btn-group">
-          <button class="btn btn-sm btn-outline-secondary" @click="logTemplate = t">Change log</button>
-          <button
-            class="btn btn-sm btn-outline-secondary"
-            title="Download the rendered config.json. It contains the server, admin and RCON passwords in clear text — treat the file as a secret."
-            @click="download(t)"
-          >config.json</button>
-          <button
-            class="btn btn-sm btn-outline-secondary"
-            :disabled="copying === t.id"
-            title="Duplicate this template into a new, editable copy"
-            @click="copy(t)"
-          >
-            {{ copying === t.id ? 'Copying…' : 'Copy' }}
-          </button>
-          <button
-            class="btn btn-sm btn-outline-secondary"
-            :disabled="makingList === t.id"
-            title="Save this template's mods as a new mod list. The scenario's mod, and mods only it needs, are left out."
-            @click="makeModList(t)"
-          >
-            {{ makingList === t.id ? 'Saving…' : 'To mod list' }}
-          </button>
-          <button
-            class="btn btn-sm btn-outline-primary"
-            :disabled="t.locked"
-            :title="t.locked ? 'Being edited in another session' : ''"
-            @click="router.push({ name: 'template-edit', params: { id: t.id } })"
-          >
-            Edit
-          </button>
-          <button class="btn btn-sm btn-outline-danger" :disabled="t.locked" @click="remove(t)">
-            Delete
-          </button>
-        </div>
-      </div>
-    </div>
+      </section>
+    </template>
 
     <!-- Change log (#112): read-only history, newest first, searchable -->
     <ChangeLogModal
@@ -187,6 +278,21 @@ onUnmounted(() => clearInterval(poll))
       :url="`/api/templates/${logTemplate.id}/changelog`"
       :subtitle="logTemplate.name"
       @close="logTemplate = null"
+    />
+    <ReleaseDialog
+      v-if="promoting"
+      :item="promoting"
+      :items="templates"
+      base="/api/templates"
+      @close="promoting = null"
+      @done="promoted"
+    />
+    <NewFromProdDialog
+      v-if="newFromProd"
+      :prods="prods"
+      base="/api/templates"
+      @close="newFromProd = false"
+      @created="createdFromProd"
     />
   </div>
 </template>
