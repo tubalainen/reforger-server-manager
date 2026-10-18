@@ -37,7 +37,7 @@ from sqlmodel import Session, select
 
 import config
 from models import Instance, Template, get_engine
-from services import change_log, docker_service, instance_service, template_service
+from services import change_log, docker_service, instance_service, stages, template_service
 from services.instance_service import InstanceError
 
 logger = logging.getLogger(__name__)
@@ -117,17 +117,20 @@ def _instance_context(instance_id: int) -> dict:
         inst = session.get(Instance, instance_id)
         if not inst:
             raise InstanceError("Server not found")
-        template = session.get(Template, inst.template_id)
+        # What the server runs: a pinned Prod version is read from that version,
+        # not from the template's latest (#223).
+        target = stages.run_target(session, inst)
+        content = target.content if target else None
         persistence = (
-            template_service.persistence_summary(template.config_json)
-            if template
+            template_service.persistence_summary(content.config_json)
+            if content
             else {"persistence": False, "hive_id": None}
         )
         scenario_id = ""
-        if template:
+        if content:
             try:
                 scenario_id = (
-                    (json.loads(template.config_json).get("game") or {})
+                    (json.loads(content.config_json).get("game") or {})
                     .get("scenarioId", "")
                 )
             except (ValueError, AttributeError):
@@ -135,8 +138,9 @@ def _instance_context(instance_id: int) -> dict:
         return {
             "instance_id": instance_id,
             "instance_name": inst.name,
-            "template_id": template.id if template else None,
-            "template_name": template.name if template else None,
+            "template_id": target.template.id if target else None,
+            "template_name": target.label if target else None,
+            "template_version": target.running_version if target else None,
             "scenario_id": scenario_id,
             "persistence": bool(persistence.get("persistence")),
             "hive_id": persistence.get("hive_id"),
@@ -707,7 +711,16 @@ def restore_backup(
         wanted_id = (
             switch_template_id if switch_template_id is not None else current_template_id
         )
-    target = next((t for t in targets if t["id"] == wanted_id), None)
+    if wanted_id == current_template_id:
+        # Staying on its template: judge by what it actually runs, which for a
+        # server pinned to an older Prod version is not the template's latest.
+        here = _instance_context(instance_id)
+        target = {
+            "id": here["template_id"], "name": here["template_name"],
+            "scenario_id": here["scenario_id"], "hive_id": here["hive_id"],
+        } if here["template_id"] is not None else None
+    else:
+        target = next((t for t in targets if t["id"] == wanted_id), None)
     if target is None:
         raise InstanceError("Template not found")
     fit = fit_of(meta, target)

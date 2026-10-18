@@ -74,19 +74,20 @@ def _mods(mt: ModTemplate) -> list[dict]:
     return [m for m in mods if isinstance(m, dict) and m.get("modId")]
 
 
-def _out(mt: ModTemplate, session: Session) -> dict:
+def _out(mt: ModTemplate, session: Session, content=None) -> dict:
+    content = content or mt
     return {
         "id": mt.id,
         "name": mt.name,
-        "description": mt.description,
-        "mods": _mods(mt),
+        "description": content.description,
+        "mods": _mods(content),
         **stages.stage_fields(mt, stages.names_of(session, ModTemplate)),
         "created_at": mt.created_at.isoformat(),
         "updated_at": mt.updated_at.isoformat(),
     }
 
 
-def _summary(mt: ModTemplate, names: dict[int, str]) -> dict:
+def _summary(mt: ModTemplate, names: dict[int, str], versions: dict[int, list]) -> dict:
     mods = _mods(mt)
     return {
         "id": mt.id,
@@ -95,6 +96,7 @@ def _summary(mt: ModTemplate, names: dict[int, str]) -> dict:
         "mod_count": len(mods),
         "locked_count": sum(1 for m in mods if m.get("version")),
         **stages.stage_fields(mt, names),
+        "versions": versions.get(mt.id, []),
         "updated_at": mt.updated_at.isoformat(),
     }
 
@@ -118,7 +120,8 @@ async def list_mod_templates(_user: str = Depends(auth.require_session)):
     with Session(get_engine()) as session:
         rows = session.exec(select(ModTemplate).order_by(ModTemplate.name)).all()
         names = {mt.id: mt.name for mt in rows}
-        return [_summary(mt, names) for mt in rows]
+        versions = stages.version_list(session, stages.MOD_LISTS)
+        return [_summary(mt, names, versions) for mt in rows]
 
 
 @router.post("", status_code=201)
@@ -156,29 +159,36 @@ def _unique_copy_name(session: Session, source_name: str) -> str:
 
 @router.post("/{mod_template_id}/copy", status_code=201)
 async def copy_mod_template(
-    mod_template_id: int, _user: str = Depends(auth.require_session)
+    mod_template_id: int,
+    body: stages.CopyFrom | None = None,
+    _user: str = Depends(auth.require_session),
 ):
     """Duplicate a mod list into Test under a fresh "Copy of …" name (#223).
 
     The copy remembers the Prod list it stems from, so its release can default
-    to "next version of" that one.
+    to "next version of" that one. `version` copies an older released version.
     """
+    version = body.version if body else None
     with Session(get_engine()) as session:
         src = session.get(ModTemplate, mod_template_id)
         if not src:
             raise HTTPException(status_code=404, detail="Mod list not found")
-        based_on_id, based_on_version = stages.based_on_for(src)
+        try:
+            content = stages.content_of(session, stages.MOD_LISTS, src, version)
+        except stages.StageError as exc:
+            raise _stage_error(exc) from exc
+        based_on_id, based_on_version = stages.based_on_for(src, version)
         mt = ModTemplate(
             name=_unique_copy_name(session, src.name),
-            description=src.description,
-            mods_json=src.mods_json,
+            description=content.description,
+            mods_json=content.mods_json,
             stage=stages.TEST,
             based_on_id=based_on_id,
             based_on_version=based_on_version,
         )
         session.add(mt)
         session.flush()
-        change_log.record_mod_template_creation(session, mt, stages.copied_from(src))
+        change_log.record_mod_template_creation(session, mt, stages.copied_from(src, version))
         session.commit()
         session.refresh(mt)
         return _out(mt, session)
@@ -208,13 +218,21 @@ async def promote_mod_template(
 
 @router.get("/{mod_template_id}")
 async def get_mod_template(
-    mod_template_id: int, _user: str = Depends(auth.require_session)
+    mod_template_id: int,
+    version: int | None = None,
+    _user: str = Depends(auth.require_session),
 ):
+    """A mod list, or (`version`) one of its released versions, which is what
+    the template wizard loads when an older Prod version is picked (#223)."""
     with Session(get_engine()) as session:
         mt = session.get(ModTemplate, mod_template_id)
         if not mt:
             raise HTTPException(status_code=404, detail="Mod list not found")
-        return _out(mt, session)
+        try:
+            content = stages.content_of(session, stages.MOD_LISTS, mt, version)
+        except stages.StageError as exc:
+            raise _stage_error(exc) from exc
+        return _out(mt, session, content)
 
 
 @router.put("/{mod_template_id}")

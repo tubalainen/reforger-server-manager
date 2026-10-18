@@ -15,6 +15,7 @@ writes a frozen version row, so an older version can be read back later.
 A Prod row's own columns always equal its latest version, so everything that
 reads a template keeps reading the row and is right for "latest".
 """
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -29,6 +30,8 @@ from models import (
     TemplateVersion,
 )
 from services import change_log, edit_locks
+
+logger = logging.getLogger("manager.stages")
 
 TEST, DEV, PROD = "test", "dev", "prod"
 STAGES = (TEST, DEV, PROD)
@@ -103,6 +106,22 @@ class Promote(BaseModel):
     into_id: int | None = None
 
 
+class CopyFrom(BaseModel):
+    """Which released version to copy (#223); None = the item as it is now."""
+
+    version: int | None = None
+
+
+def content_of(session: Session, kind: _Kind, row, version: int | None):
+    """The row itself, or one of its released versions (StageError if none)."""
+    if version is None or (row.stage == PROD and version == row.prod_version):
+        return row
+    frozen = version_row(session, kind, row.id, version) if row.stage == PROD else None
+    if frozen is None:
+        raise StageError(f"'{row.name}' has no v{version}")
+    return frozen
+
+
 def stage_fields(row, names: dict[int, str]) -> dict:
     """Where a template or mod list stands in the release flow, for the API."""
     based_on = None
@@ -119,10 +138,11 @@ def names_of(session: Session, model) -> dict[int, str]:
     return dict(session.exec(select(model.id, model.name)).all())
 
 
-def copied_from(src) -> str:
+def copied_from(src, version: int | None = None) -> str:
     """The opening line of a copy's change log: "Copied from 'X' v2 (Prod)"."""
-    version = f" v{src.prod_version}" if src.stage == PROD and src.prod_version else ""
-    return f"Copied from '{src.name}'{version} ({LABELS.get(src.stage, src.stage)})"
+    number = (version or src.prod_version) if src.stage == PROD else None
+    tag = f" v{number}" if number else ""
+    return f"Copied from '{src.name}'{tag} ({LABELS.get(src.stage, src.stage)})"
 
 
 def ensure_editable(row) -> None:
@@ -144,12 +164,13 @@ def note_items(note: str | None) -> list[tuple[str, str]]:
     return [("note", note)] if note else []
 
 
-def based_on_for(src) -> tuple[int | None, int | None]:
-    """What a copy of `src` is based on: `src` itself when it's Prod, otherwise
-    whatever `src` was based on — so a copy of a copy still releases by default
-    as the next version of the Prod item it all started from."""
+def based_on_for(src, version: int | None = None) -> tuple[int | None, int | None]:
+    """What a copy of `src` is based on: `src` itself when it's Prod (at the
+    version copied), otherwise whatever `src` was based on — so a copy of a copy
+    still releases by default as the next version of the Prod item it all
+    started from."""
     if src.stage == PROD:
-        return src.id, src.prod_version
+        return src.id, version or src.prod_version
     return src.based_on_id, src.based_on_version
 
 
@@ -258,6 +279,122 @@ def promote(
     session.flush()
     session.delete(row)
     return target
+
+
+def version_row(session: Session, kind: _Kind, item_id: int, version: int):
+    vm = kind.version_model
+    return session.exec(
+        select(vm).where(getattr(vm, kind.fk) == item_id, vm.version == version)
+    ).first()
+
+
+def version_list(session: Session, kind: _Kind, ids: list[int] | None = None) -> dict[int, list]:
+    """{item id: [{version, released_at, note}, newest first]} for the pickers."""
+    vm = kind.version_model
+    fk = getattr(vm, kind.fk)
+    query = select(vm).order_by(vm.version.desc())
+    if ids is not None:
+        query = query.where(fk.in_(ids))
+    out: dict[int, list] = {}
+    for v in session.exec(query).all():
+        out.setdefault(getattr(v, kind.fk), []).append({
+            "version": v.version,
+            "released_at": (
+                v.released_at if v.released_at.tzinfo else v.released_at.replace(tzinfo=UTC)
+            ).isoformat(),
+            "released": change_log.format_local(
+                v.released_at if v.released_at.tzinfo else v.released_at.replace(tzinfo=UTC)
+            )[:10],
+            "note": v.note or "",
+        })
+    return out
+
+
+def require_pinnable(session: Session, template: Template, version: int | None) -> None:
+    """A server may be pinned to an existing version of a Prod template only."""
+    if version is None:
+        return
+    if template.stage != PROD:
+        raise StageError(
+            f"'{template.name}' is not in Prod, so it has no versions to pick from"
+        )
+    if version_row(session, TEMPLATES, template.id, version) is None:
+        raise StageError(f"'{template.name}' has no v{version}")
+
+
+# --------------------------------------------------------------------------- #
+# What a server runs: its template at latest, or a pinned Prod version
+# --------------------------------------------------------------------------- #
+
+@dataclass(frozen=True)
+class RunTarget:
+    """The template content one server runs.
+
+    `content` is the live template row (Test, Dev, or Prod at latest) or the
+    frozen TemplateVersion it is pinned to; both carry the same columns.
+    """
+
+    template: Template
+    content: object
+    pinned: int | None
+
+    @property
+    def running_version(self) -> int | None:
+        if self.template.stage != PROD:
+            return None
+        return self.pinned or self.template.prod_version
+
+    @property
+    def label(self) -> str:
+        """The template as servers and the Supervisor name it: "Name v3" in Prod."""
+        version = self.running_version
+        return f"{self.template.name} v{version}" if version else self.template.name
+
+    @property
+    def changed_at(self):
+        """When what this server runs last changed; None when pinned (frozen)."""
+        return None if self.pinned else self.template.updated_at
+
+
+def run_targets(session: Session, instances) -> dict[int, RunTarget]:
+    """What each instance runs, in two queries however many there are."""
+    instances = list(instances)
+    template_ids = {i.template_id for i in instances}
+    templates = {
+        t.id: t for t in session.exec(select(Template).where(Template.id.in_(template_ids))).all()
+    }
+    pins = {(i.template_id, i.template_version) for i in instances if i.template_version}
+    frozen = {}
+    if pins:
+        rows = session.exec(
+            select(TemplateVersion).where(
+                TemplateVersion.template_id.in_({tid for tid, _ in pins})
+            )
+        ).all()
+        frozen = {(v.template_id, v.version): v for v in rows}
+    out: dict[int, RunTarget] = {}
+    for inst in instances:
+        template = templates.get(inst.template_id)
+        if template is None:
+            continue
+        pin = inst.template_version if template.stage == PROD else None
+        content = template
+        if pin:
+            content = frozen.get((template.id, pin))
+            if content is None:
+                # Can't happen through the API (versions are never deleted on
+                # their own); run latest rather than refuse to start.
+                logger.warning(
+                    "Server %s is pinned to v%s of '%s', which does not exist; running latest",
+                    inst.name, pin, template.name,
+                )
+                content, pin = template, None
+        out[inst.id] = RunTarget(template=template, content=content, pinned=pin)
+    return out
+
+
+def run_target(session: Session, inst) -> RunTarget | None:
+    return run_targets(session, [inst]).get(inst.id)
 
 
 def delete_versions(session: Session, kind: _Kind, item_id: int) -> int:

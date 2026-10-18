@@ -171,6 +171,15 @@ const faq = [
        is on the shelf before the new template starts writing its own.`,
   },
   {
+    q: 'Can a server stay on an older version of a Prod template?',
+    a: `Yes. When a server uses a Prod template, its Settings tab shows a version
+       picker under the template: "Latest" (the default) follows every new release on
+       the server's next restart, and v1, v2, … keep the server on exactly that release
+       until you change it. The same picker is in the New server dialog. A pinned server
+       never shows "template changed", because what it runs never changes. Stop the
+       server to change the version, like any template change.`,
+  },
+  {
     q: 'How do I back up my save game, and put it back?',
     a: `A server's Saves tab has its saved game backups. "Back up now" writes one .tar.gz
        of this server's world on the host — the save points and everything the scenario and
@@ -530,8 +539,9 @@ const faq = [
             came from. Take it through Dev, then <em>Release…</em> it as the
             <em>next version of</em> the original. The original keeps its name and becomes
             v2, the copy is used up, and its change log moves over. Servers on the original
-            pick the new version up on their next restart. <em>+ New template › Based on a
-            Prod template…</em> starts the same way.
+            pick the new version up on their next restart, unless they are pinned to an
+            older version in their Settings. <em>+ New template › Based on a Prod
+            template…</em> starts the same way, from the latest version or an older one.
           </li>
           <li class="mb-2">
             <strong>Copy:</strong> <em>Copy to Test</em> in a template's <em>⋯</em> menu
@@ -584,7 +594,9 @@ const faq = [
           <li class="mb-2">
             <strong>Test, Dev and Prod:</strong> mod lists move through the same three
             stages as server templates. A Prod mod list is locked; copy it to change it,
-            and release the copy as its next version.
+            and release the copy as its next version. <em>From a mod list…</em> in a
+            template's Mods step lists them by stage, and for a Prod list you can load an
+            older version instead of the latest.
           </li>
           <li class="mb-2">
             <strong>Load it into a server template:</strong> open a template's

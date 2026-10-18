@@ -185,3 +185,13 @@ def test_existing_templates_and_mod_lists_land_in_dev():
         s.add(models.Template(name="Fresh", config_json="{}"))
         s.commit()
         assert s.exec(select(models.Template).where(models.Template.name == "Fresh")).one().stage == "test"
+
+def test_instances_gain_a_template_version_column():
+    """#223 phase B: servers may pin a Prod version; existing ones run latest."""
+    engine = _make_pre88_engine()
+    _init_like_startup(engine)
+    with Session(engine) as s:
+        keep = s.exec(
+            select(models.Instance).where(models.Instance.name == "Tuba Server Instance 1")
+        ).one()
+        assert keep.template_version is None

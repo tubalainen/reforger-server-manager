@@ -396,3 +396,163 @@ def test_backup_may_not_overwrite_prod_but_may_copy_it_into_test(logged_in):
     copy = next(x for x in logged_in.get("/api/templates").json() if x["name"] == "Golden (imported)")
     assert copy["stage"] == "test"
     assert copy["based_on"]["id"] == t["id"]
+
+# --------------------------------------------------------------------------- #
+# Pinning a server to a Prod version (phase B)
+# --------------------------------------------------------------------------- #
+
+def _prod_with_two_versions(client):
+    """'Conflict' in Prod at v2 (64 players), with v1 (32 players) behind it."""
+    prod = _create(client, "Conflict")
+    _to_prod(client, prod["id"], note="first")
+    copy = client.post(f"/api/templates/{prod['id']}/copy").json()
+    client.put(f"/api/templates/{copy['id']}", json=_spec(copy["name"], max_players=64))
+    _promote(client, copy["id"])
+    _promote(client, copy["id"], into_id=prod["id"], note="second")
+    return prod["id"]
+
+
+def _server(client, tid, version=None, name="pinned", expect=200):
+    body = {"name": name, "template_id": tid}
+    if version is not None:
+        body["template_version"] = version
+    r = client.post("/api/instances", json=body)
+    assert r.status_code in (200, 201) if expect == 200 else r.status_code == expect, r.text
+    return r.json()
+
+
+def test_a_server_can_be_pinned_to_an_older_version(logged_in):
+    tid = _prod_with_two_versions(logged_in)
+    pinned = _server(logged_in, tid, version=1, name="pinned")
+    latest = _server(logged_in, tid, name="latest")
+
+    view = logged_in.get(f"/api/instances/{pinned['id']}").json()
+    assert view["template_version"] == 1
+    assert view["template_prod_version"] == 1      # the version it runs
+    assert view["template_latest_version"] == 2
+    assert logged_in.get(f"/api/instances/{latest['id']}").json()["template_prod_version"] == 2
+
+    rows = {s["name"]: s for s in logged_in.get("/api/instances/summary").json()["servers"]}
+    assert rows["pinned"]["max_players"] == 32     # read from v1, not the head
+    assert rows["latest"]["max_players"] == 64
+
+
+def test_what_a_pinned_server_runs(logged_in):
+    from services import instance_service, stages
+
+    tid = _prod_with_two_versions(logged_in)
+    inst = _server(logged_in, tid, version=1)
+    with Session(models.get_engine()) as s:
+        row = s.get(models.Instance, inst["id"])
+        target = instance_service._run_target(s, row)
+        assert json.loads(target.content.config_json)["game"]["maxPlayers"] == 32
+        assert target.label == "Conflict v1"
+        assert target.changed_at is None  # frozen: never "template changed"
+        row.template_version = None
+        latest = stages.run_target(s, row)
+        assert latest.label == "Conflict v2"
+        assert latest.changed_at == latest.template.updated_at
+
+
+def test_pins_must_name_a_real_prod_version(logged_in):
+    tid = _prod_with_two_versions(logged_in)
+    _server(logged_in, tid, version=7, expect=409)
+    dev = _create(logged_in, "Still dev")
+    _server(logged_in, dev["id"], version=1, name="dev-pinned", expect=409)
+
+
+def test_repinning_and_unpinning_a_stopped_server(logged_in):
+    tid = _prod_with_two_versions(logged_in)
+    inst = _server(logged_in, tid)
+    r = logged_in.put(
+        f"/api/instances/{inst['id']}/template", json={"template_id": tid, "template_version": 1}
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["template_version"] == 1
+    r = logged_in.put(f"/api/instances/{inst['id']}/template", json={"template_id": tid})
+    assert r.json()["template_version"] is None
+    bad = logged_in.put(
+        f"/api/instances/{inst['id']}/template", json={"template_id": tid, "template_version": 9}
+    )
+    assert bad.status_code == 409
+
+
+def test_copy_download_and_list_an_older_version(logged_in):
+    tid = _prod_with_two_versions(logged_in)
+    _server(logged_in, tid, version=1, name="on-v1")
+
+    copy = logged_in.post(f"/api/templates/{tid}/copy", json={"version": 1}).json()
+    assert copy["spec"]["max_players"] == 32
+    assert copy["based_on"]["version"] == 1
+    assert any(e["summary"] == "Copied from 'Conflict' v1 (Prod)" for e in _log(logged_in, copy["id"]))
+    assert logged_in.post(f"/api/templates/{tid}/copy", json={"version": 5}).status_code == 400
+
+    cfg = json.loads(logged_in.get(f"/api/templates/{tid}/config.json?version=1").text)
+    assert cfg["game"]["maxPlayers"] == 32
+
+    versions = logged_in.get(f"/api/templates/{tid}/versions").json()
+    assert [(v["version"], v["note"], v["pinned_by"]) for v in versions] == [
+        (2, "second", []), (1, "first", ["on-v1"]),
+    ]
+    assert [v["version"] for v in _listing(logged_in, tid)["versions"]] == [2, 1]
+
+
+def test_a_backup_records_the_pinned_version(logged_in):
+    from services import instance_backup
+
+    tid = _prod_with_two_versions(logged_in)
+    inst = _server(logged_in, tid, version=1)
+    context = instance_backup._instance_context(inst["id"])
+    assert context["template_version"] == 1
+    assert context["template_name"] == "Conflict v1"
+
+
+def test_an_older_mod_list_version_can_be_loaded(logged_in):
+    mt = logged_in.post("/api/mod-templates", json=_mods("Pack")).json()
+    _mod_promote(logged_in, mt["id"])
+    _mod_promote(logged_in, mt["id"])
+    copy = logged_in.post(f"/api/mod-templates/{mt['id']}/copy").json()
+    logged_in.put(
+        f"/api/mod-templates/{copy['id']}",
+        json=_mods("Copy of Pack", [{"modId": A}, {"modId": B}]),
+    )
+    _mod_promote(logged_in, copy["id"])
+    _mod_promote(logged_in, copy["id"], into_id=mt["id"])
+
+    assert [m["modId"] for m in logged_in.get(f"/api/mod-templates/{mt['id']}").json()["mods"]] == [A, B]
+    old = logged_in.get(f"/api/mod-templates/{mt['id']}?version=1").json()
+    assert [m["modId"] for m in old["mods"]] == [A]
+    assert logged_in.get(f"/api/mod-templates/{mt['id']}?version=3").status_code == 400
+    listing = logged_in.get("/api/mod-templates").json()
+    assert [v["version"] for v in listing[0]["versions"]] == [2, 1]
+
+def test_starting_a_pinned_server_renders_that_version(logged_in, monkeypatch):
+    """start_instance writes the pinned version's config.json and names the
+    template "Conflict v1" on the container (what the Supervisor shows)."""
+    from services import docker_service, instance_service
+
+    tid = _prod_with_two_versions(logged_in)
+    inst = _server(logged_in, tid, version=1)
+    made = {}
+
+    class FakeContainer:
+        id = "abc"
+
+        def start(self):
+            made["started"] = True
+
+    def fake_create(inst_row, config_path, launch, template_config, template_name):
+        made["config"] = json.loads(config_path.read_text())
+        made["label"] = template_name
+        return FakeContainer()
+
+    monkeypatch.setattr(docker_service, "ping", lambda: True)
+    monkeypatch.setattr(docker_service, "find_instance_container", lambda iid: None)
+    monkeypatch.setattr(instance_service, "server_files_ready", lambda branch: True)
+    monkeypatch.setattr(instance_service, "_create_container", fake_create)
+    monkeypatch.setattr(instance_service, "forget_run", lambda cid: None)
+
+    instance_service.start_instance(inst["id"])
+    assert made["config"]["game"]["maxPlayers"] == 32
+    assert made["label"] == "Conflict v1"
+    assert made["started"]

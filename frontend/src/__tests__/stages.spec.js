@@ -8,6 +8,7 @@ import {
   staleCopyWarning,
   stageInfo,
   versionLabel,
+  versionOptions,
   versionsText,
 } from '../stages'
 
@@ -78,5 +79,28 @@ describe('releaseSummary', () => {
     const item = { name: 'Copy of Conflict' }
     expect(releaseSummary(item, null, 'mod list')).toBe("'Copy of Conflict' becomes a new Prod mod list at v1.")
     expect(releaseSummary(item, prod(7, 'Conflict', 4))).toMatch(/'Conflict' gets v5/)
+  })
+})
+
+describe('versionOptions', () => {
+  it('offers latest first, then every release newest first', () => {
+    const t = {
+      stage: 'prod',
+      prod_version: 2,
+      versions: [
+        { version: 2, released: '2026-10-18', note: 'more slots' },
+        { version: 1, released: '2026-10-01', note: '' },
+      ],
+    }
+    expect(versionOptions(t)).toEqual([
+      { value: null, label: 'Latest (v2)' },
+      { value: 2, label: 'v2 · 2026-10-18 · more slots' },
+      { value: 1, label: 'v1 · 2026-10-01' },
+    ])
+  })
+
+  it('offers nothing outside Prod', () => {
+    expect(versionOptions({ stage: 'dev', versions: [] })).toEqual([])
+    expect(versionOptions(undefined)).toEqual([])
   })
 })

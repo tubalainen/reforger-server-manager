@@ -26,7 +26,7 @@ from sqlmodel import Session, select
 import config
 import stacks
 from models import Instance, Template, get_engine
-from services import docker_service, fleet_history, ports, template_service
+from services import docker_service, fleet_history, ports, stages, template_service
 
 # Reading a container's log, uptime and load lives in container_reading, shared
 # with the Supervisor's observer gate (#204). Re-exported like server_log below.
@@ -298,6 +298,7 @@ def create_instance(
     game_port: int | None = None,
     a2s_port: int | None = None,
     rcon_port: int | None = None,
+    template_version: int | None = None,
 ) -> tuple[Instance, str | None]:
     """Create an instance. Ports are auto-leased unless explicitly given.
 
@@ -312,8 +313,10 @@ def create_instance(
     with Session(get_engine()) as session:
         if session.exec(select(Instance).where(Instance.name == name)).first():
             raise InstanceError(f"A server named '{name}' already exists")
-        if not session.get(Template, template_id):
+        template = session.get(Template, template_id)
+        if not template:
             raise InstanceError("Template not found")
+        _require_pinnable(session, template, template_version)
         g_used, a_used, r_used = used_ports(session)
 
         game = _resolve_port("game", game_port, g_used, config.settings.game_port_range)
@@ -321,8 +324,8 @@ def create_instance(
         rcon = _resolve_port("RCON", rcon_port, r_used, config.settings.rcon_port_range)
 
         inst = Instance(
-            name=name, template_id=template_id, branch=branch,
-            game_port=game, a2s_port=a2s, rcon_port=rcon,
+            name=name, template_id=template_id, template_version=template_version,
+            branch=branch, game_port=game, a2s_port=a2s, rcon_port=rcon,
         )
         session.add(inst)
         session.commit()
@@ -419,8 +422,18 @@ def update_ports(
             logger.warning("Could not remove container for %s: %s", instance_id, exc)
 
 
-def set_instance_template(instance_id: int, template_id: int) -> None:
-    """Repoint a stopped instance at a different template (issue #31).
+def _require_pinnable(session: Session, template: Template, version: int | None) -> None:
+    try:
+        stages.require_pinnable(session, template, version)
+    except stages.StageError as exc:
+        raise InstanceError(str(exc)) from exc
+
+
+def set_instance_template(
+    instance_id: int, template_id: int, template_version: int | None = None
+) -> None:
+    """Repoint a stopped instance at a different template (issue #31), or at
+    another released version of its Prod template (#223; None = latest).
 
     The container bakes its rendered config at creation, so any existing
     container is removed here and recreated from the new template on next start
@@ -432,9 +445,12 @@ def set_instance_template(instance_id: int, template_id: int) -> None:
         inst = session.get(Instance, instance_id)
         if not inst:
             raise InstanceError("Server not found")
-        if not session.get(Template, template_id):
+        template = session.get(Template, template_id)
+        if not template:
             raise InstanceError("Template not found")
+        _require_pinnable(session, template, template_version)
         inst.template_id = template_id
+        inst.template_version = template_version
         session.add(inst)
         session.commit()
     container = docker_service.find_instance_container(instance_id)
@@ -503,18 +519,18 @@ def edit_instance(
                 logger.warning("Could not remove container for %s: %s", instance_id, exc)
 
 
-def _template_config(session: Session, inst: Instance) -> str:
-    template = session.get(Template, inst.template_id)
-    if not template:
+def _run_target(session: Session, inst: Instance) -> stages.RunTarget:
+    """What this server runs: its template at latest, or the Prod version it is
+    pinned to (#223)."""
+    target = stages.run_target(session, inst)
+    if target is None:
         raise InstanceError("This server's template no longer exists")
-    return template.config_json
+    return target
 
 
-def _template_launch(session: Session, inst: Instance) -> LaunchParams:
-    template = session.get(Template, inst.template_id)
-    raw = (template.launch_params_json if template else None) or "{}"
+def _launch_of(content) -> LaunchParams:
     try:
-        return LaunchParams.model_validate_json(raw)
+        return LaunchParams.model_validate_json(content.launch_params_json or "{}")
     except ValueError:
         return LaunchParams()
 
@@ -689,9 +705,11 @@ def start_instance(instance_id: int) -> None:
                 f"The {inst.branch} server files are not downloaded yet — "
                 "download them on the Downloads tab first"
             )
-        template_config = _template_config(session, inst)
-        template_name = session.get(Template, inst.template_id).name
-        launch = _template_launch(session, inst)
+        target = _run_target(session, inst)
+        template_config = target.content.config_json
+        # "Name v3" for a Prod template, so the Supervisor shows the version (#223)
+        template_name = target.label
+        launch = _launch_of(target.content)
 
         # Reuse an existing container if present, else create one. But recreate
         # it when its baked-in settings are stale, since Docker fixes them at
@@ -1051,8 +1069,7 @@ def instance_view(
     containers: dict | None = None,
     docker_up: bool | None = None,
     template_updated_at=None,
-    template_stage: str | None = None,
-    template_prod_version: int | None = None,
+    target: "stages.RunTarget | None" = None,
 ) -> dict:
     # docker_up/containers are passed in by list_views, which resolves them ONCE for
     # the whole page. This used to ping the daemon per instance, inside a list
@@ -1071,9 +1088,7 @@ def instance_view(
         "branch": inst.branch,
         "template_id": inst.template_id,
         "template_name": template_name,
-        # the template's release stage and version, for the badge (#223)
-        "template_stage": template_stage,
-        "template_prod_version": template_prod_version,
+        **_stage_view(inst, target),
         # True when the template has been edited since this running server
         # started, so its live config is stale until restarted (#116).
         "template_changed": template_changed,
@@ -1113,8 +1128,8 @@ def instance_stats(instance_id: int) -> dict:
         if not inst:
             raise InstanceError("Server not found")
         game_port = inst.game_port
-        template = session.get(Template, inst.template_id) if inst.template_id else None
-        admins = _admin_ids(template.config_json) if template else set()
+        target = stages.run_target(session, inst)
+        admins = _admin_ids(target.content.config_json) if target else set()
 
     public = config.settings.public_address
     # ONE lookup for the container, reused for status, uptime, logs and cpu/mem.
@@ -1395,12 +1410,12 @@ def instance_data(instance_id: int) -> dict:
         # which template wrote it and whether that template configures
         # persistence at all (#160). A template deleted out from under the
         # instance is not an error here — the files on disk are still real.
-        template = session.get(Template, inst.template_id)
+        target = stages.run_target(session, inst)
         persistence = (
-            template_service.persistence_summary(template.config_json)
-            if template else {"persistence": False, "hive_id": None}
+            template_service.persistence_summary(target.content.config_json)
+            if target else {"persistence": False, "hive_id": None}
         )
-        persistence["template_name"] = template.name if template else None
+        persistence["template_name"] = target.label if target else None
     running = container_status(instance_id) == "running" if docker_service.ping() else False
     idir = Path(config.settings.data_dir) / "instances" / str(instance_id)
     items = []
@@ -1547,7 +1562,7 @@ def instances_summary() -> dict:
     containers = docker_service.instance_containers() if docker_up else {}
     with Session(get_engine()) as session:
         instances = _all_instances(session)
-        templates = {t.id: t for t in session.exec(select(Template)).all()}
+        targets = stages.run_targets(session, instances)
 
     files_ready: dict[str, bool] = {}  # one filesystem check per branch, not per server
     servers = []
@@ -1556,7 +1571,9 @@ def instances_summary() -> dict:
     cpu_total = None
     mem_total = None
     for inst in instances:
-        template = templates.get(inst.template_id)
+        target = targets.get(inst.id)
+        template = target.template if target else None
+        content = target.content if target else None
         if inst.branch not in files_ready:
             files_ready[inst.branch] = server_files_ready(inst.branch)
         status = container_status(inst.id, containers) if docker_up else "unknown"
@@ -1570,10 +1587,9 @@ def instances_summary() -> dict:
             "connect": None,
             "template_id": inst.template_id,
             "template_name": template.name if template else None,
-            "template_stage": template.stage if template else None,
-            "template_prod_version": template.prod_version if template else None,
-            "scenario_name": template.scenario_name if template else "",
-            "max_players": _max_players(template.config_json) if template else None,
+            **_stage_view(inst, target),
+            "scenario_name": content.scenario_name if content else "",
+            "max_players": _max_players(content.config_json) if content else None,
             "template_changed": False,
             "server_files_ready": files_ready[inst.branch],
             "next_restart": next_restart_label(inst),
@@ -1589,7 +1605,7 @@ def instances_summary() -> dict:
         if container:
             entry["uptime_seconds"] = _container_uptime_seconds(container)
             entry["template_changed"] = _template_changed_since_start(
-                container, template.updated_at if template else None
+                container, target.changed_at if target else None
             )
             try:
                 log_text = current_run_log(container)
@@ -1638,17 +1654,27 @@ def list_views() -> list[dict]:
     containers = docker_service.instance_containers() if docker_up else {}
     with Session(get_engine()) as session:
         instances = _all_instances(session)
-        templates = {t.id: t for t in session.exec(select(Template)).all()}
+        targets = stages.run_targets(session, instances)
         views = []
         for i in instances:
-            t = templates.get(i.template_id)
+            t = targets.get(i.id)
             views.append(instance_view(
-                i, t.name if t else None, containers, docker_up,
-                t.updated_at if t else None,
-                template_stage=t.stage if t else None,
-                template_prod_version=t.prod_version if t else None,
+                i, t.template.name if t else None, containers, docker_up,
+                t.changed_at if t else None, target=t,
             ))
         return views
+
+
+def _stage_view(inst: Instance, target: "stages.RunTarget | None") -> dict:
+    """The template's stage and the version this server runs, for the badge and
+    the version picker (#223). A pinned server never sees "template changed":
+    the version it runs is frozen."""
+    return {
+        "template_stage": target.template.stage if target else None,
+        "template_prod_version": target.running_version if target else None,
+        "template_version": inst.template_version,
+        "template_latest_version": target.template.prod_version if target else None,
+    }
 
 
 def set_restart_settings(
