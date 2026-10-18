@@ -165,6 +165,10 @@ Do not install Docker Engine inside a WSL distribution for this project. WSL NAT
 
 Each manager sees and controls only its own stack. The other team's servers, networks and folders do not exist as far as it can tell, and it cannot start, stop or remove them. A team needs nothing but its own GUI login: it changes its password under **System › Account**.
 
+[![Several teams on one machine](architecture/reforger-server-manager-multi-team.png)](https://tubalainen.github.io/reforger-server-manager/architecture/reforger-server-manager-multi-team.html)
+
+*The stacks with their gates, the Server Supervisor and the shared VPS edge. Click the image for the interactive diagram.*
+
 ### Before you start
 
 - **Every install already on the machine must run v0.65.0 or newer, with the v0.65.0 compose file.** An older manager does not know about stacks, so it would treat the new stack's servers as its own. `rsm add-stack` checks this and says which install to update first. By hand: `docker ps` lists a `reforger-docker-gate` container, and the first GUI shows no yellow *"compose file is older than v0.65.0"* banner.

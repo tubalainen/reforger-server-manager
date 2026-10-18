@@ -14,6 +14,6 @@
 
 | Folder | What is in it |
 |---|---|
-| [`architecture/`](architecture/) | The architecture overview: the [interactive page](https://tubalainen.github.io/reforger-server-manager/architecture/reforger-server-manager-overview.html), its image, and the spec it is drawn from |
+| [`architecture/`](architecture/) | Two architecture diagrams, each as an interactive page, an image and the spec it is drawn from: [one stack](https://tubalainen.github.io/reforger-server-manager/architecture/reforger-server-manager-overview.html), and [several teams on one machine](https://tubalainen.github.io/reforger-server-manager/architecture/reforger-server-manager-multi-team.html) with their gates, the Server Supervisor and the shared VPS edge |
 | [`release-notes/`](release-notes/) | The notes of every release since v0.41.0, published as each GitHub release's text, and the [template](release-notes/TEMPLATE.md) new ones follow |
 | [`images/`](images/) | Screenshots and the logo used by the README and the feature tour |
