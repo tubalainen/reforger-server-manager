@@ -12,6 +12,9 @@ defineProps({
   // so this is how something set inside is not forgotten (#154, #162).
   summary: { type: String, default: '' },
   summaryClass: { type: String, default: 'text-secondary' },
+  // Locks the body's controls but not the header, so a read-only page (a Prod
+  // template, #223) can still fold the card open to show what is in it.
+  disabled: { type: Boolean, default: false },
 })
 const bodyId = `collapsible-${useId()}`
 </script>
@@ -31,7 +34,9 @@ const bodyId = `collapsible-${useId()}`
       <span v-if="summary" class="small ms-auto text-end" :class="summaryClass">{{ summary }}</span>
     </button>
     <div v-show="open" :id="bodyId" class="card-body">
-      <slot />
+      <fieldset :disabled="disabled">
+        <slot />
+      </fieldset>
     </div>
   </section>
 </template>

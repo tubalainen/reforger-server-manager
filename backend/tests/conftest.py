@@ -67,10 +67,12 @@ def _clean_db():
     models.init_db()
     with Session(models.get_engine()) as session:
         session.exec(delete(models.TemplateChange))
+        session.exec(delete(models.TemplateVersion))
         session.exec(delete(models.Template))
         session.exec(delete(models.Instance))
         session.exec(delete(models.ModRegistryEntry))
         session.exec(delete(models.ModTemplateChange))
+        session.exec(delete(models.ModTemplateVersion))
         session.exec(delete(models.ModTemplate))
         session.exec(delete(models.AppSetting))
         session.commit()

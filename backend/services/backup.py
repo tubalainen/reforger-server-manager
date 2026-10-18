@@ -22,6 +22,12 @@ is ambiguous by nature:
 Passwords ride along in clear text. That is deliberate — a "backup" that
 silently blanked the admin password would restore an unprotected server — and
 every place that hands the file to the user says so.
+
+Release stages (#223) travel too: each entry says its stage, and a Prod entry
+carries every released version, so a restore onto an empty manager brings the
+golden templates back as golden, versions and all. What an import may do to a
+Prod template that is already here is limited by the same lock as the GUI: it
+can't be overwritten, only skipped or imported as a copy (which lands in Test).
 """
 import json
 from datetime import UTC, datetime
@@ -29,8 +35,8 @@ from datetime import UTC, datetime
 from sqlmodel import Session, select
 
 import config
-from models import ModTemplate, Template
-from services import change_log, mod_registry
+from models import ModTemplate, ModTemplateVersion, Template, TemplateVersion
+from services import change_log, mod_registry, stages
 from services.template_service import ModEntry, ModListEntry
 
 # The envelope's format tag. Bump the number only for a change an older manager
@@ -91,9 +97,8 @@ def _mods_of(t: Template) -> list[dict]:
     return out
 
 
-def _template_entry(t: Template) -> dict:
+def _template_content(t: Template | TemplateVersion) -> dict:
     return {
-        "name": t.name,
         "description": t.description or "",
         "scenario_name": t.scenario_name or "",
         "scenario_player_count": t.scenario_player_count,
@@ -101,6 +106,41 @@ def _template_entry(t: Template) -> dict:
         "launch": _loads(t.launch_params_json, {}),
         "mods": _mods_of(t),
         "extras": _loads(t.extras_json, {}),
+    }
+
+
+def _mod_template_content(mt: ModTemplate | ModTemplateVersion) -> dict:
+    mods = _loads(mt.mods_json, [])
+    return {
+        "description": mt.description or "",
+        "mods": [m for m in mods if isinstance(m, dict) and m.get("modId")],
+    }
+
+
+def _stage_entry(session: Session, kind, row, names: dict[int, str], content) -> dict:
+    """The stage part of an entry (#223): stage, origin and, for Prod, versions."""
+    based_on = None
+    if row.based_on_id is not None and row.based_on_id in names:
+        based_on = {"name": names[row.based_on_id], "version": row.based_on_version}
+    out = {"stage": row.stage, "based_on": based_on}
+    if row.stage == stages.PROD:
+        out["versions"] = [
+            {
+                "version": v.version,
+                "released_at": v.released_at.isoformat(),
+                "note": v.note or "",
+                **content(v),
+            }
+            for v in reversed(stages.versions(session, kind, row.id))
+        ]
+    return out
+
+
+def _template_entry(session: Session, t: Template, names: dict[int, str]) -> dict:
+    return {
+        "name": t.name,
+        **_template_content(t),
+        **_stage_entry(session, stages.TEMPLATES, t, names, _template_content),
         # Informational only — an imported template is a new row with its own
         # timestamps; these say when the original was made and last touched.
         "created_at": t.created_at.isoformat(),
@@ -108,12 +148,11 @@ def _template_entry(t: Template) -> dict:
     }
 
 
-def _mod_template_entry(mt: ModTemplate) -> dict:
-    mods = _loads(mt.mods_json, [])
+def _mod_template_entry(session: Session, mt: ModTemplate, names: dict[int, str]) -> dict:
     return {
         "name": mt.name,
-        "description": mt.description or "",
-        "mods": [m for m in mods if isinstance(m, dict) and m.get("modId")],
+        **_mod_template_content(mt),
+        **_stage_entry(session, stages.MOD_LISTS, mt, names, _mod_template_content),
         "created_at": mt.created_at.isoformat(),
         "updated_at": mt.updated_at.isoformat(),
     }
@@ -123,12 +162,14 @@ def build(session: Session) -> dict:
     """The whole shelf: every server template and every mod template."""
     templates = session.exec(select(Template).order_by(Template.name)).all()
     mod_templates = session.exec(select(ModTemplate).order_by(ModTemplate.name)).all()
+    names = {t.id: t.name for t in templates}
+    mod_names = {mt.id: mt.name for mt in mod_templates}
     return {
         "format": FORMAT,
         "app_version": config.APP_VERSION,
         "exported_at": datetime.now(UTC).isoformat(),
-        "server_templates": [_template_entry(t) for t in templates],
-        "mod_templates": [_mod_template_entry(mt) for mt in mod_templates],
+        "server_templates": [_template_entry(session, t, names) for t in templates],
+        "mod_templates": [_mod_template_entry(session, mt, mod_names) for mt in mod_templates],
     }
 
 
@@ -190,12 +231,42 @@ def _clean_mods(mods: list, label: str, entry=ModEntry) -> list[dict]:
     return out
 
 
-def _read_template(raw, index: int) -> dict:
-    if not isinstance(raw, dict):
-        raise BackupError(f"Server template #{index + 1} is not a JSON object.")
-    name = _str(raw.get("name"), f"Server template #{index + 1}: name",
-                required=True, limit=_NAME_MAX)
-    label = f"Server template '{name}'"
+def _read_stage(raw: dict, label: str, read_content) -> dict:
+    """An entry's stage, origin and versions (#223).
+
+    A file written before stages existed has none of it; its templates arrive
+    in Dev, exactly where the upgrade put the ones already on this manager.
+    """
+    stage = raw.get("stage") or stages.DEV
+    if stage not in stages.STAGES:
+        raise BackupError(f"{label}: unknown stage {stage!r}.")
+    based_on = raw.get("based_on")
+    if based_on is not None:
+        based_on = _dict(based_on, f"{label}: based_on")
+        version = based_on.get("version")
+        based_on = {
+            "name": _str(based_on.get("name"), f"{label}: based_on.name", limit=_NAME_MAX),
+            "version": version if isinstance(version, int) else None,
+        }
+    versions = []
+    if stage == stages.PROD:
+        seen = set()
+        for i, v in enumerate(_list(raw.get("versions"), f"{label}: versions")):
+            v = _dict(v, f"{label}: version #{i + 1}")
+            number = v.get("version")
+            if not isinstance(number, int) or number < 1 or number in seen:
+                raise BackupError(f"{label}: version #{i + 1} has no usable number.")
+            seen.add(number)
+            versions.append({
+                "version": number,
+                "note": _str(v.get("note"), f"{label} v{number}: note", limit=stages.NOTE_MAX),
+                **read_content(v, f"{label} v{number}"),
+            })
+        versions.sort(key=lambda v: v["version"])
+    return {"stage": stage, "based_on": based_on, "versions": versions}
+
+
+def _read_template_content(raw: dict, label: str) -> dict:
     cfg = _dict(raw.get("config"), f"{label}: config")
     scenario_id = _dict(cfg.get("game"), f"{label}: config.game").get("scenarioId")
     if not isinstance(scenario_id, str) or not scenario_id.strip():
@@ -206,7 +277,6 @@ def _read_template(raw, index: int) -> dict:
     if count is not None and not isinstance(count, int):
         raise BackupError(f"{label}: scenario_player_count must be a whole number.")
     return {
-        "name": name,
         "description": _str(raw.get("description"), f"{label}: description"),
         "scenario_name": _str(raw.get("scenario_name"), f"{label}: scenario_name"),
         "scenario_player_count": count,
@@ -214,6 +284,27 @@ def _read_template(raw, index: int) -> dict:
         "launch": _dict(raw.get("launch"), f"{label}: launch"),
         "mods": _clean_mods(_list(raw.get("mods"), f"{label}: mods"), label),
         "extras": _dict(raw.get("extras"), f"{label}: extras"),
+    }
+
+
+def _read_template(raw, index: int) -> dict:
+    if not isinstance(raw, dict):
+        raise BackupError(f"Server template #{index + 1} is not a JSON object.")
+    name = _str(raw.get("name"), f"Server template #{index + 1}: name",
+                required=True, limit=_NAME_MAX)
+    label = f"Server template '{name}'"
+    return {
+        "name": name,
+        **_read_template_content(raw, label),
+        **_read_stage(raw, label, _read_template_content),
+    }
+
+
+def _read_mod_template_content(raw: dict, label: str) -> dict:
+    return {
+        "description": _str(raw.get("description"), f"{label}: description"),
+        # A mod list's entries keep their per-mod comment (#216).
+        "mods": _clean_mods(_list(raw.get("mods"), f"{label}: mods"), label, ModListEntry),
     }
 
 
@@ -225,9 +316,8 @@ def _read_mod_template(raw, index: int) -> dict:
     label = f"Mod list '{name}'"
     return {
         "name": name,
-        "description": _str(raw.get("description"), f"{label}: description"),
-        # A mod list's entries keep their per-mod comment (#216).
-        "mods": _clean_mods(_list(raw.get("mods"), f"{label}: mods"), label, ModListEntry),
+        **_read_mod_template_content(raw, label),
+        **_read_stage(raw, label, _read_mod_template_content),
     }
 
 
@@ -362,6 +452,8 @@ def _item(name: str, existing, changes: list[str], extra: dict) -> dict:
         "status": status,
         "suggested_action": action,
         "existing_id": existing.id if existing is not None else None,
+        # A Prod template here can't be overwritten (#223); the GUI hides that.
+        "existing_stage": existing.stage if existing is not None else None,
         "changes": changes,
         **extra,
     }
@@ -380,6 +472,7 @@ def preview(session: Session, payload) -> dict:
         templates.append(_item(entry["name"], existing, changes, {
             "scenario_name": entry["scenario_name"],
             "mod_count": len(entry["mods"]),
+            "stage": entry["stage"],
         }))
 
     mod_templates = []
@@ -388,6 +481,7 @@ def preview(session: Session, payload) -> dict:
         changes = _mod_template_changes(existing, entry) if existing else []
         mod_templates.append(_item(entry["name"], existing, changes, {
             "mod_count": len(entry["mods"]),
+            "stage": entry["stage"],
         }))
 
     return {
@@ -434,20 +528,69 @@ def _resolve(items: list[dict], decisions: dict, kind: str) -> list[tuple[dict, 
     return out
 
 
+def _template_columns(content: dict) -> dict:
+    """A template entry's content as the stored columns (row or version)."""
+    return {
+        "description": content["description"],
+        "config_json": json.dumps(content["config"]),
+        "scenario_name": content["scenario_name"],
+        "scenario_player_count": content["scenario_player_count"],
+        "launch_params_json": json.dumps(content["launch"]),
+        # An empty list is stored as "" on purpose: that is what makes the
+        # template reader fall back to the flat mods[] in config.json (#55).
+        "mods_json": json.dumps(content["mods"]) if content["mods"] else "",
+        "extras_json": json.dumps(content["extras"]),
+    }
+
+
+def _mod_template_columns(content: dict) -> dict:
+    return {"description": content["description"], "mods_json": json.dumps(content["mods"])}
+
+
+def _restore_stage(session: Session, kind, row, entry: dict, columns, when) -> None:
+    """Give a newly created row the stage it was saved in, with its versions.
+
+    A Prod entry with no versions (hand-made file) gets a v1 of its head, so a
+    Prod row always has the version its prod_version names.
+    """
+    row.stage = entry["stage"]
+    row.prod_version = None
+    if row.stage == stages.PROD:
+        versions = entry["versions"] or [{"version": 1, "note": "", **entry}]
+        for v in versions:
+            session.add(kind.version_model(**{
+                kind.fk: row.id, "version": v["version"], "released_at": when,
+                "note": v.get("note") or "", **columns(v),
+            }))
+        row.prod_version = versions[-1]["version"]
+    session.add(row)
+
+
+def _link_based_on(session: Session, made: list[tuple], names: dict) -> None:
+    """Point each restored row at the row its entry was based on, by name, now
+    that every row of the import exists. Only a Prod row can be an origin."""
+    for row, entry in made:
+        origin = entry.get("based_on")
+        source = names.get(origin["name"]) if origin else None
+        if source is not None and source.stage == stages.PROD:
+            row.based_on_id, row.based_on_version = source.id, origin["version"]
+            session.add(row)
+
+
+def _as_copy_of(row, existing) -> None:
+    """An imported copy lands in Test and stems from what it was copied next to."""
+    row.stage = stages.TEST
+    row.prod_version = None
+    row.based_on_id, row.based_on_version = stages.based_on_for(existing)
+
+
 def _apply_template(session: Session, entry: dict, existing: Template | None, when):
     """Write one server template row from a backup entry."""
     target = existing or Template(name=entry["name"], config_json="{}")
     before = change_log.snapshot(target) if existing else None
     target.name = entry["name"]
-    target.description = entry["description"]
-    target.config_json = json.dumps(entry["config"])
-    target.scenario_name = entry["scenario_name"]
-    target.scenario_player_count = entry["scenario_player_count"]
-    target.launch_params_json = json.dumps(entry["launch"])
-    # An empty list is stored as "" on purpose: that is what makes the template
-    # reader fall back to the flat mods[] in config.json for older rows (#55).
-    target.mods_json = json.dumps(entry["mods"]) if entry["mods"] else ""
-    target.extras_json = json.dumps(entry["extras"])
+    for col, value in _template_columns(entry).items():
+        setattr(target, col, value)
     target.updated_at = when
     if existing is None:
         target.created_at = when
@@ -463,8 +606,8 @@ def _apply_mod_template(session: Session, entry: dict, existing: ModTemplate | N
     target = existing or ModTemplate(name=entry["name"])
     before = change_log.mod_template_snapshot(target) if existing else None
     target.name = entry["name"]
-    target.description = entry["description"]
-    target.mods_json = json.dumps(entry["mods"])
+    for col, value in _mod_template_columns(entry).items():
+        setattr(target, col, value)
     target.updated_at = when
     if existing is None:
         target.created_at = when
@@ -501,11 +644,15 @@ def apply(session: Session, payload, decisions: dict, *, is_locked=None) -> dict
     mod_taken = set(mod_templates)
 
     # Refuse before writing anything: an overwrite is a save, and a template
-    # someone else has open must not be saved under them (#102).
-    if is_locked is not None:
-        for entry, action in plan:
-            existing = templates.get(entry["name"])
-            if action == ACTION_OVERWRITE and existing and is_locked(existing.id):
+    # someone else has open must not be saved under them (#102) — nor may a
+    # Prod one be saved over at all (#223).
+    for entries, rows in ((plan, templates), (mod_plan, mod_templates)):
+        for entry, action in entries:
+            existing = rows.get(entry["name"])
+            if action != ACTION_OVERWRITE or existing is None:
+                continue
+            stages.ensure_editable(existing)
+            if rows is templates and is_locked is not None and is_locked(existing.id):
                 raise LockedError(
                     f"'{entry['name']}' is being edited in another session, so it "
                     "cannot be overwritten. Wait for them to finish, or use "
@@ -514,6 +661,8 @@ def apply(session: Session, payload, decisions: dict, *, is_locked=None) -> dict
 
     when = datetime.now(UTC)
     results = {"server_templates": [], "mod_templates": []}
+    made: list[tuple] = []      # (row, entry) created from the file as it was
+    mod_made: list[tuple] = []
 
     for entry, action in plan:
         existing = templates.get(entry["name"])
@@ -528,10 +677,16 @@ def apply(session: Session, payload, decisions: dict, *, is_locked=None) -> dict
         if action in (ACTION_OVERWRITE, ACTION_COPY) and not existing:
             # The template it would have replaced is gone since the preview.
             action = ACTION_CREATE
+        copy_of = existing if action == ACTION_COPY else None
         if action == ACTION_COPY:
             entry = {**entry, "name": free_name(taken, entry["name"])}
             existing = None
         row = _apply_template(session, entry, existing if action == ACTION_OVERWRITE else None, when)
+        if copy_of is not None:
+            _as_copy_of(row, copy_of)
+        elif action == ACTION_CREATE:
+            _restore_stage(session, stages.TEMPLATES, row, entry, _template_columns, when)
+            made.append((row, entry))
         taken.add(row.name)
         results["server_templates"].append({
             "name": row.name,
@@ -551,12 +706,18 @@ def apply(session: Session, payload, decisions: dict, *, is_locked=None) -> dict
             )
         if action in (ACTION_OVERWRITE, ACTION_COPY) and not existing:
             action = ACTION_CREATE
+        copy_of = existing if action == ACTION_COPY else None
         if action == ACTION_COPY:
             entry = {**entry, "name": free_name(mod_taken, entry["name"])}
             existing = None
         row = _apply_mod_template(
             session, entry, existing if action == ACTION_OVERWRITE else None, when
         )
+        if copy_of is not None:
+            _as_copy_of(row, copy_of)
+        elif action == ACTION_CREATE:
+            _restore_stage(session, stages.MOD_LISTS, row, entry, _mod_template_columns, when)
+            mod_made.append((row, entry))
         mod_taken.add(row.name)
         results["mod_templates"].append({
             "name": row.name,
@@ -564,6 +725,11 @@ def apply(session: Session, payload, decisions: dict, *, is_locked=None) -> dict
             "id": row.id,
         })
 
+    session.flush()
+    _link_based_on(session, made, {t.name: t for t in session.exec(select(Template)).all()})
+    _link_based_on(
+        session, mod_made, {mt.name: mt for mt in session.exec(select(ModTemplate)).all()}
+    )
     session.commit()
     counts = {"created": 0, "overwritten": 0, "skipped": 0}
     for item in results["server_templates"] + results["mod_templates"]:

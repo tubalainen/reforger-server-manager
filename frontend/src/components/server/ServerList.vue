@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { formatBytes } from '../../format'
 import { filterServers, tabParams } from '../../server'
 import { serverStatus } from '../../status'
+import StageBadge from '../StageBadge.vue'
 
 // Every server, beside the one you have open (#189). One click switches server and
 // keeps you on the same tab, so comparing two consoles is two clicks, not four.
@@ -66,7 +67,10 @@ function rightText(s) {
         <span class="rsm-dot" :class="dotClass(s)" aria-hidden="true"></span>
         <span class="rsm-server-row-name">
           <span class="d-block text-truncate">{{ s.name }}</span>
-          <small class="d-block text-truncate text-secondary">{{ s.scenario_name || s.template_name || '—' }}</small>
+          <small class="d-block text-truncate text-secondary">
+            {{ s.scenario_name || s.template_name || '—' }}
+            <StageBadge :stage="s.template_stage" :version="s.template_prod_version" />
+          </small>
         </span>
         <small class="rsm-num text-secondary">{{ rightText(s) }}</small>
       </router-link>

@@ -12,6 +12,8 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
 import ModIdLink from '../components/ModIdLink.vue'
+import SaveCommentDialog from '../components/SaveCommentDialog.vue'
+import StageBadge from '../components/StageBadge.vue'
 import { formatBytes } from '../format'
 import { extractModIds, mergeResolved, normalizeMods } from '../mods'
 
@@ -31,6 +33,11 @@ const loading = ref(true)
 const saving = ref(false)
 const error = ref('')
 const notice = ref('')
+// Release stage (#223): a Prod list opens read-only, a Dev save asks for a comment.
+const stage = ref('')
+const prodVersion = ref(null)
+const isProd = computed(() => stage.value === 'prod')
+const askComment = ref(false)
 
 const search = reactive({ q: '', busy: false, results: [], error: '' })
 const modAdd = reactive({ busy: false, error: '' })
@@ -48,6 +55,8 @@ onMounted(async () => {
       const mt = await api(`/api/mod-templates/${props.id}`)
       name.value = mt.name
       description.value = mt.description
+      stage.value = mt.stage || ''
+      prodVersion.value = mt.prod_version ?? null
       mods.value = normalizeMods(mt.mods)
       for (const m of mt.mods) if (m.comment) comments[m.modId] = m.comment
       hydrate()
@@ -176,15 +185,36 @@ function lockOptions(m) {
   return opts
 }
 
-const canSave = computed(() => !!name.value.trim() && !saving.value)
+const canSave = computed(() => !!name.value.trim() && !saving.value && !isProd.value)
 
-async function save() {
+function requestSave() {
+  if (stage.value === 'dev') askComment.value = true
+  else save()
+}
+
+const copyingToTest = ref(false)
+async function copyToTest() {
+  copyingToTest.value = true
+  error.value = ''
+  try {
+    const created = await api(`/api/mod-templates/${props.id}/copy`, { method: 'POST' })
+    router.push({ name: 'mod-template-edit', params: { id: created.id } })
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    copyingToTest.value = false
+  }
+}
+
+async function save(comment = '') {
+  askComment.value = false
   saving.value = true
   error.value = ''
   const body = {
     name: name.value.trim(),
     description: description.value,
     mods: mods.value.map((m) => ({ ...m, comment: (comments[m.modId] || '').trim() })),
+    comment,
   }
   try {
     if (editing.value) {
@@ -204,7 +234,10 @@ async function save() {
 <template>
   <div class="container" style="max-width: 60rem">
     <div class="d-flex justify-content-between align-items-center mb-3">
-      <h1 class="h3 mb-0">{{ editing ? 'Edit mod list' : 'New mod list' }}</h1>
+      <h1 class="h3 mb-0">
+        {{ isProd ? 'View mod list' : editing ? 'Edit mod list' : 'New mod list' }}
+        <StageBadge :stage="stage" :version="prodVersion" class="fs-6 align-middle ms-1" />
+      </h1>
       <button class="btn btn-outline-secondary" @click="router.push({ name: 'mod-templates' })">
         Back
       </button>
@@ -213,7 +246,20 @@ async function save() {
     <div v-if="error" class="alert alert-warning py-2">{{ error }}</div>
     <div v-if="loading" class="text-secondary">Loading…</div>
 
-    <template v-else>
+    <div
+      v-if="isProd"
+      class="alert alert-success py-2 d-flex flex-wrap align-items-center justify-content-between gap-2"
+    >
+      <span>
+        This mod list is in Prod, so it is locked. To change it, copy it to Test, take
+        the copy through Dev and release it as the next version.
+      </span>
+      <button class="btn btn-sm btn-success" :disabled="copyingToTest" @click="copyToTest">
+        {{ copyingToTest ? 'Copying…' : 'Copy to Test' }}
+      </button>
+    </div>
+
+    <fieldset v-if="!loading" :disabled="isProd">
       <div class="card mb-3">
         <div class="card-body">
           <div class="row g-3">
@@ -367,10 +413,12 @@ async function save() {
         <button class="btn btn-outline-secondary" @click="router.push({ name: 'mod-templates' })">
           Cancel
         </button>
-        <button class="btn btn-primary" :disabled="!canSave" @click="save">
+        <button v-if="!isProd" class="btn btn-primary" :disabled="!canSave" @click="requestSave">
           {{ saving ? 'Saving…' : editing ? 'Save changes' : 'Create mod list' }}
         </button>
       </div>
-    </template>
+    </fieldset>
+
+    <SaveCommentDialog v-if="askComment" :busy="saving" @save="save" @cancel="askComment = false" />
   </div>
 </template>

@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 
 import auth
 from models import ModRegistryEntry, Template, get_engine
-from services import edit_locks, mod_order, mod_registry
+from services import edit_locks, mod_order, mod_registry, stages
 
 router = APIRouter(prefix="/api/mods", tags=["mods"])
 
@@ -88,6 +88,10 @@ def _add_to_template(template_id: int, mod_ids: list[str], client_id: str) -> di
             raise HTTPException(status_code=404, detail="Template not found")
         if edit_locks.held_by_other(template_id, client_id):
             raise HTTPException(status_code=423, detail=_LOCKED_DETAIL)
+        try:
+            stages.ensure_editable(t)  # a Prod template is locked (#223)
+        except stages.StageError as exc:
+            raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
         result = mod_registry.add_mods_to_template(session, t, mod_ids)
         result["template"] = {"id": t.id, "name": t.name}
         return result

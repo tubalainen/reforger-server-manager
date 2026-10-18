@@ -90,7 +90,8 @@ def test_copy_template_seeds_its_own_change_log(logged_in):
     src = logged_in.post("/api/templates", json=_spec("Logged")).json()
     copy = logged_in.post(f"/api/templates/{src['id']}/copy").json()
     log = logged_in.get(f"/api/templates/{copy['id']}/changelog").json()
-    assert any(e["summary"] == "Template created" for e in log)
+    # the copy's log opens by saying where it came from (#223)
+    assert any(e["summary"] == "Copied from 'Logged' (Test)" for e in log)
 
 
 def test_copy_missing_template_404s(logged_in):

@@ -27,7 +27,9 @@ from models import (
     Instance,
     ModRegistryEntry,
     ModTemplate,
+    ModTemplateVersion,
     Template,
+    TemplateVersion,
     _utcnow,
     get_engine,
 )
@@ -42,7 +44,7 @@ logger = logging.getLogger("manager.mods")
 # Reading a template's mods
 # --------------------------------------------------------------------------- #
 
-def _enriched_mods(t: Template) -> list[dict]:
+def _enriched_mods(t: Template | TemplateVersion) -> list[dict]:
     """A template's mod list, richest form available.
 
     Prefers the enriched Template.mods_json (dependency metadata + version locks,
@@ -64,7 +66,7 @@ def _enriched_mods(t: Template) -> list[dict]:
         return []
 
 
-def _mod_template_mods(mt: ModTemplate) -> list[dict]:
+def _mod_template_mods(mt: ModTemplate | ModTemplateVersion) -> list[dict]:
     """A mod template's mod list (#166). Same entry shape as a template's."""
     try:
         mods = json.loads(mt.mods_json or "[]")
@@ -122,9 +124,9 @@ def backfill_from_templates(session: Session | None = None) -> int:
     session = session or Session(get_engine())
     try:
         inserted = 0
-        for t in session.exec(select(Template)).all():
+        for t in _all_templates(session):
             inserted += register_mods(session, _enriched_mods(t))
-        for mt in session.exec(select(ModTemplate)).all():
+        for mt in _all_mod_lists(session):
             inserted += register_mods(session, _mod_template_mods(mt))
         if own:
             session.commit()
@@ -229,19 +231,33 @@ def overview(session: Session) -> list[dict]:
     return out
 
 
+def _all_templates(session: Session) -> list:
+    """Every template row plus every released version of one (#223): an older
+    Prod version can still be run or copied, so its mods are still in use."""
+    return [*session.exec(select(Template)).all(), *session.exec(select(TemplateVersion)).all()]
+
+
+def _all_mod_lists(session: Session) -> list:
+    return [
+        *session.exec(select(ModTemplate)).all(),
+        *session.exec(select(ModTemplateVersion)).all(),
+    ]
+
+
 def current_mod_ids(session: Session) -> set[str]:
     """Every modId listed by some template or mod template right now.
 
     Mod templates count as use (#166): a mod you have put on a shelf for later is
-    not stale, so a rescan must not prune it out of the overview.
+    not stale, so a rescan must not prune it out of the overview. So do released
+    Prod versions (#223).
     """
     ids: set[str] = set()
-    for t in session.exec(select(Template)).all():
+    for t in _all_templates(session):
         for m in _enriched_mods(t):
             mid = _norm(m.get("modId"))
             if mid:
                 ids.add(mid)
-    for mt in session.exec(select(ModTemplate)).all():
+    for mt in _all_mod_lists(session):
         for m in _mod_template_mods(mt):
             mid = _norm(m.get("modId"))
             if mid:

@@ -7,6 +7,7 @@ import { attentionItems } from '../../overview'
 import { SERVER_TABS, tabParams } from '../../server'
 import { serverStatus } from '../../status'
 import DeleteServerDialog from '../DeleteServerDialog.vue'
+import StageBadge from '../StageBadge.vue'
 import ServerConsole from './ServerConsole.vue'
 import ServerOverview from './ServerOverview.vue'
 import ServerPlayers from './ServerPlayers.vue'
@@ -209,6 +210,7 @@ onUnmounted(() => {
           </div>
           <div class="d-flex flex-wrap align-items-center gap-2 small text-secondary mt-1">
             <span>{{ row?.scenario_name || inst.template_name || '—' }}</span>
+            <StageBadge :stage="inst.template_stage" :version="inst.template_prod_version" />
             <span aria-hidden="true">·</span>
             <span class="text-capitalize">{{ inst.branch }}</span>
             <template v-if="connect">

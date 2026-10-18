@@ -254,13 +254,34 @@ def _opening_items(snap: dict, opening: str) -> list[tuple[str, str]]:
     return items
 
 
-def record_creation(session: Session, template: Template) -> None:
-    """Seed the log when a template is created."""
+def record_creation(
+    session: Session, template: Template, opening: str = "Template created"
+) -> None:
+    """Seed the log when a template is created (or copied: `opening` says from what)."""
     _append(
         session, template.id,
-        _opening_items(snapshot(template), "Template created"),
+        _opening_items(snapshot(template), opening),
         template.created_at,
     )
+
+
+def record_lines(session: Session, template_id: int, items, when) -> None:
+    """Append ready-made (category, summary) lines — a save comment ('note') or
+    a stage move ('release', #223) — to the save event at `when`."""
+    _append(session, template_id, items, when)
+
+
+def move_template_log(session: Session, from_id: int, to_id: int, label: str) -> None:
+    """Hand a template's whole log to another template (#223): a Dev template
+    released as the next version of a Prod one keeps its history there. Each
+    line is prefixed with where it happened, so "Template created" in the Prod
+    template's log can't be mistaken for the Prod template's own creation."""
+    for row in session.exec(
+        select(TemplateChange).where(TemplateChange.template_id == from_id)
+    ).all():
+        row.template_id = to_id
+        row.summary = f"{label}: {row.summary}"
+        session.add(row)
 
 
 def record_template_import(
@@ -413,10 +434,12 @@ def _append_mod_template(session: Session, mod_template_id: int, items, when) ->
         ))
 
 
-def record_mod_template_creation(session: Session, mt: ModTemplate) -> None:
+def record_mod_template_creation(
+    session: Session, mt: ModTemplate, opening: str = "Mod template created"
+) -> None:
     """Seed the log: the create event plus whatever mods it was created with."""
     snap = mod_template_snapshot(mt)
-    items: list[tuple[str, str]] = [("meta", "Mod template created")]
+    items: list[tuple[str, str]] = [("meta", opening)]
     items += _mod_changes([], snap["mods"])
     _append_mod_template(session, mt.id, items, mt.created_at)
 
@@ -442,6 +465,21 @@ def record_mod_template_update(
     items = mod_template_diff(old, new)
     _append_mod_template(session, mod_template_id, items, when)
     return items
+
+
+def record_mod_template_lines(session: Session, mod_template_id: int, items, when) -> None:
+    """The mod-list twin of record_lines (#223)."""
+    _append_mod_template(session, mod_template_id, items, when)
+
+
+def move_mod_template_log(session: Session, from_id: int, to_id: int, label: str) -> None:
+    """The mod-list twin of move_template_log (#223)."""
+    for row in session.exec(
+        select(ModTemplateChange).where(ModTemplateChange.mod_template_id == from_id)
+    ).all():
+        row.mod_template_id = to_id
+        row.summary = f"{label}: {row.summary}"
+        session.add(row)
 
 
 def mod_template_entries(

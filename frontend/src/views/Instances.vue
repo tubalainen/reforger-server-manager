@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { api } from '../api'
 import DeleteServerDialog from '../components/DeleteServerDialog.vue'
 import Sparkline from '../components/Sparkline.vue'
+import StageBadge from '../components/StageBadge.vue'
 import { formatBytes, formatUptime } from '../format'
 import { attentionItems, branchLabel } from '../overview'
 import { serverStatus } from '../status'
@@ -342,7 +343,10 @@ onUnmounted(() => clearInterval(poll))
                   :to="{ name: 'instance-detail', params: { id: s.id } }"
                   class="fw-semibold text-decoration-none"
                 >{{ s.name }}</router-link>
-                <div class="small text-secondary">{{ scenarioOf(s) }} · {{ branchLabel(s.branch) }}</div>
+                <div class="small text-secondary">
+                  {{ scenarioOf(s) }} · {{ branchLabel(s.branch) }}
+                  <StageBadge :stage="s.template_stage" :version="s.template_prod_version" class="ms-1" />
+                </div>
               </td>
               <td data-label="Status">
                 <span class="d-inline-flex align-items-center gap-2 text-nowrap" :title="rowStatus(s).long">

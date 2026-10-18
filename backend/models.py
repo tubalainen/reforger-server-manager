@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import NaiveDatetime
+from sqlalchemy import UniqueConstraint
 from sqlmodel import Field, SQLModel, create_engine
 
 import config
@@ -37,8 +38,41 @@ class Template(SQLModel, table=True):
     # Hand-edited config keys the wizard doesn't model, as an RFC 7386 merge patch
     # re-applied over every render so they survive a wizard save (#29)
     extras_json: str = "{}"
+    # Release stage (#223): test | dev | prod. Prod is locked: its content
+    # columns only ever change by a release, and then always equal its latest
+    # TemplateVersion. New rows start in test; the upgrade put existing ones in dev.
+    stage: str = "test"
+    prod_version: int | None = None  # latest released version; None unless prod
+    # The Prod template this one was copied from (no FK: the source may be
+    # deleted), so a release can default to "next version of" it.
+    based_on_id: int | None = None
+    based_on_version: int | None = None
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
+
+
+class TemplateVersion(SQLModel, table=True):
+    """A frozen copy of a Prod template as it was released (#223).
+
+    Written once per release and never changed. The content columns carry the
+    same names as Template's so every reader of a template accepts a version
+    row as it is.
+    """
+
+    __table_args__ = (UniqueConstraint("template_id", "version"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    template_id: int = Field(index=True, foreign_key="template.id")
+    version: int
+    released_at: datetime = Field(default_factory=_utcnow)
+    note: str = ""
+    description: str = ""
+    config_json: str
+    scenario_name: str = ""
+    scenario_player_count: int | None = None
+    launch_params_json: str = "{}"
+    mods_json: str = ""
+    extras_json: str = "{}"
 
 
 class ModRegistryEntry(SQLModel, table=True):
@@ -85,8 +119,27 @@ class ModTemplate(SQLModel, table=True):
     name: str = Field(index=True, unique=True)
     description: str = ""
     mods_json: str = "[]"
+    # Release stage, exactly as on Template (#223).
+    stage: str = "test"
+    prod_version: int | None = None
+    based_on_id: int | None = None
+    based_on_version: int | None = None
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
+
+
+class ModTemplateVersion(SQLModel, table=True):
+    """A frozen copy of a Prod mod list as it was released (#223)."""
+
+    __table_args__ = (UniqueConstraint("mod_template_id", "version"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    mod_template_id: int = Field(index=True, foreign_key="modtemplate.id")
+    version: int
+    released_at: datetime = Field(default_factory=_utcnow)
+    note: str = ""
+    description: str = ""
+    mods_json: str = "[]"
 
 
 class AppSetting(SQLModel, table=True):
@@ -146,7 +199,7 @@ class TemplateChange(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     template_id: int = Field(index=True, foreign_key="template.id")
     changed_at: datetime = Field(default_factory=_utcnow, index=True)
-    category: str = "setting"  # meta | scenario | mod | setting
+    category: str = "setting"  # meta | scenario | mod | setting | note | release
     summary: str = ""
 
 
@@ -163,7 +216,7 @@ class ModTemplateChange(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     mod_template_id: int = Field(index=True, foreign_key="modtemplate.id")
     changed_at: datetime = Field(default_factory=_utcnow, index=True)
-    category: str = "mod"  # meta | mod
+    category: str = "mod"  # meta | mod | note | release
     summary: str = ""
 
 
@@ -248,6 +301,22 @@ def _migrate(engine) -> None:
                 "ALTER TABLE template ADD COLUMN extras_json VARCHAR NOT NULL DEFAULT '{}'"
             ))
             conn.commit()
+        # release stages (#223). Templates and mod lists that exist before this
+        # land in dev: editable, but nothing is called golden until it's released.
+        # New rows always state their stage, so the default only reaches these.
+        for table, cols in (
+            ("template", tcols),
+            ("modtemplate", {row[1] for row in conn.execute(text("PRAGMA table_info(modtemplate)"))}),
+        ):
+            if "stage" not in cols:
+                conn.execute(text(
+                    f"ALTER TABLE {table} ADD COLUMN stage VARCHAR NOT NULL DEFAULT 'dev'"
+                ))
+                conn.commit()
+            for col in ("prod_version", "based_on_id", "based_on_version"):
+                if col not in cols:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} INTEGER"))
+                    conn.commit()
 
         # container_id was removed from the Instance model in #88 (containers are
         # located by Docker label now, not a stored id). create_all() never alters

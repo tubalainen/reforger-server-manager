@@ -105,7 +105,8 @@ function chooseForAll(mode) {
     for (const item of itemsOf(key)) {
       if (item.status === 'new') decisions.value[key][item.name] = 'create'
       else if (item.status === 'differs') {
-        decisions.value[key][item.name] = mode === 'restore' ? 'overwrite' : 'skip'
+        // a Prod template here is locked, so restoring leaves it alone (#223)
+        decisions.value[key][item.name] = mode === 'restore' && item.existing_stage !== 'prod' ? 'overwrite' : 'skip'
       } else decisions.value[key][item.name] = 'skip'
     }
   }
@@ -135,10 +136,14 @@ const statusBadge = {
 }
 
 // The choices a row offers depend on what it is: there is nothing to decide
-// about a template that is already identical.
-function optionsFor(status) {
+// about a template that is already identical, and a Prod one here is locked:
+// the file can only come in beside it, as a copy in Test (#223).
+function optionsFor(status, existingStage) {
   if (status === 'new') {
     return [['create', 'Import it'], ['skip', "Don't import"]]
+  }
+  if (status === 'differs' && existingStage === 'prod') {
+    return [['skip', 'Keep what I have'], ['copy', 'Import as a copy (Test)']]
   }
   if (status === 'differs') {
     return [
@@ -291,7 +296,7 @@ onMounted(loadSummary)
                       class="form-select form-select-sm w-auto"
                       :disabled="item.status === 'identical'"
                     >
-                      <option v-for="[value, label] in optionsFor(item.status)" :key="value" :value="value">
+                      <option v-for="[value, label] in optionsFor(item.status, item.existing_stage)" :key="value" :value="value">
                         {{ label }}
                       </option>
                     </select>
