@@ -12,6 +12,7 @@ This guide covers Linux, public VPS, and Windows installations, plus networking,
 | [Linux on a public VPS](#linux-on-a-public-vps) | A rented server with a domain | `https://your-domain` |
 | [Windows 10 or 11](#windows-10-or-11) | Docker Desktop on a PC | `http://localhost:7780` |
 | [A second manager on the same machine](#several-installs-on-one-machine) | Another team, next to an install that already runs | `http://localhost:7781` |
+| [Several teams on a VPS](#several-teams-on-a-vps-the-shared-edge) | Another team on a VPS, at a domain of its own | `https://team2.your-domain` |
 | [The Server Supervisor](#the-server-supervisor) | Whoever manages a machine with several installs: all of them on one read-only page | `http://localhost:7090` |
 
 ## Security
@@ -189,7 +190,35 @@ sudo rsm reset-password --stack team2
 sudo rsm remove-stack team2          # asks before deleting its data
 ```
 
-On a VPS set up with Caddy, a second stack has no HTTPS front of its own yet, so its GUI stays reachable only from the machine itself (an SSH tunnel). `rsm add-stack` says so and asks first. A shared front for several teams is planned in [#204](https://github.com/tubalainen/reforger-server-manager/issues/204).
+On a VPS, give the new stack a domain of its own: `sudo rsm add-stack team2 --domain team2.example.com`. It is then served over HTTPS by the shared edge, see [Several teams on a VPS](#several-teams-on-a-vps-the-shared-edge). Without `--domain` its GUI stays reachable only from the machine itself (an SSH tunnel); `rsm add-stack` says so and asks first.
+
+### Several teams on a VPS: the shared edge
+
+Only one program can hold ports 80 and 443. With one stack on a VPS that is the stack's own Caddy. With several, it is the **edge**: one shared Caddy, an install of its own in `/opt/rsm-edge`, that serves each stack's GUI at a domain of its own and gets and renews every certificate. The stacks still share nothing else. The edge reaches each manager over that stack's own proxy network, so one team's containers cannot reach another's. Each manager believes the client address the edge passes on (`TRUSTED_PROXIES`) from that network's subnet only.
+
+Point a DNS A record per team at the VPS first, then:
+
+```bash
+sudo rsm add-stack team2 --domain team2.example.com
+```
+
+The first time, this sets up the edge and moves every stack still on its own Caddy behind it, at the domain it already has (its `SITE_ADDRESS`). That stack's own Caddy is switched off; its data, servers and login stay as they are. Each team's GUI is then at its own `https://` domain. To add or change a domain later, or to serve a stack that was added without one:
+
+```bash
+sudo rsm edge                                  # what it serves, and whether each is up
+sudo rsm edge add team3 team3.example.com      # serve an existing stack (or give it a new domain)
+sudo rsm edge add --supervisor ops.example.com # the Server Supervisor's page too (optional)
+sudo rsm edge remove team3                     # stop serving it (its GUI is then out of reach)
+sudo rsm edge logs                             # e.g. to watch a certificate being issued
+sudo rsm edge update                           # also done by: sudo rsm update --all
+sudo rsm edge uninstall                        # only with one stack left: it gets its own Caddy back
+```
+
+`rsm edge add` takes `--email ADDRESS` for Let's Encrypt's notices. A stack set up with the plain `docker-compose.yaml` (no domain) is moved to the VPS compose file when it is first served. It keeps its containers and data; its GUI port closes, since the edge is then the only way in. Its manager restarts once, which stops its game servers; auto-start ones come back.
+
+On disk, a stack behind the edge has `docker-compose.vps.behind-edge.yaml` next to its `docker-compose.vps.yaml`, and `rsm` uses both. By hand: `docker compose -f docker-compose.vps.yaml -f docker-compose.vps.behind-edge.yaml up -d`. The edge's sites are listed in `/opt/rsm-edge/sites`; `rsm` writes its `caddy/Caddyfile` and `docker-compose.edge.sites.yaml` from that file, so change sites with `rsm edge`, not by editing those two.
+
+Each stack's proxy network needs a subnet no other network has. `rsm` picks a free `172.31.x.0/24` and writes it to the stack's `.env` as `PROXY_SUBNET`. The first stack keeps the default, `172.31.242.0/24`.
 
 ### Windows: `install.ps1 -Stack`
 
@@ -304,7 +333,7 @@ To let `rsm` drive it too: `echo 'RSM_DIR=/opt/rsm-supervisor' | sudo tee /etc/r
 - A stack is found from the labels its compose file gives its manager. Stacks older than v0.65.0 have none and do not show up. Update every stack to v0.67.0 for the full picture: an older manager shows no version, and its gate is found by its name only.
 - A game server shows its name and player limit once it has been started by a v0.67.0 manager. Until then it is listed as *Server 3* and so on.
 - A server that has no container, because it was never started or its manager removed it on the way down, is not listed.
-- A reverse proxy in front of the Supervisor is up to you for now. A shared HTTPS front for the teams and the Supervisor on a VPS is the next phase of [#204](https://github.com/tubalainen/reforger-server-manager/issues/204).
+- On a VPS, the shared edge can serve the Supervisor's page over HTTPS: `sudo rsm edge add --supervisor ops.example.com` (see [the shared edge](#several-teams-on-a-vps-the-shared-edge)). It then refuses to start on a weak password, like any install on the internet, and its page also stays on `127.0.0.1:7090` as before. Elsewhere, a reverse proxy in front of it is up to you.
 
 ## Networking and firewalls
 

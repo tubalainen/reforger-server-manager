@@ -342,8 +342,142 @@ jobs:
           sudo rsm --all status || true
           docker ps -a || true
 
+  # Several teams on one VPS behind the shared edge (#204, phase 4): the real VPS
+  # installer, then rsm moving that stack behind the edge as it adds a second
+  # one with a domain, the Supervisor joining, and the way back to one stack on
+  # its own Caddy. Plain-HTTP test domains (http://NAME.test): no certificates,
+  # but the same routing, networks and trust.
+  edge-e2e:
+    runs-on: ubuntu-latest
+    env:
+      RSM_REF: ${{ github.head_ref || github.ref_name }}
+      RSM_ASSUME_YES: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Keep the runner's own firewall out of it
+        run: sudo mv /usr/sbin/ufw /usr/sbin/ufw.off 2>/dev/null || true
+
+      - name: A VPS install on its own Caddy
+        run: |
+          set -eux
+          sudo -E RSM_DOMAIN=http://one.test sh scripts/linux/install-vps.sh
+          for _ in $(seq 60); do
+            curl -fsS -H 'Host: one.test' http://127.0.0.1/api/health | grep -q ok && break
+            sleep 2
+          done
+          curl -fsS -H 'Host: one.test' http://127.0.0.1/api/health | grep -q ok
+          test "$(docker inspect -f '{{.State.Running}}' reforger-caddy)" = true
+
+      - name: rsm add-stack --domain moves it behind the edge and adds a second team
+        run: |
+          set -eux
+          sudo -E rsm add-stack team2 --domain http://two.test | tee add.log
+          grep -q 'Stack .team2. is up' add.log
+          test "$(docker inspect -f '{{.State.Running}}' rsm-edge)" = true
+          # The first stack's own Caddy gave ports 80 and 443 to the edge.
+          ! docker inspect reforger-caddy >/dev/null 2>&1
+          test -f /opt/reforger-server-manager/docker-compose.vps.behind-edge.yaml
+          sudo grep -q '^RSM_COMPOSE=docker-compose.vps.yaml$' /etc/reforger-server-manager/stacks/team2.conf
+          for host in one.test two.test; do
+            for _ in $(seq 60); do
+              curl -fsS -H "Host: $host" http://127.0.0.1/api/health | grep -q ok && break
+              sleep 2
+            done
+            curl -fsS -H "Host: $host" http://127.0.0.1/api/health | grep -q ok
+          done
+          sudo rsm edge | tee edge.log
+          grep -q 'http://one.test .*reforger' edge.log
+          grep -q 'http://two.test .*team2' edge.log
+
+      - name: Each stack trusts the edge on its own network, and only there
+        run: |
+          set -eux
+          subs=''
+          for s in reforger team2; do
+            sub=$(docker network inspect -f '{{(index .IPAM.Config 0).Subnet}}' "$s-proxy")
+            trusted=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$s-manager" | sed -n 's/^TRUSTED_PROXIES=//p')
+            test "$sub" = "$trusted"
+            ip=$(docker inspect -f "{{(index .NetworkSettings.Networks \"$s-proxy\").IPAddress}}" rsm-edge)
+            python3 -c "import ipaddress, sys; sys.exit(ipaddress.ip_address('$ip') not in ipaddress.ip_network('$sub'))"
+            subs="$subs $sub"
+          done
+          test "$(echo $subs | tr ' ' '\n' | sort -u | wc -l)" = 2
+          # The stacks still share no network: team2's manager cannot reach the other.
+          if docker exec team2-manager python -c "import socket; socket.create_connection(('reforger-manager', 8080), 3)"; then
+            echo "team2 reached reforger's manager"; exit 1
+          fi
+          # Nor the edge's admin endpoint.
+          edge_ip=$(docker inspect -f '{{(index .NetworkSettings.Networks "team2-proxy").IPAddress}}' rsm-edge)
+          if docker exec team2-manager python -c "import socket; socket.create_connection(('$edge_ip', 2019), 3)"; then
+            echo "team2 reached Caddy's admin API"; exit 1
+          fi
+
+      - name: A stack behind the edge restarts without losing it
+        run: |
+          set -eux
+          sudo rsm restart --stack team2
+          docker network inspect team2-proxy >/dev/null
+          for _ in $(seq 60); do
+            curl -fsS -H 'Host: two.test' http://127.0.0.1/api/health | grep -q ok && break
+            sleep 2
+          done
+          curl -fsS -H 'Host: two.test' http://127.0.0.1/api/health | grep -q ok
+
+      - name: The Server Supervisor behind the edge
+        run: |
+          set -eux
+          docker build -t ghcr.io/tubalainen/reforger-server-manager:e2e .
+          sudo -E rsm supervisor install --version e2e
+          sudo -E rsm edge add --supervisor http://sup.test
+          for _ in $(seq 60); do
+            curl -fsS -H 'Host: sup.test' http://127.0.0.1/api/health | grep -q ok && break
+            sleep 2
+          done
+          curl -fsS -H 'Host: sup.test' http://127.0.0.1/api/health | grep -q ok
+          trusted=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' rsm-supervisor | sed -n 's/^TRUSTED_PROXIES=//p')
+          test "$trusted" = "$(docker network inspect -f '{{(index .IPAM.Config 0).Subnet}}' rsm-supervisor-proxy)"
+          # Its observer still has no network at all.
+          test "$(docker inspect -f '{{.HostConfig.NetworkMode}}' rsm-supervisor-observer)" = none
+
+      - name: Removing a stack takes it off the edge
+        run: |
+          set -eux
+          sudo -E rsm remove-stack team2
+          ! docker network inspect team2-proxy >/dev/null 2>&1
+          ! grep -q team2 /opt/rsm-edge/sites
+          ! curl -fsS -H 'Host: two.test' http://127.0.0.1/api/health | grep -q ok
+          curl -fsS -H 'Host: one.test' http://127.0.0.1/api/health | grep -q ok
+
+      - name: Without the edge the last stack gets its own Caddy back
+        run: |
+          set -eux
+          sudo -E rsm edge remove --supervisor
+          ! docker network inspect rsm-supervisor-proxy >/dev/null 2>&1
+          sudo -E rsm edge uninstall
+          ! docker inspect rsm-edge >/dev/null 2>&1
+          test ! -e /opt/rsm-edge
+          test ! -e /etc/reforger-server-manager/edge.conf
+          test ! -e /opt/reforger-server-manager/docker-compose.vps.behind-edge.yaml
+          for _ in $(seq 60); do
+            curl -fsS -H 'Host: one.test' http://127.0.0.1/api/health | grep -q ok && break
+            sleep 2
+          done
+          curl -fsS -H 'Host: one.test' http://127.0.0.1/api/health | grep -q ok
+          test "$(docker inspect -f '{{.State.Running}}' reforger-caddy)" = true
+
+      - name: Logs
+        if: always()
+        run: |
+          docker ps -a || true
+          docker logs --tail 100 rsm-edge 2>&1 || true
+          cat /opt/rsm-edge/caddy/Caddyfile 2>/dev/null || true
+          for c in reforger-manager team2-manager reforger-caddy rsm-supervisor; do
+            echo "::group::$c"; docker logs --tail 100 "$c" 2>&1 || true; echo "::endgroup::"
+          done
+
   publish:
-    needs: [test, gate-e2e, rsm-e2e]
+    needs: [test, gate-e2e, rsm-e2e, edge-e2e]
     # Publish on pushes to main and on version tags, never for PRs
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
