@@ -16,6 +16,7 @@ A Prod row's own columns always equal its latest version, so everything that
 reads a template keeps reading the row and is right for "latest".
 """
 import logging
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -201,6 +202,38 @@ def _next_version(session: Session, kind: _Kind, item_id: int) -> int:
         select(func.max(vm.version)).where(getattr(vm, kind.fk) == item_id)
     ).one()
     return (top or 0) + 1
+
+
+NAME_MAX = 100  # the name column's length, templates and mod lists alike
+# A trailing version tag the user may have typed themselves ("Arland V1"), so a
+# copy reads "Arland V2" rather than "Arland V1 V2".
+_VERSION_TAG = re.compile(r"\s+v\d+$", re.IGNORECASE)
+
+
+def copy_name(session: Session, kind: _Kind, src) -> str:
+    """A free name for a copy of `src` (#232).
+
+    A copy that stems from a Prod item is named after the version it becomes
+    when released as that item's next version: copying "Arland" at v1 gives
+    "Arland V2". Any other copy keeps its source's name plus a number:
+    "Arland (2)". A name already taken gets " (2)", " (3)", … after it. The
+    stem is shortened, never the suffixes, to stay within the column.
+    """
+    taken = set(session.exec(select(kind.model.name)).all())
+    based_on_id, _ = based_on_for(src)
+    prod = session.get(kind.model, based_on_id) if based_on_id else None
+    if prod is not None and prod.stage == PROD:
+        stem = _VERSION_TAG.sub("", prod.name)
+        tag = f" V{_next_version(session, kind, prod.id)}"
+        n = 1
+    else:
+        stem, tag, n = src.name, "", 2  # the source holds the bare name
+    while True:
+        suffix = tag + ("" if n == 1 else f" ({n})")
+        candidate = stem[: NAME_MAX - len(suffix)].rstrip() + suffix
+        if candidate not in taken:
+            return candidate
+        n += 1
 
 
 def promote(

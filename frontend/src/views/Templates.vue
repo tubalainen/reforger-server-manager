@@ -101,7 +101,7 @@ function download(t) {
 }
 
 // Duplicate a template (#129): the backend clones it into Test (#223) under a
-// free "Copy of …" name, then we jump straight into the copy's editor.
+// free name (" V2" after a Prod one, #232), then we jump into the copy's editor.
 const copying = ref(0)
 async function copy(t) {
   copying.value = t.id

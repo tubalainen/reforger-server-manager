@@ -19,8 +19,9 @@ Templates define how servers are created. They cover the scenario, Workshop mods
 Key template capabilities include:
 
 - Search official and community scenarios and set per-scenario player limits.
-- Name a new template first: its in-game server name follows the template name until you
-  type your own (or roll a random one in the wizard).
+- Start each new template with a distinguishable in-game server name instead of one
+  every server shares, re-rollable in the wizard; the template is named after it until
+  you type a template name of your own.
 - Search the Workshop, fetch metadata, resolve dependencies, and preserve dependency order.
 - Drag mods into a load order, or ask an AI for one: paste the prompt into any free web
   assistant, or answer it in one click with a local Ollama on your own GPU or any
@@ -32,11 +33,12 @@ Key template capabilities include:
 - Keep template change logs and see which servers still use an older revision.
 - Move templates and mod lists through Test, Dev and Prod. Prod is locked; each release is
   a version (v1, v2, …), and a changed copy is released as the next version of the original.
+  A copy of a Prod item is named after that next version ("Escapist Arland V2").
   Saves in Dev carry a comment in the change log.
 - Run a server on the latest release of a Prod template, or pin it to an older version.
 - Delete a template even while servers use it: the prompt names them, running ones are shut down, and they show **No template selected** until a new one is chosen in their Settings.
 - File templates under game-mode categories (built-in or your own) and show one category at a time.
-  A new template's category is guessed from its name, scenario and Workshop mod.
+  A new template's category is guessed from its server name, scenario and Workshop mod.
 
 ## Server operations
 

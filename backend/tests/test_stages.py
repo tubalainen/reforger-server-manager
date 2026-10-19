@@ -121,6 +121,8 @@ def test_prod_can_still_be_copied_and_read(logged_in):
     copy = logged_in.post(f"/api/templates/{t['id']}/copy").json()
     assert copy["stage"] == "test"
     assert copy["based_on"] == {"id": t["id"], "name": "Conflict", "version": 1}
+    # named after the version it becomes when released, never "Copy of …" (#232)
+    assert copy["name"] == "Conflict V2"
     assert any(
         e["summary"] == "Copied from 'Conflict' v1 (Prod)" for e in _log(logged_in, copy["id"])
     )
@@ -132,9 +134,34 @@ def test_a_copy_of_a_copy_still_stems_from_the_prod_original(logged_in):
     first = logged_in.post(f"/api/templates/{t['id']}/copy").json()
     second = logged_in.post(f"/api/templates/{first['id']}/copy").json()
     assert second["based_on"]["id"] == t["id"]
+    assert (first["name"], second["name"]) == ("Conflict V2", "Conflict V2 (2)")
     # a copy of something that never was Prod stems from nothing
     plain = _create(logged_in, "Plain")
     assert logged_in.post(f"/api/templates/{plain['id']}/copy").json()["based_on"] is None
+
+
+def test_a_prod_copy_is_named_after_the_next_version(logged_in):
+    # The user's own example (#232), at v2 so the next one is V3.
+    name = "[SWE] Grayzone - Escapist Arland [grayzone.se]"
+    t = _create(logged_in, name)
+    _to_prod(logged_in, t["id"])
+    first = logged_in.post(f"/api/templates/{t['id']}/copy").json()
+    assert first["name"] == f"{name} V2"
+    _promote(logged_in, first["id"])
+    _promote(logged_in, first["id"], into_id=t["id"])  # now v2
+    # copying an older version still names the version a release would make
+    older = logged_in.post(f"/api/templates/{t['id']}/copy", json={"version": 1}).json()
+    assert older["name"] == f"{name} V3"
+
+
+def test_a_prod_copy_does_not_stack_version_tags_or_overflow(logged_in):
+    t = _create(logged_in, "Arland v1")
+    _to_prod(logged_in, t["id"])
+    assert logged_in.post(f"/api/templates/{t['id']}/copy").json()["name"] == "Arland V2"
+    long = _create(logged_in, "L" * 100)
+    _to_prod(logged_in, long["id"])
+    copy = logged_in.post(f"/api/templates/{long['id']}/copy").json()
+    assert copy["name"] == "L" * 97 + " V2"
 
 
 def test_release_as_the_next_version_of_a_prod_template(logged_in):
@@ -282,13 +309,13 @@ def test_mod_list_copy_and_release_as_next_version(logged_in):
     r = logged_in.post(f"/api/mod-templates/{mt['id']}/copy")
     assert r.status_code == 201
     copy = r.json()
-    assert copy["name"] == "Copy of Pack"
+    assert copy["name"] == "Pack V2"
     assert copy["stage"] == "test"
     assert copy["based_on"] == {"id": mt["id"], "name": "Pack", "version": 1}
 
     logged_in.put(
         f"/api/mod-templates/{copy['id']}",
-        json=_mods("Copy of Pack", [{"modId": A}, {"modId": B, "name": "Bravo"}])
+        json=_mods("Pack V2", [{"modId": A}, {"modId": B, "name": "Bravo"}])
         | {"comment": "added Bravo"},
     )
     _mod_promote(logged_in, copy["id"])
@@ -299,8 +326,8 @@ def test_mod_list_copy_and_release_as_next_version(logged_in):
     assert [m["modId"] for m in result["mods"]] == [A, B]
     assert logged_in.get(f"/api/mod-templates/{copy['id']}").status_code == 404
     summaries = [e["summary"] for e in logged_in.get(f"/api/mod-templates/{mt['id']}/changelog").json()]
-    assert "In 'Copy of Pack': added Bravo" in summaries
-    assert "Released as v2 from 'Copy of Pack' (Dev)" in summaries
+    assert "In 'Pack V2': added Bravo" in summaries
+    assert "Released as v2 from 'Pack V2' (Dev)" in summaries
 
 
 def test_deleting_a_prod_mod_list_removes_its_versions(logged_in):
@@ -514,7 +541,7 @@ def test_an_older_mod_list_version_can_be_loaded(logged_in):
     copy = logged_in.post(f"/api/mod-templates/{mt['id']}/copy").json()
     logged_in.put(
         f"/api/mod-templates/{copy['id']}",
-        json=_mods("Copy of Pack", [{"modId": A}, {"modId": B}]),
+        json=_mods("Pack V2", [{"modId": A}, {"modId": B}]),
     )
     _mod_promote(logged_in, copy["id"])
     _mod_promote(logged_in, copy["id"], into_id=mt["id"])

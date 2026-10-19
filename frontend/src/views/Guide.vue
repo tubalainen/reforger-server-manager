@@ -116,12 +116,15 @@ const faq = [
        container by itself on the next start.`,
   },
   {
-    q: 'What is my new server called in the in-game browser?',
-    a: `The template's name. A new template's in-game server name copies the template name
-       as you type it, so the two match unless you want them not to. Type a name of your own
-       on the Settings step, or press 🎲 for a random "Arma Reforger Server Hidden Ridge"
-       style one, and it stops following; "Use template name" puts it back. Editing
-       an existing template never changes its in-game name.`,
+    q: 'Why is my new template called "Arma Reforger Server Hidden Ridge"?',
+    a: `Because every server used to be called "Arma Reforger Server", and the in-game
+       browser filled up with identical entries — one prefilled field nobody edited,
+       multiplied by everyone. A new template's in-game server name now starts with the
+       same searchable prefix plus two words of its own, and the template is named after
+       it. Type over the server name on the Settings step, or press 🎲 for another
+       suggestion, and the template name follows; type a template name of your own on the
+       Save step and it stops following ("Use in-game name" puts it back). Editing an
+       existing template never changes either name.`,
   },
   {
     q: 'Do mods update automatically?',
@@ -473,12 +476,6 @@ const faq = [
         </p>
         <ul class="mb-0">
           <li class="mb-2">
-            <strong>Name and category:</strong> the first step starts with the template's
-            name and its category. A new template's category is guessed from the name, the
-            scenario and its Workshop mod (COE, HQC, Game Master and the rest are recognised,
-            as are your own category names); pick one yourself and the guess stops.
-          </li>
-          <li class="mb-2">
             <strong>Scenario:</strong> search the Workshop and pick one — each server runs
             exactly one scenario. The wizard shows the current pick and asks for
             confirmation before replacing or removing it (the mods it brought in leave
@@ -505,11 +502,17 @@ const faq = [
             runs, since a server hosts one scenario at a time).
           </li>
           <li class="mb-2">
-            <strong>Settings:</strong> server name (a new template's follows the template
-            name until you type your own), passwords, player limit and view
+            <strong>Settings:</strong> server name, passwords, player limit and view
             distances up front; VON, persistence (save games), RCON and engine launch
             parameters under "advanced". Max players is seeded from the player count the
             chosen scenario declares on the Workshop — override it freely, it is yours.
+          </li>
+          <li class="mb-2">
+            <strong>Save:</strong> the template's name, category and description. A new
+            template is named after its in-game server name until you type a name of your
+            own, and its category is guessed from the server name, the scenario and its
+            Workshop mod (COE, HQC, Game Master and the rest are recognised, as are your own
+            category names); pick one yourself and the guess stops.
           </li>
           <li class="mb-2">
             <strong>Player access:</strong> further down the same Settings step, in the
@@ -543,8 +546,9 @@ const faq = [
           </li>
           <li class="mb-2">
             <strong>Changing a Prod template:</strong> copy it (<em>Copy to Test</em> in its
-            <em>⋯</em> menu or on its page). The copy lands in Test and remembers where it
-            came from. Take it through Dev, then <em>Release…</em> it as the
+            <em>⋯</em> menu or on its page). The copy lands in Test, named after the version
+            it will become (copying <em>Escapist Arland</em> at v1 gives <em>Escapist Arland
+            V2</em>), and remembers where it came from. Take it through Dev, then <em>Release…</em> it as the
             <em>next version of</em> the original. The original keeps its name and becomes
             v2, the copy is used up, and its change log moves over. Servers on the original
             pick the new version up on their next restart, unless they are pinned to an
@@ -553,7 +557,7 @@ const faq = [
           </li>
           <li class="mb-2">
             <strong>Categories:</strong> file a template under a game mode (Game Master,
-            HQC, Conflict, COE, Escapist, Freedom Fighters, or your own) on the first step, or
+            HQC, Conflict, COE, Escapist, Freedom Fighters, or your own) on the Save step, or
             with <em>Change category…</em> in its <em>⋯</em> menu, which works for a Prod
             template too because a category is only a label. The Server templates page can
             show one category at a time. Add, rename and delete categories under
@@ -562,7 +566,8 @@ const faq = [
           </li>
           <li class="mb-2">
             <strong>Copy:</strong> <em>Copy to Test</em> in a template's <em>⋯</em> menu
-            duplicates it into a new "Copy of…" one in Test and opens it for editing — start
+            duplicates it into Test and opens it for editing. A copy of a Prod template is
+            named after its next version (" V2"), any other copy gets a number (" (2)") — start
             a variant (a different scenario, an extra mod, tighter settings) from a known-good
             base instead of rebuilding it from scratch. Editing or deleting the copy never
             touches the original.
