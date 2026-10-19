@@ -5,6 +5,7 @@ import { formatBytes, formatUptime } from '../../format'
 import { isErrorLine } from '../../log'
 import { serverSeries, tabParams } from '../../server'
 import Sparkline from '../Sparkline.vue'
+import ModDownloadProgress from './ModDownloadProgress.vue'
 
 // The first thing a server's page shows (#189): its live figures, the last few
 // console lines, and how it is looked after — schedule, crash and reboot behaviour,
@@ -89,6 +90,9 @@ const restartTimes = computed(() => (props.inst.restart_times || []).join(', ') 
           <span v-if="view.note" class="text-secondary"> · {{ view.note }}</span>.
           Players can join once it shows online.
         </span>
+      </div>
+      <div v-if="stats?.mod_download" class="card-body border-top py-2">
+        <ModDownloadProgress :download="stats.mod_download" />
       </div>
     </div>
     <div v-else-if="!running" class="card">

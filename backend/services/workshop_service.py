@@ -215,7 +215,7 @@ class WorkshopService:
         """Resolve an asset + its full recursive dependency tree.
 
         Returns {asset, root, mods, missing, total_size} where `mods` is a flat,
-        deduped list of {modId, name, version, versions, provides_scenarios,
+        deduped list of {modId, name, version, versions, size, provides_scenarios,
         kind, tags, dependencies:[ids]} (the root asset first): `kind` is the
         Workshop classification (scenario|terrain|addon) and `tags` its category
         labels (#131); `version` is the current
@@ -239,6 +239,9 @@ class WorkshopService:
                     "name": entry.get("name"),
                     "version": entry.get("version"),
                     "versions": entry.get("versions") or [],
+                    # Its own download size, so callers summing several roots
+                    # that share dependencies can count each mod once (#235).
+                    "size": entry.get("size") or 0,
                     "provides_scenarios": bool(entry.get("scenarios")),
                     # The Workshop's own classification (#131): kind is
                     # scenario|terrain|addon, tags are its category labels
@@ -293,6 +296,7 @@ class WorkshopService:
                  "name": dep.get("name") or child.get("name"),
                  "version": dep.get("version") or child.get("version"),
                  "versions": child.get("versions"),
+                 "size": dep.get("size") or child.get("size"),
                  "scenarios": child.get("scenarios"),
                  "kind": child.get("kind"),
                  "tags": child.get("tags")},
