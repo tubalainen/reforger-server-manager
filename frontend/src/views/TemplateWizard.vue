@@ -3,6 +3,7 @@ import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, reactive, r
 import { useRouter } from 'vue-router'
 import { api, clientId } from '../api'
 import { formatBytes } from '../format'
+import { guessCategory } from '../categoryGuess'
 import { randomServerName } from '../serverName'
 import CollapsibleCard from '../components/CollapsibleCard.vue'
 import HelpTip from '../components/HelpTip.vue'
@@ -63,7 +64,7 @@ const router = useRouter()
 const editing = computed(() => props.id != null)
 
 const step = ref(1)
-const steps = ['Scenario', 'Mods', 'Settings', 'Save']
+const steps = ['Name & scenario', 'Mods', 'Settings', 'Save']
 const error = ref('')
 const saving = ref(false)
 
@@ -147,10 +148,11 @@ const spec = reactive({
   scenario_name: '',
   scenario_player_count: null,
   mods: [],
-  // A new template starts with a name of its own rather than the one everybody
-  // else's server also has (#186). Editing an existing template loads its saved
-  // name over this, so nothing is ever renamed behind the user's back.
-  game_name: randomServerName(),
+  // A new template's in-game name follows the template name (#232) until the
+  // user types one of their own (see gameNameFollows). Editing an existing
+  // template loads its saved name over this, so nothing is renamed behind the
+  // user's back.
+  game_name: '',
   password: '',
   admin_password: '',
   // Player access lists (#154). Declared here so a NEW template carries them
@@ -587,6 +589,9 @@ const scenarioDroppedMods = computed(() => {
 // Failsafes (#59): replacing or removing the scenario asks first, spelling out
 // which mods go with it.
 const replacePrompt = ref(null) // { sc, res } awaiting confirmation
+// The Workshop's game mode of the picked scenario, a hint for the category
+// guess (#232). Not saved: an existing template's category is never guessed.
+const scenarioGameMode = ref('')
 const removeScenarioPrompt = ref(false)
 
 function chooseScenario(sc, res) {
@@ -605,6 +610,7 @@ function usablePlayerCount(n) {
 function applyScenario(sc, res) {
   spec.scenario_id = sc.scenario_id
   spec.scenario_name = sc.name || ''
+  scenarioGameMode.value = sc.game_mode || ''
   // Size the server for the scenario the Workshop declares it for (#65) —
   // 64 slots on a 12-player co-op scenario is nobody's intent. The Settings
   // step keeps the field editable and offers this value back as a reset.
@@ -619,13 +625,17 @@ function applyScenario(sc, res) {
     fromScenario: true,
   })
   replacePrompt.value = null
-  step.value = 2
+  // On to Mods, unless the template still needs its name (#232): it is asked
+  // for on this step now, so leaving it would only send the user back here.
+  if (spec.name.trim()) step.value = 2
+  else nameNudge.value = true
 }
 
 function removeScenario() {
   spec.mods = clearScenarioMods(normalizeMods(spec.mods))
   spec.scenario_id = ''
   spec.scenario_name = ''
+  scenarioGameMode.value = ''
   // max_players is left alone: it is the user's setting now, scenario or not.
   spec.scenario_player_count = null
   maxPlayersNotice.value = null
@@ -1401,6 +1411,9 @@ async function importConfigFile(event) {
     // config.json has only a flat mods[]; treat each as an explicit pick (#55)
     spec.mods = normalizeMods(imported.mods)
     hydrateVersionHistories()
+    // An imported config brings its own in-game name, which a template name
+    // typed later must not overwrite (#232).
+    if (imported.game_name) gameNameFollows.value = false
     // config.json has no template name; suggest one from the in-game name/file
     if (!spec.name) spec.name = imported.game_name || file.name.replace(/\.json$/i, '')
     if (spec.scenario_id) {
@@ -1484,12 +1497,34 @@ function downloadJson() {
 }
 
 const canNext = computed(() => {
-  if (step.value === 1) return !!spec.scenario_id
+  if (step.value === 1) return !!spec.scenario_id && spec.name.trim().length > 0
   if (step.value === 4) return spec.name.trim().length > 0
   return true
 })
 
-// The categories a template can be filed under (#223), for the Save step.
+// Set when a scenario was picked before the template had a name, so step 1
+// says why it did not move on to Mods (#232).
+const nameNudge = ref(false)
+watch(() => spec.name, (name) => {
+  if (name.trim()) nameNudge.value = false
+})
+
+// A new template's in-game name copies the template name until the user gives
+// it one of their own (#232). Existing templates keep what they saved.
+const gameNameFollows = ref(!editing.value)
+watch(() => spec.name, (name) => {
+  if (gameNameFollows.value) spec.game_name = name
+})
+function useTemplateNameInGame() {
+  spec.game_name = spec.name
+  if (!editing.value) gameNameFollows.value = true
+}
+function randomizeGameName() {
+  spec.game_name = randomServerName()
+  gameNameFollows.value = false
+}
+
+// The categories a template can be filed under (#223), on step 1.
 const categories = ref([])
 async function loadCategories() {
   try {
@@ -1499,8 +1534,36 @@ async function loadCategories() {
   }
 }
 
+// A new template's category is guessed from its name, the scenario, its game
+// mode and the mod behind it (#232) until the user picks one; an existing template's never is.
+const categoryPicked = ref(editing.value)
+const categoryGuessed = ref(false)
+watch(
+  () => [
+    categories.value,
+    spec.name,
+    spec.scenario_name,
+    scenarioFileName(spec.scenario_id),
+    scenarioGameMode.value,
+    scenarioSourceMod.value?.name,
+  ],
+  (texts) => {
+    if (categoryPicked.value) return
+    const guess = guessCategory(categories.value, texts.slice(1))
+    spec.category_id = guess
+    categoryGuessed.value = guess != null
+  },
+)
+const categoryName = computed(
+  () => categories.value.find((c) => c.id === spec.category_id)?.name || 'Uncategorised',
+)
+function pickCategory() {
+  categoryPicked.value = true
+  categoryGuessed.value = false
+}
+
 onMounted(async () => {
-  loadCategories() // not awaited: only the Save step needs it
+  loadCategories() // not awaited: the picker fills in when it lands
   if (editing.value) {
     try {
       // Load first: a Prod template is read-only and takes no edit lock (#223).
@@ -1605,6 +1668,51 @@ onBeforeUnmount(() => {
         <!-- STEP 1: SCENARIO -->
         <div v-show="step === 1">
           <fieldset :disabled="readOnly">
+          <!-- Name and category first (#232): the in-game name and the category
+               guess both start from the template name. -->
+          <div class="card mb-3">
+            <div class="card-header py-2 fw-semibold small">Template</div>
+            <div class="card-body">
+              <div class="row g-3">
+                <div class="col-md-7">
+                  <label for="tpl-name" class="form-label">Template name</label>
+                  <input
+                    id="tpl-name"
+                    v-model="spec.name"
+                    class="form-control"
+                    :class="{ 'is-invalid': nameNudge }"
+                    placeholder="e.g. Conflict Everon (stable)"
+                  />
+                  <div v-if="nameNudge" class="invalid-feedback">
+                    Name the template to go on to Mods.
+                  </div>
+                </div>
+                <div class="col-md-5">
+                  <label for="tpl-category" class="form-label">Category</label>
+                  <select
+                    id="tpl-category"
+                    v-model="spec.category_id"
+                    class="form-select"
+                    @change="pickCategory"
+                  >
+                    <option :value="null">Uncategorised</option>
+                    <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option>
+                  </select>
+                  <div class="form-text">
+                    <template v-if="categoryGuessed">
+                      Guessed from the name and scenario. Pick another if it is wrong.
+                    </template>
+                    <template v-else>
+                      The game mode, to sort templates by.
+                    </template>
+                    Managed under
+                    <router-link :to="{ name: 'categories' }">System › Category management</router-link>.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- Import an existing config.json to pre-fill the wizard (issue #35) -->
           <div v-if="!editing" class="card bg-body-tertiary mb-3">
             <div class="card-body py-2">
@@ -2331,17 +2439,31 @@ onBeforeUnmount(() => {
                 <div class="col-12">
                   <label class="form-label" for="game-name">Server name (in-game browser)</label>
                   <div class="input-group">
-                    <input id="game-name" v-model="spec.game_name" class="form-control" />
+                    <input
+                      id="game-name"
+                      v-model="spec.game_name"
+                      class="form-control"
+                      @input="gameNameFollows = false"
+                    />
+                    <button
+                      v-if="spec.name && spec.game_name !== spec.name"
+                      class="btn btn-outline-secondary"
+                      type="button"
+                      title="Use the template name as the in-game name"
+                      @click="useTemplateNameInGame"
+                    >Use template name</button>
                     <button
                       class="btn btn-outline-secondary"
                       type="button"
-                      title="Suggest another name"
-                      @click="spec.game_name = randomServerName()"
+                      title="Suggest a random name"
+                      @click="randomizeGameName"
                     >🎲 Randomize</button>
                   </div>
                   <div class="form-text">
-                    This is what players see in the in-game server browser. New templates get
-                    a name of their own so yours is not one of many identical entries.
+                    This is what players see in the in-game server browser.
+                    <template v-if="gameNameFollows">
+                      It follows the template name until you type a name of your own here.
+                    </template>
                   </div>
                 </div>
                 <div class="col-md-6">
@@ -3000,24 +3122,25 @@ onBeforeUnmount(() => {
         <!-- STEP 4: SAVE -->
         <div v-show="step === 4">
           <fieldset :disabled="readOnly">
-          <div class="mb-3">
-            <label class="form-label">Template name</label>
-            <input v-model="spec.name" class="form-control" placeholder="e.g. Conflict Everon (stable)" />
-          </div>
+          <!-- What is about to be saved; the name and category are set on step 1 (#232) -->
+          <dl class="row small mb-3">
+            <dt class="col-sm-4 text-secondary fw-normal">Template name</dt>
+            <dd class="col-sm-8">
+              <template v-if="spec.name.trim()">{{ spec.name }}</template>
+              <a v-else href="#" class="link-danger" @click.prevent="step = 1">Not named yet: name it on step 1</a>
+            </dd>
+            <dt class="col-sm-4 text-secondary fw-normal">Category</dt>
+            <dd class="col-sm-8">{{ categoryName }}</dd>
+            <dt class="col-sm-4 text-secondary fw-normal">In-game name</dt>
+            <dd class="col-sm-8 text-break">{{ spec.game_name || '—' }}</dd>
+            <dt class="col-sm-4 text-secondary fw-normal">Scenario</dt>
+            <dd class="col-sm-8 text-break">{{ scenarioDisplayName || '—' }}</dd>
+            <dt class="col-sm-4 text-secondary fw-normal">Mods</dt>
+            <dd class="col-sm-8 mb-0">{{ spec.mods.length }}</dd>
+          </dl>
           <div class="mb-3">
             <label class="form-label">Description <small class="text-secondary">(optional)</small></label>
             <input v-model="spec.description" class="form-control" />
-          </div>
-          <div class="mb-3">
-            <label for="tpl-category" class="form-label">Category</label>
-            <select id="tpl-category" v-model="spec.category_id" class="form-select">
-              <option :value="null">Uncategorised</option>
-              <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option>
-            </select>
-            <div class="form-text">
-              The game mode, to sort templates by. Categories are managed under
-              <router-link :to="{ name: 'categories' }">System › Category management</router-link>.
-            </div>
           </div>
           <p v-if="!editing" class="small text-secondary">
             A new template starts in <strong>Test</strong>, where it is free to change.
