@@ -52,7 +52,12 @@ const faq = [
        its mods and loads the world before anyone can join — on a heavy modset that is
        minutes, not seconds. The status stays amber ("Starting server…") until the server's
        own log says it is up (it registers with the Reforger backend and enters the online
-       game state), and only then turns green ("Started and online"). If it never goes
+       game state), and only then turns green ("Started and online"). The server logs
+       nothing while it downloads, so the Overview and Console tabs show a progress bar
+       instead: how much is on disk out of what the Workshop says the mods and their
+       dependencies weigh. A first start downloads everything; later starts reuse it.
+       When the download stops growing, the bar turns green and says the server is
+       loading the world. If it never goes
        green, read the server's Console tab — a missing mod or a bad config
        shows up there, and error lines are highlighted in red.`,
   },

@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { api } from '../../api'
 import { formatBytes, formatTimestamp } from '../../format'
 import { isErrorLine } from '../../log'
+import ModDownloadProgress from './ModDownloadProgress.vue'
 
 // The live server log, full height, with an errors-only filter; the log and crash
 // files on disk sit underneath (#189). The lines themselves are streamed by the
@@ -10,6 +11,7 @@ import { isErrorLine } from '../../log'
 const props = defineProps({
   id: { type: [String, Number], required: true },
   logLines: { type: Array, required: true },
+  download: { type: Object, default: null }, // stats.mod_download while starting (#235)
 })
 const emit = defineEmits(['clear'])
 
@@ -50,6 +52,13 @@ onMounted(() => {
 
 <template>
   <div class="d-grid gap-3">
+    <!-- The server logs nothing while it downloads its mods; show that it is (#235). -->
+    <div v-if="download" class="card">
+      <div class="card-body py-2">
+        <ModDownloadProgress :download="download" />
+      </div>
+    </div>
+
     <div class="card">
       <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2 py-2">
         <div class="btn-group btn-group-sm" role="group" aria-label="Which lines">

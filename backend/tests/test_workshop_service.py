@@ -120,6 +120,10 @@ def test_resolve_dependencies_flattens_and_dedupes(monkeypatch):
     # version history rides along for the lock picker (#60); absent -> []
     assert by_id["CCCCCCCCCCCCCCCC"]["versions"] == ["3.0", "2.9"]
     assert by_id["BBBBBBBBBBBBBBBB"]["versions"] == []
+    # each mod's own size, so roots sharing a dependency can be summed once (#235)
+    assert {k: m["size"] for k, m in by_id.items()} == {
+        "AAAAAAAAAAAAAAAA": 10, "BBBBBBBBBBBBBBBB": 5, "CCCCCCCCCCCCCCCC": 7,
+    }
     # scenario-providing assets are flagged so the UI can warn about a second
     # scenario added as a mod (#69); content-only deps are not
     assert by_id["AAAAAAAAAAAAAAAA"]["provides_scenarios"] is True

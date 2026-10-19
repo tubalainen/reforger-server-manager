@@ -319,6 +319,7 @@ onUnmounted(() => {
         v-else-if="tab === 'console'"
         :id="inst.id"
         :log-lines="logLines"
+        :download="stats?.mod_download"
         @clear="logLines = []"
       />
       <ServerPlayers

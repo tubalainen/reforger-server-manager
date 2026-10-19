@@ -26,7 +26,14 @@ from sqlmodel import Session, select
 import config
 import stacks
 from models import Instance, Template, get_engine
-from services import docker_service, fleet_history, ports, stages, template_service
+from services import (
+    docker_service,
+    fleet_history,
+    mod_download,
+    ports,
+    stages,
+    template_service,
+)
 
 # Reading a container's log, uptime and load lives in container_reading, shared
 # with the Supervisor's observer gate (#204). Re-exported like server_log below.
@@ -1169,6 +1176,7 @@ def instance_stats(instance_id: int) -> dict:
         game_port = inst.game_port
         target = stages.run_target(session, inst)
         admins = _admin_ids(target.content.config_json) if target else set()
+        run_config = target.content.config_json if target else None
 
     public = config.settings.public_address
     # ONE lookup for the container, reused for status, uptime, logs and cpu/mem.
@@ -1184,6 +1192,8 @@ def instance_stats(instance_id: int) -> dict:
         # Whether the game server inside a running container is still loading
         # (mods, world) or actually joinable (#76). None when not running.
         "server_state": None,
+        # While it is starting: how far the mod download has got (#235).
+        "mod_download": None,
         "uptime_seconds": None,
         "players": None,
         "roster": [],
@@ -1207,6 +1217,11 @@ def instance_stats(instance_id: int) -> dict:
         log_lines = current_run_log_lines(container, tail=ROSTER_LOG_TAIL)
         log_text = "\n".join(text for _, text in log_lines)
         stats["server_state"] = server_state(container, log_text)
+        if stats["server_state"] == STATE_STARTING:
+            # The same measurement as the Maintenance "Downloaded & baked mods"
+            # row. Only walked while starting, so an online server pays nothing.
+            downloaded, _ = _dir_usage(_target_paths(instance_id, DATA_MODS))
+            stats["mod_download"] = mod_download.progress(container.id, downloaded, run_config)
         stats["roster"] = parse_roster(log_lines, now=datetime.now(UTC))
         for player in stats["roster"]:
             player["admin"] = bool(

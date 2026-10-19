@@ -59,6 +59,7 @@ A server's own page keeps every server listed down the left and splits into five
 
 - Start, stop, restart, and delete a server.
 - Follow live logs and copy useful diagnostic output.
+- Watch a starting server download its mods: a progress bar on the Overview and Console tabs shows how much is on disk out of the total the Workshop gives for the template's mods and their dependencies, with the download speed. When the download stops growing, it says the server is loading the world.
 - View player count, process state, resource use, and server metadata.
 - See who is on: each player's name, time online, platform, IP address (shown on
   request) and identity, Steam and BattlEye ids, with server admins marked.
