@@ -65,7 +65,7 @@ def test_copy_template_duplicates_under_a_new_name(logged_in):
     assert r.status_code == 201
     copy = r.json()
     assert copy["id"] != src["id"]
-    assert copy["name"] == "Copy of Original"
+    assert copy["name"] == "Original (2)"
     # every stored facet carries over verbatim
     assert copy["spec"]["max_players"] == 48
     assert copy["spec"]["scenario_name"] == "Conflict Everon"
@@ -75,15 +75,15 @@ def test_copy_template_duplicates_under_a_new_name(logged_in):
     assert copy["spec"]["mods"][0]["modId"] == "591AF5BDA9F7CE8B"
     # both templates now exist independently
     names = {t["name"] for t in logged_in.get("/api/templates").json()}
-    assert {"Original", "Copy of Original"} <= names
+    assert {"Original", "Original (2)"} <= names
 
 
 def test_copy_template_increments_the_name_when_taken(logged_in):
     src = logged_in.post("/api/templates", json=_spec("Twin")).json()
     first = logged_in.post(f"/api/templates/{src['id']}/copy").json()
     second = logged_in.post(f"/api/templates/{src['id']}/copy").json()
-    assert first["name"] == "Copy of Twin"
-    assert second["name"] == "Copy of Twin (2)"
+    assert first["name"] == "Twin (2)"
+    assert second["name"] == "Twin (3)"
 
 
 def test_copy_template_seeds_its_own_change_log(logged_in):

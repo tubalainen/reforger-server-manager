@@ -145,25 +145,13 @@ async def create_mod_template(
         return _out(mt, session)
 
 
-def _unique_copy_name(session: Session, source_name: str) -> str:
-    """A free "Copy of …" name: "Copy of X", then "Copy of X (2)", … (#223)."""
-    taken = set(session.exec(select(ModTemplate.name)).all())
-    n = 1
-    while True:
-        suffix = "" if n == 1 else f" ({n})"
-        candidate = f"Copy of {source_name}"[: 100 - len(suffix)] + suffix
-        if candidate not in taken:
-            return candidate
-        n += 1
-
-
 @router.post("/{mod_template_id}/copy", status_code=201)
 async def copy_mod_template(
     mod_template_id: int,
     body: stages.CopyFrom | None = None,
     _user: str = Depends(auth.require_session),
 ):
-    """Duplicate a mod list into Test under a fresh "Copy of …" name (#223).
+    """Duplicate a mod list into Test under a free name (#223, #232).
 
     The copy remembers the Prod list it stems from, so its release can default
     to "next version of" that one. `version` copies an older released version.
@@ -179,7 +167,7 @@ async def copy_mod_template(
             raise _stage_error(exc) from exc
         based_on_id, based_on_version = stages.based_on_for(src, version)
         mt = ModTemplate(
-            name=_unique_copy_name(session, src.name),
+            name=stages.copy_name(session, stages.MOD_LISTS, src),
             description=content.description,
             mods_json=content.mods_json,
             stage=stages.TEST,

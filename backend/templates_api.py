@@ -268,33 +268,13 @@ async def create_template(spec: TemplateSave, _user: str = Depends(auth.require_
         return _out(t, session)
 
 
-def _unique_copy_name(session: Session, source_name: str) -> str:
-    """A free "Copy of …" name for a duplicated template (#129).
-
-    Names are unique, so a duplicate can't reuse the original's. Try "Copy of X"
-    first, then "Copy of X (2)", "(3)", … until one is free. Truncated to the
-    column's 100-char limit so a long source name still yields a valid name.
-    """
-    taken = set(session.exec(select(Template.name)).all())
-    base = f"Copy of {source_name}"[:100]
-    if base not in taken:
-        return base
-    n = 2
-    while True:
-        suffix = f" ({n})"
-        candidate = f"Copy of {source_name}"[: 100 - len(suffix)] + suffix
-        if candidate not in taken:
-            return candidate
-        n += 1
-
-
 @router.post("/{template_id}/copy", status_code=201)
 async def copy_template(
     template_id: int,
     body: stages.CopyFrom | None = None,
     _user: str = Depends(auth.require_session),
 ):
-    """Duplicate a template into a new one under a fresh "Copy of …" name (#129).
+    """Duplicate a template into a new one under a free name (#129).
 
     Copies the stored config, scenario, launch params, enriched mod list and the
     custom-key overlay verbatim, so the copy is a faithful, independently editable
@@ -303,6 +283,7 @@ async def copy_template(
     A copy always lands in Test, whatever stage the original is in, and remembers
     the Prod template it stems from so its release can default to "next version
     of" that one (#223). `version` copies an older released version instead.
+    A copy of a Prod template is named after that next version (#232).
     """
     version = body.version if body else None
     with Session(get_engine()) as session:
@@ -315,7 +296,7 @@ async def copy_template(
             raise stage_error(exc) from exc
         based_on_id, based_on_version = stages.based_on_for(src, version)
         t = Template(
-            name=_unique_copy_name(session, src.name),
+            name=stages.copy_name(session, stages.TEMPLATES, src),
             description=content.description,
             config_json=content.config_json,
             scenario_name=content.scenario_name,
