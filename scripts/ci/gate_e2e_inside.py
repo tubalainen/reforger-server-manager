@@ -221,18 +221,21 @@ with tarfile.open(fileobj=payload, mode="w") as tar:
     info = tarfile.TarInfo("pwned")
     tar.addfile(info, io.BytesIO(b""))
 url = client.api._url("/images/create")
-for label, kwargs in (
-    ("a blank fromImage first", dict(
-        params=[("fromImage", ""), ("fromImage", repo), ("tag", tag),
-                ("fromSrc", "-"), ("repo", repo)],
-        data=payload.getvalue(), headers={"Content-Type": "application/x-tar"})),
-    ("a form-encoded body", dict(
-        params={"fromImage": repo, "tag": tag},
-        data=f"fromImage=&fromSrc=-&repo={repo}&tag={tag}",
-        headers={"Content-Type": "application/x-www-form-urlencoded"})),
-):
-    status = client.api.post(url, **kwargs).status_code
-    check(f"an image import posing as a pull ({label}) -> {status}", status == 403)
+status = client.api.post(
+    url, params=[("fromImage", ""), ("fromImage", repo), ("tag", tag),
+                 ("fromSrc", "-"), ("repo", repo)],
+    data=payload.getvalue(), headers={"Content-Type": "application/x-tar"},
+).status_code
+check(f"an image import posing as a pull (a blank fromImage first) -> {status}", status == 403)
+# The query is a fair pull, so this one goes through — as a pull: the gate
+# drops the body, and the image below shows nothing was imported.
+resp = client.api.post(
+    url, params={"fromImage": repo, "tag": tag},
+    data=f"fromImage=&fromSrc=-&repo={repo}&tag={tag}",
+    headers={"Content-Type": "application/x-www-form-urlencoded"},
+)
+check(f"a pull with a form-encoded body pulls, and ignores the body -> {resp.status_code}",
+      resp.status_code == 200)
 check("the helper image is still the one that was pulled", client.images.get(HELPER).id == before)
 
 refused("create a volume", lambda: client.volumes.create(f"{STACK}-e2e"))
