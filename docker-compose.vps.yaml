@@ -72,10 +72,13 @@ services:
       WEB_BIND: "0.0.0.0"
       # Believe Caddy's X-Forwarded-For, so login throttling applies per real
       # client instead of collapsing into one shared bucket keyed on Caddy (which
-      # would let a single attacker lock every operator out). Scoped to the
-      # proxy network's subnet — which is pinned below precisely so this can name
-      # it — and to nothing else.
-      TRUSTED_PROXIES: ${PROXY_SUBNET:-172.31.242.0/24}
+      # would let a single attacker lock every operator out). Caddy by name: the
+      # manager looks up its address, and trusts that one address only. Not the
+      # proxy network's subnet — the host reaches the manager from that
+      # network's gateway, inside the subnet, so everything on the host (game
+      # servers on host networking too) could have named its own client address
+      # (security review 2026-10-20, F2).
+      TRUSTED_PROXIES: caddy
     depends_on:
       - docker-socket-proxy
     labels:
@@ -141,9 +144,8 @@ services:
 networks:
   proxy:
     name: ${RSM_STACK:-reforger}-proxy
-    # Pinned so TRUSTED_PROXIES above can name it: Docker would otherwise assign
-    # this subnet dynamically and the manager could not know which source
-    # addresses are really Caddy. Override PROXY_SUBNET in .env if it collides
+    # Pinned so that several stacks on one VPS each get a subnet of their own
+    # (rsm writes PROXY_SUBNET). Override PROXY_SUBNET in .env if it collides
     # with something already on the host ('docker compose up' will say so).
     ipam:
       config:

@@ -81,6 +81,7 @@ def test_auth_disabled_bypasses_login(client, monkeypatch):
     # AUTH_ENABLED=false -> protected endpoints work with no session cookie,
     # every caller is the anonymous user (a reverse proxy owns auth) (#37).
     monkeypatch.setattr(config.settings, "auth_enabled", False)
+    monkeypatch.setattr(config.settings, "allowed_hosts", ("testserver",))
     me = client.get("/api/auth/me")
     assert me.status_code == 200
     assert me.json()["username"] == "anonymous"
@@ -153,8 +154,9 @@ class _Req:
 
 def _trust(monkeypatch, *cidrs):
     import config
-    nets, _ = config._parse_networks(",".join(cidrs))
+    nets, names, _ = config._parse_proxies(",".join(cidrs))
     monkeypatch.setattr(config.settings, "trusted_proxies", nets)
+    monkeypatch.setattr(config.settings, "trusted_proxy_hosts", names)
 
 
 def test_client_ip_ignores_forwarded_header_without_trusted_proxies(monkeypatch):
@@ -468,6 +470,7 @@ def test_no_password_to_change_without_the_built_in_login(client, monkeypatch):
     import config
 
     monkeypatch.setattr(config.settings, "auth_enabled", False)
+    monkeypatch.setattr(config.settings, "allowed_hosts", ("testserver",))
     r = _change(client)
     assert r.status_code == 400
     assert "AUTH_ENABLED=false" in r.json()["detail"]
@@ -536,3 +539,88 @@ def test_a_second_stack_signs_in_with_its_own_cookie(client, monkeypatch):
     assert r.status_code == 200
     assert "rsm_session_team2=" in r.headers["set-cookie"]
     assert client.get("/api/auth/me").status_code == 200
+
+
+# --------------------------------------------------------------------------- #
+# Security review 2026-10-20: the proxy by name (F2), the Host check (F4)
+# --------------------------------------------------------------------------- #
+
+def _resolves(monkeypatch, table):
+    """socket.getaddrinfo answering from `table` (name -> addresses)."""
+    import socket
+
+    import auth
+
+    auth._proxy_lookup.clear()
+
+    def fake(name, *_a, **_kw):
+        if name not in table:
+            raise socket.gaierror("no such name")
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, 0)) for ip in table[name]]
+
+    monkeypatch.setattr(auth.socket, "getaddrinfo", fake)
+
+
+def test_a_proxy_named_by_its_container_is_trusted_at_its_address_only(monkeypatch):
+    import auth
+
+    _trust(monkeypatch, "caddy")
+    _resolves(monkeypatch, {"caddy": ["172.31.242.3"]})
+    # Through Caddy: its X-Forwarded-For is believed.
+    assert auth.client_ip(_Req("172.31.242.3", xff="198.51.100.7")) == "198.51.100.7"
+    # From the network's gateway — the host, a game server on host networking —
+    # the header is the caller's own claim and is ignored.
+    assert auth.client_ip(_Req("172.31.242.1", xff="198.51.100.7")) == "172.31.242.1"
+
+
+def test_a_proxy_that_does_not_resolve_is_not_trusted(monkeypatch):
+    import auth
+
+    _trust(monkeypatch, "rsm-edge")
+    _resolves(monkeypatch, {})
+    assert auth.client_ip(_Req("172.31.243.2", xff="198.51.100.7")) == "172.31.243.2"
+
+
+def test_a_proxy_lookup_is_kept_for_a_while(monkeypatch):
+    import auth
+
+    _trust(monkeypatch, "caddy")
+    calls = []
+    _resolves(monkeypatch, {"caddy": ["172.31.242.3"]})
+    real = auth.socket.getaddrinfo
+    monkeypatch.setattr(auth.socket, "getaddrinfo",
+                        lambda *a, **kw: calls.append(a) or real(*a, **kw))
+    for _ in range(5):
+        auth.client_ip(_Req("172.31.242.3", xff="198.51.100.7"))
+    assert len(calls) == 1
+
+
+def test_with_the_login_on_every_host_is_answered(client):
+    assert client.get("/api/health", headers={"host": "evil.example"}).status_code == 200
+
+
+def test_with_the_login_off_only_known_hosts_are_answered(client, monkeypatch):
+    import config
+
+    monkeypatch.setattr(config.settings, "auth_enabled", False)
+    monkeypatch.setattr(config.settings, "site_host", "reforger.example.com")
+    monkeypatch.setattr(config.settings, "allowed_hosts", ("gameserver.lan",))
+    # A rebound name: refused, for reads too.
+    r = client.get("/api/instances", headers={"host": "evil.example:7780"})
+    assert r.status_code == 400 and "ALLOWED_HOSTS" in r.json()["detail"]
+    for host in ("localhost:7780", "127.0.0.1:7780", "[::1]:7780", "192.168.1.20",
+                 "reforger.example.com", "REFORGER.example.com:443", "gameserver.lan:7780"):
+        assert client.get("/api/instances", headers={"host": host}).status_code == 200, host
+
+
+def test_with_the_login_off_a_websocket_on_another_host_is_refused(monkeypatch):
+    import auth
+    import config
+
+    monkeypatch.setattr(config.settings, "auth_enabled", False)
+    monkeypatch.setattr(config.settings, "allowed_hosts", ())
+    ws = type("_W", (), {"headers": {"host": "evil.example:7780",
+                                     "origin": "http://evil.example:7780"}})()
+    assert not auth.request_origin_ok(ws)
+    ws.headers = {"host": "localhost:7780", "origin": "http://localhost:7780"}
+    assert auth.request_origin_ok(ws)

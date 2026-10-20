@@ -47,9 +47,9 @@ async def lifespan(_app: FastAPI):
     if config.settings.rsm_stack != stacks.DEFAULT_STACK:
         logger.info("Stack: %s", config.settings.rsm_stack)
     # Fail closed on an insecure, network-exposed configuration (security review
-    # R2/R3). Fatal issues only fire when WEB_BIND publishes the GUI beyond
-    # localhost, so a local run stays frictionless; an exposed one must either
-    # have a real login or an explicit AUTH_DELEGATED_ACK that a proxy owns auth.
+    # R2/R3). Password issues only fire when WEB_BIND publishes the GUI beyond
+    # localhost, so a local run stays frictionless; a login switched off needs an
+    # explicit AUTH_DELEGATED_ACK that a proxy owns auth, wherever it is bound.
     # The database first: a password changed in the GUI (#204) lives there, and
     # it is the password in effect that the check has to judge.
     models.init_db()

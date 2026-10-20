@@ -13,6 +13,7 @@ import ipaddress
 import json
 import logging
 import secrets
+import socket
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -223,10 +224,35 @@ def _as_ip(raw: str):
         return None
 
 
+# Proxies named in TRUSTED_PROXIES (`caddy`, `rsm-edge`) are looked up, and the
+# answer kept this long: a recreated proxy container may come back on another
+# address, and a lookup per request would put a DNS query on every login.
+_PROXY_LOOKUP_SECONDS = 30.0
+_proxy_lookup: dict[str, tuple[float, tuple]] = {}
+
+
+def _resolve_proxy(name: str) -> tuple:
+    """The addresses a named proxy has right now; () when it does not resolve."""
+    now = time.monotonic()
+    cached = _proxy_lookup.get(name)
+    if cached and now - cached[0] < _PROXY_LOOKUP_SECONDS:
+        return cached[1]
+    try:
+        infos = socket.getaddrinfo(name, None, proto=socket.IPPROTO_TCP)
+        found = tuple({ipaddress.ip_address(info[4][0].split("%", 1)[0]) for info in infos})
+    except (OSError, ValueError):
+        found = ()  # not running, or not on a network shared with us: trust nothing
+    _proxy_lookup[name] = (now, found)
+    return found
+
+
 def _is_trusted_proxy(addr) -> bool:
-    return addr is not None and any(
-        addr in net for net in config.settings.trusted_proxies
-    )
+    if addr is None:
+        return False
+    s = config.settings
+    if any(addr in net for net in s.trusted_proxies):
+        return True
+    return any(addr in _resolve_proxy(name) for name in s.trusted_proxy_hosts)
 
 
 def client_ip(request: Request) -> str:
@@ -241,7 +267,7 @@ def client_ip(request: Request) -> str:
     ignored, which is what makes a spoofed prefix harmless.
     """
     peer = request.client.host if request.client else "unknown"
-    if not config.settings.trusted_proxies:
+    if not (config.settings.trusted_proxies or config.settings.trusted_proxy_hosts):
         return peer
     if not _is_trusted_proxy(_as_ip(peer)):
         return peer
@@ -391,8 +417,33 @@ def origin_allowed(origin: str, host: str) -> bool:
     return bool(netloc) and netloc == (host or "").strip()
 
 
+def host_allowed(host_header: str) -> bool:
+    """May a request addressed to this Host be answered? (security review F4)
+
+    Only asked while the built-in login is off. Then a web page on any other
+    name could point that name at this machine (DNS rebinding): the browser
+    calls it same-origin, the Origin check passes, and no cookie is needed. So
+    the GUI answers only to localhost, an IP address, SITE_ADDRESS and the
+    names in ALLOWED_HOSTS. With a login on, a rebound name gets no session,
+    and every name is answered as before.
+    """
+    s = config.settings
+    if s.auth_enabled:
+        return True
+    host = config._host_of(host_header)
+    if not host:
+        return False
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    if _as_ip(host) is not None:
+        return True
+    return host == s.site_host or host in s.allowed_hosts
+
+
 def request_origin_ok(request) -> bool:
-    """Origin check for an HTTP request or a WebSocket handshake."""
+    """Origin (and, with the login off, Host) check for a request or a WebSocket."""
+    if not host_allowed(request.headers.get("host", "")):
+        return False
     return origin_allowed(
         request.headers.get("origin", ""), request.headers.get("host", "")
     )

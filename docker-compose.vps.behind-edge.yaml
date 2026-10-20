@@ -9,14 +9,19 @@
 #     ports 80 and 443 and serves this stack's manager at its domain.
 #   * The proxy network is joined by the edge, so it outlives this stack's
 #     `down` — it is declared external here and is never removed by it. It
-#     keeps its pinned PROXY_SUBNET, which the manager trusts (TRUSTED_PROXIES)
-#     and the edge's address on it falls in.
+#     keeps its pinned PROXY_SUBNET.
+#   * The manager believes X-Forwarded-For from the edge, by name: it looks up
+#     the edge's address and trusts that one address only (security review
+#     2026-10-20, F2).
 #
 # The manager and its game servers are otherwise exactly as in the VPS file.
 services:
   caddy:
     # A profile nobody turns on: the service is defined but never started.
     profiles: [own-caddy]
+  manager:
+    environment:
+      TRUSTED_PROXIES: rsm-edge
 
 networks:
   proxy:

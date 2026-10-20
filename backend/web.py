@@ -39,6 +39,17 @@ def harden(app: FastAPI, logger: logging.Logger) -> None:
 
     @app.middleware("http")
     async def security_middleware(request, call_next):
+        # DNS rebinding: with the login off, only names this install is reached
+        # by are answered — for reads too (security review 2026-10-20, F4).
+        if not auth.host_allowed(request.headers.get("host", "")):
+            logger.warning("Refused a request for Host %r (not in ALLOWED_HOSTS)",
+                           request.headers.get("host", ""))
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "This address is not one this manager answers to "
+                                   "while its login is off. Add it to ALLOWED_HOSTS "
+                                   "in .env."},
+            )
         # CSRF: the session is a cookie, so a state-changing request that a browser
         # says came from another site must not be honoured. A request with no Origin
         # is a non-browser client (curl, scripts) and is left alone — browsers always
