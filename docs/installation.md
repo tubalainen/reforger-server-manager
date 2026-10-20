@@ -339,6 +339,30 @@ To let `rsm` drive it too: `echo 'RSM_DIR=/opt/rsm-supervisor' | sudo tee /etc/r
 - A server that has no container, because it was never started or its manager removed it on the way down, is not listed.
 - On a VPS, the shared edge can serve the Supervisor's page over HTTPS: `sudo rsm edge add --supervisor ops.example.com` (see [the shared edge](#several-teams-on-a-vps-the-shared-edge)). It then refuses to start on a weak password, like any install on the internet, and its page also stays on `127.0.0.1:7090` as before. Elsewhere, a reverse proxy in front of it is up to you.
 
+## The servers in a terminal: `rsm cli`
+
+`sudo rsm cli` shows every stack's game servers on one screen in the terminal, refreshed every 5 seconds (v0.80.0). Unlike the Supervisor's page it can also start, stop and restart them, and it needs no install of its own: only `rsm` and the stacks' managers.
+
+```text
+ Reforger Server Manager - rsm cli                                     21:04:12
+ grayzoneserver   load 1.20 0.98 0.80   memory 12.1G of 31.3G
+ ==============================================================================
+   STACK      SERVER               STATE      PLAYERS  FPS    CPU    MEM     UP
+ ------------------------------------------------------------------------------
+ > kompaniet  Conflict Everon      online       12/64   59  12.3%   6.1G  3h12m
+   kompaniet  Training             stopped          -    -      -      -      -
+   team2      ! the manager is not running: sudo rsm start --stack team2
+ ------------------------------------------------------------------------------
+   2 stacks   2 servers   1 running   1 online   12 players online
+
+   [Up/Down] select   [s] start   [x] stop   [r] restart   [u] refresh   [q] quit
+```
+
+- **Up/Down** (or `j`/`k`) selects a server. **s** starts it; **x** stops it and **r** restarts it, each after a `y` to confirm, which names the players still on it.
+- `--stack NAME` shows one stack only. `--once` prints the table once and exits, as it also does when the output is not a terminal (`rsm cli --once | mail ...`).
+- Each start, stop and restart is done by that stack's own manager (`docker exec -u app NAME-manager python manage.py stop ID`), exactly as a click in its GUI: the team sees it, and a stopped server is not taken for a crash and started again.
+- A stack whose manager predates v0.80.0 is listed with *its manager predates rsm cli*: update it with `sudo rsm update --stack NAME`.
+
 ## Networking and firewalls
 
 | Purpose | Ports |

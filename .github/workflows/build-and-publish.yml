@@ -317,6 +317,38 @@ jobs:
           sudo rsm supervisor status
           if sudo rsm supervisor install; then echo "installed twice"; exit 1; fi
 
+      - name: rsm cli shows every stack's servers, in a real terminal too (#237)
+        run: |
+          set -eux
+          # team2 runs this commit's image, whose manager answers rsm cli; the
+          # first stack runs the published one, which may predate it.
+          sudo sed -i 's/^MANAGER_VERSION=.*/MANAGER_VERSION=e2e/' /opt/rsm-team2/.env
+          sudo rsm start --stack team2
+          for _ in $(seq 60); do
+            curl -fsS http://127.0.0.1:7781/api/health >/dev/null && break
+            sleep 2
+          done
+          sudo rsm cli --once | tee cli.log
+          grep -Eq '^   team2 +\(no servers yet\)' cli.log
+          grep -Eq '^   reforger +(\(no servers yet\)|! its manager predates rsm cli)' cli.log
+          grep -Eq '2 stacks +0 servers +0 running' cli.log
+          sudo rsm cli --once --stack team2 | grep -q '1 stack '
+          # The manager's own API, with the session manage.py signs itself.
+          if docker exec -u app team2-manager python manage.py stop 999 2> act.log; then
+            echo "stopped a server that does not exist"; exit 1
+          fi
+          grep -q 'Server not found' act.log
+          # Ubuntu's own awk is mawk, which lacks some of gawk's printf.
+          sudo apt-get install -y -qq mawk >/dev/null
+          mkdir -p mawk-bin && ln -sf "$(command -v mawk)" mawk-bin/awk
+          sudo env PATH="$PWD/mawk-bin:$PATH" rsm cli --once | tee cli-mawk.log
+          diff <(sed 1,2d cli.log) <(sed 1,2d cli-mawk.log)  # past the clock and the load
+          # Interactive, in a pseudo-terminal: draws, moves, refreshes, quits on q.
+          { sleep 6; printf j; sleep 1; printf u; sleep 4; printf q; sleep 2; } |
+            sudo script -qec 'stty rows 30 cols 100; rsm cli' screen.log
+          grep -q 'Reforger Server Manager - rsm cli' screen.log
+          grep -q '\[q\] quit' screen.log
+
       - name: rsm remove-stack takes the second team away again
         run: |
           set -eux

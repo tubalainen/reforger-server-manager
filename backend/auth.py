@@ -406,11 +406,17 @@ def require_session(request: Request) -> str:
     return username
 
 
+def session_token() -> str:
+    """A signed session for the admin: what the login sets as the cookie, and
+    what manage.py presents when it asks this manager to act (#237)."""
+    return _serializer().dumps(config.settings.admin_username)
+
+
 def _issue_session(request: Request, response: Response) -> None:
     cfg = config.settings
     response.set_cookie(
         cookie_name(),
-        _serializer().dumps(cfg.admin_username),
+        session_token(),
         max_age=cfg.session_ttl_hours * 3600,
         httponly=True,
         samesite="lax",
