@@ -698,7 +698,7 @@ code running in host-networked game servers on Linux.
 |---|---------|----------|--------|
 | **F1** | Gate: an image pull could reach Docker as an image *import* | **HIGH** | Fixed in v0.81.1 |
 | **F2** | `TRUSTED_PROXIES` names the whole proxy subnet, gateway included: login throttle bypass from the host | **MEDIUM** | Open |
-| **F3** | Shell injection through file names in the clean-up and restore helper containers | **MEDIUM** | Open |
+| **F3** | Shell injection through file names in the clean-up and restore helper containers | **MEDIUM** | Fixed in v0.81.2 |
 | **F4** | `AUTH_ENABLED=false` reachable around the proxy; no Host allow-list (DNS rebinding) | **MEDIUM** | Open |
 | **F5** | Gate: endpoint settings and anonymous volumes not checked | **LOW** | Fixed in v0.81.1 |
 | **F6** | Host tooling refreshes itself from `main`, unverified | **LOW** | Backlog |
@@ -744,7 +744,7 @@ the stack's Caddy and for the edge on each `<stack>-proxy` network, and `TRUSTED
 to that one address. Where the engine is 28 or newer, an `isolated` gateway on the proxy
 networks as well.
 
-### F3 — file names reach a shell · MEDIUM · open
+### F3 — file names reach a shell · MEDIUM · fixed in v0.81.2
 **Files:** `backend/services/instance_service.py` (`clear_instance_data`),
 `backend/services/instance_backup.py` (`restore_backup`)
 
@@ -756,8 +756,10 @@ helper container. The gate keeps that container away from the host, but it turns
 controls into native code, with the instance's folder and a network. The code comment saying
 no user-supplied path reaches the shell is wrong.
 
-**Fix planned:** no command strings — paths passed as arguments (`rm -rf -- "$@"`), and
-uploaded member names held to printable characters without quotes.
+**Fix (v0.81.2):** the helper scripts are fixed strings (`REMOVE_SCRIPT`,
+`RESTORE_SCRIPT`) and the paths are their arguments (`rm -rf -- "$@"`), so a name is only
+ever a name. Uploaded archives with a control character in a member name are refused. Tests
+run both scripts through a real `sh` with a hostile name.
 
 ### F4 — a delegated login can be walked around · MEDIUM · open
 **Files:** `backend/config.py` (`startup_security_issues`), `backend/web.py`

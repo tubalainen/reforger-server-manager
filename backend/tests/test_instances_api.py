@@ -436,11 +436,9 @@ def test_force_carries_the_restore_through_and_says_it_was_forced(logged_in, tmp
 
         def run(self, image, entrypoint=None, command=None, mounts=None, **kw):
             idir = Path(mounts[0]["Source"])
-            for statement in command[1].split(";"):
-                statement = statement.strip()
-                if statement.startswith("tar xzf "):
-                    with tarfile.open(idir / statement.split("'")[1].replace("/idata/", "")) as t:
-                        t.extractall(idir, filter="data")
+            archive = command[3]  # sh -c RESTORE_SCRIPT sh ARCHIVE PATH...
+            with tarfile.open(idir / archive.removeprefix("/idata/")) as t:
+                t.extractall(idir, filter="data")
 
     monkeypatch.setattr(instance_service.docker_service, "ping", lambda: True)
     monkeypatch.setattr(

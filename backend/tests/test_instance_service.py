@@ -1,4 +1,6 @@
 import json
+import shutil
+import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -617,11 +619,12 @@ def test_clear_instance_data_wipes_only_the_chosen_targets(tmp_path, monkeypatch
 
     class FakeContainers:
         def run(self, image, entrypoint=None, command=None, **kw):
-            asked["script"] = command[1]
+            # sh -c REMOVE_SCRIPT sh PATH...: the names are arguments.
+            assert command[:3] == ["-c", instance_service.REMOVE_SCRIPT, "sh"]
+            asked["paths"] = command[3:]
             import shutil
-            for part in command[1].split("rm -rf ")[1:]:
-                rel = part.split("'")[1].replace("/idata/", "")
-                shutil.rmtree(idir / rel, ignore_errors=True)
+            for path in command[3:]:
+                shutil.rmtree(idir / path.removeprefix("/idata/"), ignore_errors=True)
 
     monkeypatch.setattr(
         instance_service.docker_service, "get_client",
@@ -1666,3 +1669,40 @@ def test_mounts_match_only_what_would_be_mounted_now(monkeypatch, tmp_path):
     moved.attrs = {"HostConfig": {"Mounts": [dict(wanted[0], Source="team2-serverfiles-stable")]
                                   + wanted[1:]}}
     assert instance_service._container_mounts_match(moved, inst) is False
+
+
+def test_clearing_passes_hostile_file_names_as_arguments(tmp_path, monkeypatch):
+    # A mod chooses the names of the files it writes into the profile. In the
+    # old shell string a quote ended the quoting and the rest ran as a command
+    # (security review 2026-10-20, F3).
+    idir = _seed_instance_data(tmp_path, monkeypatch)
+    monkeypatch.setattr(instance_service, "container_status", lambda _id: "exited")
+    hostile = "x'; touch pwned; '"  # a file name: no slash
+    (idir / "profile" / hostile).write_text("mod data")
+    asked = {}
+
+    class FakeContainers:
+        def run(self, image, entrypoint=None, command=None, **kw):
+            asked["command"] = command
+
+    monkeypatch.setattr(
+        instance_service.docker_service, "get_client",
+        lambda: type("C", (), {"containers": FakeContainers()})(),
+    )
+    instance_service.clear_instance_data(1, ["saves"])
+    command = asked["command"]
+    assert command[:3] == ["-c", instance_service.REMOVE_SCRIPT, "sh"]
+    assert f"/idata/profile/{hostile}" in command[3:]
+    assert hostile not in command[1]
+
+
+@pytest.mark.skipif(shutil.which("sh") is None, reason="needs a POSIX shell")
+def test_the_remove_script_treats_every_argument_as_a_path(tmp_path):
+    hostile = "x'; touch pwned; '"
+    (tmp_path / hostile).write_text("mod data")
+    (tmp_path / "keep").write_text("kept")
+    subprocess.run(["sh", "-c", instance_service.REMOVE_SCRIPT, "sh", hostile],
+                   cwd=tmp_path, check=True)
+    assert not (tmp_path / hostile).exists()
+    assert not (tmp_path / "pwned").exists()
+    assert (tmp_path / "keep").exists()
