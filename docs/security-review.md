@@ -675,3 +675,142 @@ reduced to a follow-up that needs a real host to verify:
 *Prepared for handover. The single most important message for the developer and the operator:
 **the web GUI is a root shell for the host — keep it off the open internet (TLS proxy + socket
 proxy + strong auth), and treat every finding above as protecting that one fact.**
+
+---
+
+# Second review — 2026-10-20 (v0.81.0)
+
+**Scope:** the whole setup as it stands after the Docker gate (v0.65.0), stacks for several
+teams, the Server Supervisor and its observer, the shared VPS edge, save-game backups,
+`rsm cli` and the first-run setup screen: backend, compose files, installers, `rsm`, the
+Windows scripts and CI.
+
+**Taken as given:** the architectural guardrails — the gate, Caddy/the edge on a VPS, and
+"never expose the GUI without a login" — and every decision this document records as
+accepted (R5 encryption at rest, R8 `cap_drop`, R9 digest pinning, R6 `auth_enabled`, R7
+Origin checks, R10, R13). The question was whether those guardrails actually hold.
+
+**Threat model since #204:** a team admin has the GUI of their own stack and nothing else;
+a manager may be taken over (that is what the gate is for); Workshop mods are third-party
+code running in host-networked game servers on Linux.
+
+| # | Finding | Severity | Status |
+|---|---------|----------|--------|
+| **F1** | Gate: an image pull could reach Docker as an image *import* | **HIGH** | Fixed in v0.81.1 |
+| **F2** | `TRUSTED_PROXIES` names the whole proxy subnet, gateway included: login throttle bypass from the host | **MEDIUM** | Open |
+| **F3** | Shell injection through file names in the clean-up and restore helper containers | **MEDIUM** | Open |
+| **F4** | `AUTH_ENABLED=false` reachable around the proxy; no Host allow-list (DNS rebinding) | **MEDIUM** | Open |
+| **F5** | Gate: endpoint settings and anonymous volumes not checked | **LOW** | Fixed in v0.81.1 |
+| **F6** | Host tooling refreshes itself from `main`, unverified | **LOW** | Backlog |
+| **F7** | RCON listens on every interface, no password rule | **LOW** | Backlog |
+| **F8** | Smaller items (short `.env` password when exposed, lockout DoS, upload spooling, ufw docs) | **LOW** | Backlog |
+
+### F1 — the gate let an image pull become an image import · HIGH
+**Files:** `backend/gate/app.py`, `backend/gate/policy.py`
+
+The gate read a pull's query with `parse_qs`, which drops blank values. Docker (Go's
+`r.Form.Get`) takes the *first* value, blank or not, and an empty `fromImage` means
+**import**. So `fromImage=&fromImage=<our image>&fromSrc=…&repo=<our image>` passed the gate
+as a pull of an allowed image and ran in Docker as an import of arbitrary content under that
+name. The pull was also forwarded with its own body and `Content-Type`; Docker reads a
+form-encoded body as more parameters, which is a second way to the same result.
+
+Images are per machine, not per stack, and every stack runs the same image names by default.
+A manager that had been taken over could therefore replace the game server image for every
+stack on the host; their next servers would start from it, with host networking and their own
+data mounted. That breaks the promise in R1's residual — "kept to its own containers, images
+and volumes".
+
+**Fix (v0.81.1):** for a create and a pull the gate reads the query once
+(`policy.single_query`: blanks kept, a repeated key or one not on the route's list refused),
+then forwards a query it wrote itself — `fromImage=<repo>&tag=<tag>[&platform=…]` for a pull,
+with no body. Every pull names its tag: without one Docker downloads every tag. The CI job
+`gate-e2e` sends both forms of the import to a real daemon and checks the helper image is
+unchanged.
+
+### F2 — the trusted proxy list includes the host · MEDIUM · open
+**Files:** `docker-compose.vps.yaml` (`TRUSTED_PROXIES: ${PROXY_SUBNET}`),
+`docker-compose.supervisor.behind-edge.yaml`, `backend/auth.py` (`client_ip`)
+
+A connection from the host to a container on a bridge network arrives from the bridge's
+gateway address, `172.31.x.1`, which is inside `PROXY_SUBNET`. Everything on the host — a
+local user, and every host-networked game server of every stack, including the Workshop mods
+in it — is therefore a "trusted proxy" and may name its own `X-Forwarded-For`. One new
+identity per attempt means no throttle: unlimited online guessing of any team's password, and
+of the Supervisor's. Passwords set in the GUI are only held to 12 characters.
+
+**Fix planned:** trust the proxy's own address, not its subnet — a fixed `ipv4_address` for
+the stack's Caddy and for the edge on each `<stack>-proxy` network, and `TRUSTED_PROXIES` set
+to that one address. Where the engine is 28 or newer, an `isolated` gateway on the proxy
+networks as well.
+
+### F3 — file names reach a shell · MEDIUM · open
+**Files:** `backend/services/instance_service.py` (`clear_instance_data`),
+`backend/services/instance_backup.py` (`restore_backup`)
+
+The helper containers run `rm -rf '/idata/<path>'` built from `_state_paths()`, which lists
+what is **on disk** in a server's profile. Those names come from the game server — mods write
+files there — or from an uploaded backup, whose members are checked for type and place but
+not for characters. A name containing `'` ends the quoting, and the rest runs as root in the
+helper container. The gate keeps that container away from the host, but it turns data a mod
+controls into native code, with the instance's folder and a network. The code comment saying
+no user-supplied path reaches the shell is wrong.
+
+**Fix planned:** no command strings — paths passed as arguments (`rm -rf -- "$@"`), and
+uploaded member names held to printable characters without quotes.
+
+### F4 — a delegated login can be walked around · MEDIUM · open
+**Files:** `backend/config.py` (`startup_security_issues`), `backend/web.py`
+
+With `AUTH_ENABLED=false` the proxy in front is the login, but the manager stays reachable
+without it: from the host, from every host-networked game server, and — on a loopback bind —
+through DNS rebinding from any web page the operator opens (the Origin then equals the Host,
+and with the login off no cookie is needed). The manager accepts any `Host` header.
+
+**Fix planned:** a Host allow-list on the manager and the Supervisor (localhost, the site
+address, plus `ALLOWED_HOSTS`), `AUTH_DELEGATED_ACK` required even on a loopback bind, and
+`.env.example` saying that game servers on host networking reach the GUI directly.
+
+### F5 — two smaller gate gaps · LOW · fixed in v0.81.1
+`NetworkingConfig.EndpointsConfig.<network>` was not held to a field list, so a create could
+carry legacy `Links` (another container's environment), `DriverOpts` (the bridge driver takes
+per-interface sysctls there) or a fixed address. It may now carry only `Aliases`. `Volumes`
+(anonymous volumes) is refused unless empty; the manager never asks for one. Still allowed,
+on purpose: Docker's default `bridge` network for helper containers.
+
+### F6 — host tooling updates itself from `main` · LOW · backlog
+`rsm update` replaces `/usr/local/bin/rsm` from `main` as root (`self_update`); the Windows
+start script refreshes its scripts from `main` on every start (`Update-ManagerScripts`);
+`add-stack`, `edge` and `supervisor install` download compose files from `main`. It is the
+same trust as the `:latest` image, but it skips the release step and checks nothing. Fetch
+from the latest release tag instead. In CI, actions are pinned by tag, not commit, and
+`build-and-publish.yml` has no top-level `permissions:`.
+
+### F7 — RCON on every interface · LOW · backlog
+`rcon.address` is `0.0.0.0`. On Linux only the firewall keeps it in (the VPS installer enables
+ufw only when it is there and the user agrees); on Docker Desktop the RCON port is published
+on every interface. BattlEye RCON is not encrypted and any password is accepted. Hold RCON
+passwords to a minimum length, and bind or publish it on `127.0.0.1` unless the template asks
+for remote RCON.
+
+### F8 — smaller items · LOW · backlog
+- An exposed start refuses the example or an empty `.env` password, but only warns about a
+  short one; make under 12 characters fatal when exposed.
+- On a local install, game servers on host networking reach the GUI from the same address as
+  the operator's browser (the Docker gateway), so a mod can trip the login lockout for the
+  operator.
+- A backup upload is spooled whole to `/tmp` before the 2 GB limit is checked — disk use by a
+  signed-in user, within the accepted residual.
+- On a LAN bind the GUI port is published by Docker, which ufw does not filter; the
+  installer's `ufw allow` line suggests otherwise.
+
+### Checked and sound
+The gate's default deny with exact field spellings, volume subpaths instead of host folders,
+label ownership, API 1.24 or newer and body-less starts; the observer's fixed projection (no
+environment, no log text); every route but login, health and version needs a session, and all
+three WebSockets check the Origin before the session; scrypt for GUI passwords, salt rotation
+for logout-all; uploaded archives refused for links, absolute paths and `..`; log downloads
+resolved and kept inside the profile; no `v-html` in either page and a CSP without inline
+script; a secret and cookie name per stack; no `.env` in the gate; Caddy 2 does not believe
+an incoming `X-Forwarded-For`; imported templates' launch parameters are validated again at
+start.

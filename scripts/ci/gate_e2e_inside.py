@@ -9,9 +9,11 @@ gate's job: what this stack needs goes through, and everything that would reach
 the host or another stack is refused. Exits non-zero on any failure. The CI job
 'gate-e2e' runs it once from each of two stacks on one Docker host.
 """
+import io
 import os
 import shutil
 import sys
+import tarfile
 
 import docker
 from docker.errors import APIError, NotFound
@@ -205,6 +207,36 @@ for label, body in (
 ):
     status = raw_create(body)
     check(f"create with {label} -> {status}", status == 403)
+
+# An image IMPORT dressed as a pull of our own image (security review
+# 2026-10-20, F1). Docker reads the first fromImage, blank included, and an
+# empty one means "import"; it also reads a form-encoded body as parameters.
+# Had either got through, the helper image would now be this tarball, for every
+# stack on the host.
+repo, tag = docker.utils.parse_repository_tag(HELPER)
+tag = tag or "latest"
+before = client.images.get(HELPER).id
+payload = io.BytesIO()
+with tarfile.open(fileobj=payload, mode="w") as tar:
+    info = tarfile.TarInfo("pwned")
+    tar.addfile(info, io.BytesIO(b""))
+url = client.api._url("/images/create")
+status = client.api.post(
+    url, params=[("fromImage", ""), ("fromImage", repo), ("tag", tag),
+                 ("fromSrc", "-"), ("repo", repo)],
+    data=payload.getvalue(), headers={"Content-Type": "application/x-tar"},
+).status_code
+check(f"an image import posing as a pull (a blank fromImage first) -> {status}", status == 403)
+# The query is a fair pull, so this one goes through — as a pull: the gate
+# drops the body, and the image below shows nothing was imported.
+resp = client.api.post(
+    url, params={"fromImage": repo, "tag": tag},
+    data=f"fromImage=&fromSrc=-&repo={repo}&tag={tag}",
+    headers={"Content-Type": "application/x-www-form-urlencoded"},
+)
+check(f"a pull with a form-encoded body pulls, and ignores the body -> {resp.status_code}",
+      resp.status_code == 200)
+check("the helper image is still the one that was pulled", client.images.get(HELPER).id == before)
 
 refused("create a volume", lambda: client.volumes.create(f"{STACK}-e2e"))
 build = client.api.post(client.api._url("/build"), data=b"")

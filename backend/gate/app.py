@@ -10,7 +10,7 @@ The rules themselves are in gate/policy.py.
 import json
 import logging
 from contextlib import asynccontextmanager
-from urllib.parse import parse_qs, unquote
+from urllib.parse import unquote
 
 import httpx
 from starlette.applications import Starlette
@@ -138,18 +138,20 @@ def create_app(scope: policy.Scope, upstream: httpx.AsyncClient) -> Starlette:
 
     async def other(request: Request, route: policy.Route, raw_path: str,
                     query: str) -> Response:
-        """Container create, image pull and inspect, network inspect."""
-        params = parse_qs(query)
+        """Container create, image pull and inspect, network inspect.
+
+        A create and a pull are forwarded with a query the gate wrote itself from
+        the values it checked (policy.single_query), never the one it was sent.
+        """
         if route.kind == "create":
-            name = params.get("name", [None])[0]
+            name, checked = policy.create_query(query)
             body = policy.check_create(await json_body(request), name, scope)
-            return await forward(request, raw_path, query, body=json.dumps(body).encode())
+            return await forward(request, raw_path, checked, body=json.dumps(body).encode())
         if route.kind == "pull":
-            image = params.get("fromImage", [""])[0]
-            tag = params.get("tag", [None])[0]
-            if not image or not policy.pull_allowed(scope, image, tag):
-                raise policy.Denied(f"pulling {image!r} is not allowed for this stack")
-            return await forward(request, raw_path, query, stream=True)
+            # No body: Docker reads a form-encoded one as more query parameters,
+            # and a pull from a registry never needs one.
+            return await forward(request, raw_path, policy.pull_query(scope, query),
+                                 body=b"", stream=True)
         if route.kind == "image":
             ref = unquote(route.ref)
             if not policy.image_allowed(scope, ref):

@@ -19,6 +19,7 @@ refused, and what it opened is what gets mounted — there is nothing to steer.
 """
 import re
 from dataclasses import dataclass
+from urllib.parse import parse_qsl, urlencode
 
 from docker.utils import parse_repository_tag
 
@@ -109,6 +110,61 @@ def route(method: str, raw_path: str) -> Route:
 
 
 # --------------------------------------------------------------------------- #
+# Query strings
+# --------------------------------------------------------------------------- #
+# Where a query parameter decides what Docker does, the gate does not forward the
+# query it was sent: it reads it, checks it, and sends one it wrote itself. The
+# two sides do not read a query the same way. Python's parse_qs drops a blank
+# value; Docker (Go's r.Form.Get) takes the FIRST value, blank or not. So
+# `fromImage=&fromImage=<allowed>` looked like an allowed pull here and was an
+# image IMPORT there — any content, under the allowed name, for every stack on
+# the host (security review 2026-10-20, F1).
+CREATE_QUERY = frozenset({"name", "platform"})
+PULL_QUERY = frozenset({"fromImage", "tag", "platform"})
+
+
+def single_query(query: str, allowed: frozenset[str]) -> dict[str, str]:
+    """The query as one value per key, held to `allowed`; raises Denied.
+
+    Blank values are kept and a repeated key is refused, so there is no reading
+    of the query on which this and the daemon could disagree.
+    """
+    params: dict[str, str] = {}
+    for key, value in parse_qsl(query, keep_blank_values=True):
+        if key not in allowed:
+            raise Denied(f"query parameter {key!r} is not allowed here")
+        if key in params:
+            raise Denied(f"query parameter {key!r} is given more than once")
+        params[key] = value
+    return params
+
+
+def create_query(query: str) -> tuple[str | None, str]:
+    """(container name or None, the query to forward) for a container create."""
+    params = single_query(query, CREATE_QUERY)
+    return params.get("name"), urlencode(params)
+
+
+def pull_query(scope: "Scope", query: str) -> str:
+    """The query to forward for an image pull of one of this stack's images.
+
+    Always `fromImage=<repository>&tag=<tag or digest>`: the tag is spelled out
+    even when the client left it to the name or to the default, because a pull
+    with no tag at all fetches EVERY tag of the repository.
+    """
+    params = single_query(query, PULL_QUERY)
+    image = params.get("fromImage", "")
+    tag = params.get("tag") or None
+    if not image or not pull_allowed(scope, image, tag):
+        raise Denied(f"pulling {image!r} is not allowed for this stack")
+    repo, ref = image_key(image, tag)
+    out = {"fromImage": repo, "tag": ref}
+    if "platform" in params:
+        out["platform"] = params["platform"]
+    return urlencode(out)
+
+
+# --------------------------------------------------------------------------- #
 # Images
 # --------------------------------------------------------------------------- #
 def image_key(ref: str, tag: str | None = None) -> tuple[str, str]:
@@ -168,6 +224,11 @@ _MOUNT_FIELDS = frozenset({
 # with that driver config — and the local driver's options can bind any folder.
 _VOLUME_OPTION_FIELDS = frozenset({"Subpath", "NoCopy"})
 _RESTART_FIELDS = frozenset({"Name", "MaximumRetryCount"})
+# A container's settings on one network. The SDK sends {} here. Not Links (legacy
+# links hand a container another's environment), not DriverOpts (the bridge
+# driver takes per-interface sysctls there), not IPAMConfig (squatting another
+# container's address).
+_ENDPOINT_FIELDS = frozenset({"Aliases"})
 
 # Namespace settings: 'host' or another container's namespace is refused.
 _NAMESPACES = ("PidMode", "IpcMode", "UTSMode", "UsernsMode", "CgroupnsMode")
@@ -257,9 +318,14 @@ def _check_network(body: dict, host: dict, image: str, scope: Scope) -> None:
     endpoints = networking.get("EndpointsConfig") or {}
     if not isinstance(endpoints, dict):
         raise Denied("NetworkingConfig.EndpointsConfig must be an object")
-    for name in endpoints:
+    for name, endpoint in endpoints.items():
         if name not in allowed:
             raise Denied(f"network {name!r} is not this stack's")
+        if endpoint is None:
+            continue
+        if not isinstance(endpoint, dict):
+            raise Denied(f"NetworkingConfig.EndpointsConfig.{name} must be an object")
+        _only(endpoint, _ENDPOINT_FIELDS, f"NetworkingConfig.EndpointsConfig.{name}.")
 
 
 # The roles of the containers a manager creates itself.
@@ -279,6 +345,10 @@ def check_create(body: dict, name: str | None, scope: Scope) -> dict:
     _only(body, _CONFIG_FIELDS, "")
     if body.get("Runtime") not in (None, "", "runc"):
         raise Denied(f"runtime {body.get('Runtime')!r} is not allowed")
+    if body.get("Volumes"):
+        # The SDK always sends the key, as null. The manager never asks for an
+        # anonymous volume: everything it mounts is one of the stack's own.
+        raise Denied("anonymous volumes are not allowed: mount one of this stack's volumes")
     image = str(body.get("Image") or "")
     if not image_allowed(scope, image):
         raise Denied(f"image {image!r} is not one this stack runs")

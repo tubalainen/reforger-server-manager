@@ -454,3 +454,53 @@ def test_owns():
 ])
 def test_stack_names(name, ok):
     assert (stacks.stack_name_error(name) is None) is ok
+
+
+# --------------------------------------------------------------------------- #
+# Security review 2026-10-20 (F1, F5)
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("endpoint", [
+    {"Links": ["team1-steamcmd-1:x"]},
+    {"DriverOpts": {"com.docker.network.endpoint.sysctls": "net.ipv4.ip_forward=1"}},
+    {"IPAMConfig": {"IPv4Address": "172.18.0.2"}},
+    {"aliases": ["x"]},  # Docker reads field names case-insensitively
+    "team2-net",
+])
+def test_a_network_endpoint_carries_nothing_but_aliases(endpoint):
+    body = _instance_body(NetworkMode="team2-net")
+    body["NetworkingConfig"] = {"EndpointsConfig": {"team2-net": endpoint}}
+    with pytest.raises(Denied):
+        policy.check_create(body, None, SCOPE)
+    body["NetworkingConfig"] = {"EndpointsConfig": {"team2-net": {"Aliases": ["a"]}}}
+    policy.check_create(body, None, SCOPE)
+
+
+def test_anonymous_volumes_are_refused():
+    body = _instance_body()
+    body["Volumes"] = {"/x": {}}
+    with pytest.raises(Denied, match="anonymous volumes"):
+        policy.check_create(body, None, SCOPE)
+    body["Volumes"] = None  # what the SDK sends
+    policy.check_create(body, None, SCOPE)
+
+
+def test_single_query_keeps_blanks_and_refuses_repeats():
+    allowed = frozenset({"a", "b"})
+    assert policy.single_query("a=&b=1", allowed) == {"a": "", "b": "1"}
+    assert policy.single_query("", allowed) == {}
+    for query in ("a=1&a=2", "a=&a=1", "c=1", "a=1&b=2&c"):
+        with pytest.raises(Denied):
+            policy.single_query(query, allowed)
+
+
+def test_pull_query_is_canonical():
+    assert policy.pull_query(SCOPE, "fromImage=steamcmd/steamcmd&tag=latest") == \
+        "fromImage=steamcmd%2Fsteamcmd&tag=latest"
+    assert policy.pull_query(SCOPE, "fromImage=steamcmd/steamcmd&tag=latest&platform=linux") == \
+        "fromImage=steamcmd%2Fsteamcmd&tag=latest&platform=linux"
+    for query in ("fromImage=&fromImage=steamcmd/steamcmd&tag=latest",
+                  "fromImage=steamcmd/steamcmd&tag=latest&fromSrc=-",
+                  "fromImage=steamcmd/steamcmd&tag=latest&repo=steamcmd/steamcmd",
+                  "fromImage=alpine&tag=latest", "tag=latest"):
+        with pytest.raises(Denied):
+            policy.pull_query(SCOPE, query)
