@@ -6,6 +6,8 @@ out here on the paths the service asks for, exactly as the clear-data tests do.
 """
 import io
 import json
+import shutil
+import subprocess
 import tarfile
 
 import pytest
@@ -71,21 +73,18 @@ def _fake_container_run(monkeypatch, idir):
 
     class FakeContainers:
         def run(self, image, entrypoint=None, command=None, **kw):
-            script = command[1]
-            seen["script"] = script
-            for statement in script.split(";"):
-                statement = statement.strip()
-                if statement.startswith("rm -rf "):
-                    rel = statement.split("'")[1].replace("/idata/", "")
-                    target = idir / rel
-                    if target.is_dir():
-                        shutil.rmtree(target, ignore_errors=True)
-                    else:
-                        target.unlink(missing_ok=True)
-                elif statement.startswith("tar xzf "):
-                    archive = idir / statement.split("'")[1].replace("/idata/", "")
-                    with tarfile.open(archive, "r:gz") as tar:
-                        tar.extractall(idir, filter="data")
+            # sh -c RESTORE_SCRIPT sh ARCHIVE PATH...: the names are arguments.
+            assert command[:3] == ["-c", instance_backup.RESTORE_SCRIPT, "sh"]
+            archive, paths = command[3], command[4:]
+            seen["archive"], seen["paths"] = archive, paths
+            for path in paths:
+                target = idir / path.removeprefix("/idata/")
+                if target.is_dir():
+                    shutil.rmtree(target, ignore_errors=True)
+                else:
+                    target.unlink(missing_ok=True)
+            with tarfile.open(idir / archive.removeprefix("/idata/"), "r:gz") as tar:
+                tar.extractall(idir, filter="data")
 
     monkeypatch.setattr(
         instance_service.docker_service, "get_client",
@@ -574,3 +573,30 @@ def test_metadata_left_without_its_archive_is_swept_up(tmp_path, monkeypatch):
 
     assert len(instance_backup.overview(instance_id)["backups"]) == 1
     assert not stray.exists()
+
+
+def test_an_archive_with_control_characters_in_a_name_is_refused(tmp_path, monkeypatch):
+    _seed(tmp_path, monkeypatch)
+    odd = tarfile.TarInfo("profile/line\nbreak")
+    odd.size = 1
+    bad = _tar_with(tmp_path, [(odd, b"x")])
+    with pytest.raises(instance_service.InstanceError, match="will not unpack"):
+        instance_backup.inspect_upload(bad)
+
+
+@pytest.mark.skipif(shutil.which("sh") is None or shutil.which("tar") is None,
+                    reason="needs a POSIX shell and tar")
+def test_the_restore_script_treats_every_argument_as_a_path(tmp_path):
+    hostile = "x'; touch pwned; '"
+    (tmp_path / hostile).write_text("old world")
+    payload = tmp_path / "src"
+    (payload / "profile").mkdir(parents=True)
+    (payload / "profile" / "world.bin").write_text("restored")
+    archive = tmp_path / "b.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(payload / "profile", arcname="profile")
+    script = instance_backup.RESTORE_SCRIPT.replace("/idata", ".")
+    subprocess.run(["sh", "-c", script, "sh", "b.tar.gz", hostile], cwd=tmp_path, check=True)
+    assert not (tmp_path / hostile).exists()
+    assert not (tmp_path / "pwned").exists()
+    assert (tmp_path / "profile" / "world.bin").read_text() == "restored"

@@ -1449,6 +1449,10 @@ def _target_paths(instance_id: int, target: str) -> list[Path]:
     raise InstanceError(f"Unknown data target '{target}'")
 
 
+# What a clean-up container runs: remove every path it is given as an argument.
+# The paths never become part of the script itself.
+REMOVE_SCRIPT = 'rm -rf -- "$@"; true'
+
 _TARGET_MOUNT = {
     DATA_MODS: WORKSHOP_DIR,
     DATA_SAVES: PROFILE_DIR,
@@ -1527,16 +1531,16 @@ def clear_instance_data(instance_id: int, targets: list[str]) -> dict:
         removed.append({"target": target, "size_bytes": size, "files": files})
 
     if victims:
-        # Paths are handed to the cleanup container relative to the instance dir,
-        # and each one came from _target_paths — no user-supplied path ever
-        # reaches the shell.
+        # The names are what is on disk, and the game server — or a mod in it —
+        # chose them, so they are passed as arguments and never become part of
+        # a command line: a name holding a quote was a command of its own
+        # (security review 2026-10-20, F3).
         rel = [p.relative_to(idir).as_posix() for p in victims]
-        script = " ".join(f"rm -rf '/idata/{r}';" for r in rel) + " true"
         try:
             docker_service.get_client().containers.run(
                 config.settings.steamcmd_image,
                 entrypoint="/bin/sh",
-                command=["-c", script],
+                command=["-c", REMOVE_SCRIPT, "sh", *(f"/idata/{r}" for r in rel)],
                 remove=True,
                 mounts=[docker_service.mount_for(str(idir), "/idata")],
                 labels=docker_service.managed_labels(),

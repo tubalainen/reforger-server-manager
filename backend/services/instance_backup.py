@@ -60,10 +60,13 @@ KEEP = 10
 MAX_UPLOAD_BYTES = 2 * 1024**3
 MAX_UPLOAD_MEMBERS = 200_000
 
-# Backup ids are minted here (never taken from a request) and are the only thing
-# that reaches a shell, inside single quotes. The pattern is still enforced on
-# the way in, so a crafted id cannot walk out of the backups directory.
+# Backup ids are minted here (never taken from a request). The pattern is still
+# enforced on the way in, so a crafted id cannot walk out of the backups directory.
 _ID_RE = re.compile(r"^\d{8}-\d{6}(-\d+)?$")
+
+# What the restore container runs: $1 is the archive, the rest are the paths to
+# clear first. Names on disk are arguments here, never part of the script.
+RESTORE_SCRIPT = 'archive=$1; shift; rm -rf -- "$@"; tar xzf "$archive" -C /idata'
 
 SOURCE_MANUAL = "manual"
 SOURCE_TEMPLATE_SWITCH = "template-switch"
@@ -542,6 +545,8 @@ def _member_is_safe(member: tarfile.TarInfo) -> bool:
     """
     if not (member.isfile() or member.isdir()):
         return False
+    if any(ord(c) < 32 or ord(c) == 127 for c in member.name):
+        return False  # a line break or escape in a name is never a save
     name = member.name.replace("\\", "/").lstrip("./")
     if member.name.startswith("/") or not name:
         return False
@@ -757,18 +762,16 @@ def restore_backup(
     replaced = instance_service._state_paths(profile)
     size, files = instance_service._dir_usage(replaced)
 
-    # Every path here was minted by this module or produced by the state scan —
-    # nothing a caller sent reaches the shell.
+    # The paths come from the state scan: names the game server, a mod or an
+    # uploaded archive put on disk. They are passed as arguments and never become
+    # part of the script (security review 2026-10-20, F3).
     rel = [p.relative_to(idir).as_posix() for p in replaced]
-    script = (
-        " ".join(f"rm -rf '/idata/{r}';" for r in rel)
-        + f" tar xzf '/idata/backups/{archive.name}' -C /idata"
-    )
     try:
         docker_service.get_client().containers.run(
             config.settings.steamcmd_image,
             entrypoint="/bin/sh",
-            command=["-c", script],
+            command=["-c", RESTORE_SCRIPT, "sh", f"/idata/backups/{archive.name}",
+                     *(f"/idata/{r}" for r in rel)],
             remove=True,
             mounts=[docker_service.mount_for(str(idir), "/idata")],
             labels=docker_service.managed_labels(),
