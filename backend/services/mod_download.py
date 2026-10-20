@@ -16,11 +16,20 @@ Two halves, both in memory:
 The Workshop's sizes are the published package sizes. What lands on disk need
 not match them byte for byte, so callers cap the percentage and treat "stopped
 growing" as the end of the download rather than trusting 100 %.
+
+The addons folder outlives a template change: the mods of the template a server
+ran before stay on disk. Each mod sits in its own folder named after its Workshop
+id ("591AF5BDA9F7CE8B", or "Name_591AF5BDA9F7CE8B"), so once the total is known
+only the folders of the mods it covers are counted. Without that, a server
+switched to a smaller template showed "28.84 GB of 10.47 GB" (#235).
 """
 import json
 import logging
+import os
+import re
 import threading
 import time
+from pathlib import Path
 
 from services.workshop_service import WorkshopError, normalize_asset_id, workshop
 
@@ -46,6 +55,9 @@ _lock = threading.Lock()
 _expected: dict[tuple, tuple[float, dict]] = {}
 _resolving: set[tuple] = set()
 _samples: dict[str, list[tuple[float, int]]] = {}
+
+# A folder named after a Workshop id, bare or behind the mod's name.
+_MOD_DIR_RE = re.compile(r"(?:^|_)([0-9A-F]{16})$", re.IGNORECASE)
 
 
 def mod_ids(config_json: str | None) -> list[str]:
@@ -86,6 +98,9 @@ def _resolve(ids: tuple) -> dict:
         "bytes": sum(sizes.values()),
         "mods": len(sizes),
         "missing": len(missing),
+        # Which mod folders the download is made of. The ones the Workshop could
+        # not size are still downloaded by the server, so they count too.
+        "ids": frozenset(i.upper() for i in (*ids, *sizes, *missing)),
     }
 
 
@@ -159,16 +174,60 @@ def record(key: str, downloaded: int, now: float | None = None) -> dict:
     return {"rate_bps": max(0, int(rate)), "growing": growing}
 
 
-def progress(key: str, downloaded: int, config_json: str | None) -> dict:
+def downloaded_bytes(paths: list[Path], wanted: frozenset | None) -> int:
+    """The bytes under the addons folder(s) that belong to this download.
+
+    A folder named after a mod counts only when its id is in `wanted`; anything
+    else (files outside a mod folder, a download's scratch space) always
+    counts. With `wanted` None, everything counts: that is while the total is
+    still unknown, when the dependencies are too, and leaving one out would make
+    the download look finished while it is still fetching it.
+    """
+    total = 0
+    for root in paths:
+        for dirpath, dirnames, filenames in os.walk(root):
+            keep = []
+            for name in dirnames:
+                m = _MOD_DIR_RE.search(name)
+                if m is None:
+                    keep.append(name)
+                elif wanted is None or m.group(1).upper() in wanted:
+                    total += _tree_bytes(os.path.join(dirpath, name))
+            dirnames[:] = keep
+            total += sum(_file_bytes(os.path.join(dirpath, f)) for f in filenames)
+    return total
+
+
+def _tree_bytes(path: str) -> int:
+    return sum(
+        _file_bytes(os.path.join(dirpath, f))
+        for dirpath, _dirs, files in os.walk(path)
+        for f in files
+    )
+
+
+def _file_bytes(path: str) -> int:
+    try:
+        return os.stat(path, follow_symlinks=False).st_size
+    except OSError:
+        return 0
+
+
+def progress(key: str, paths: list[Path], config_json: str | None) -> dict:
     """The `mod_download` block of a starting server's stats."""
     expected = expected_total(mod_ids(config_json))
+    wanted = expected.get("ids")
+    downloaded = downloaded_bytes(paths, wanted)
+    # Counting fewer folders once the total arrives is a drop, not a download
+    # that went backwards: a fresh history, so the speed is not skewed by it.
+    history = f"{key}/{'mods' if wanted is not None else 'all'}"
     return {
         "downloaded_bytes": downloaded,
         "expected_bytes": expected["bytes"],
         "expected_state": expected["state"],
         "mods": expected["mods"],
         "missing": expected["missing"],
-        **record(key, downloaded),
+        **record(history, downloaded),
     }
 
 
