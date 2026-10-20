@@ -1,7 +1,7 @@
 import { formatBytes } from './format'
 
 // How far a starting server has got with downloading its mods (#235), from the
-// `mod_download` block of its stats: the bytes in its addons folder so far, and
+// `mod_download` block of its stats: the bytes of its mods on disk so far, and
 // what the Workshop says the template's mods and their dependencies weigh. The
 // server itself says nothing while it downloads, which is why its console looks
 // stuck on a first start.

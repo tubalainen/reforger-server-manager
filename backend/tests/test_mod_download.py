@@ -44,7 +44,8 @@ def test_a_dependency_shared_by_two_mods_is_counted_once(monkeypatch):
     monkeypatch.setattr(ws.workshop, "resolve_dependencies",
                         _tree({A: 10, B: 5, C: 7}, {A: [C], B: [C]}))
     result = mod_download._resolve((A, B))
-    assert result == {"state": "ready", "bytes": 22, "mods": 3, "missing": 0}
+    assert result == {"state": "ready", "bytes": 22, "mods": 3, "missing": 0,
+                      "ids": frozenset({A, B, C})}
 
 
 def test_a_mod_the_workshop_cannot_find_is_left_out_and_counted(monkeypatch):
@@ -53,6 +54,8 @@ def test_a_mod_the_workshop_cannot_find_is_left_out_and_counted(monkeypatch):
     assert result["state"] == "ready"
     assert result["bytes"] == 10
     assert result["missing"] == 1
+    # The server still downloads it, so its folder still counts.
+    assert result["ids"] == frozenset({A, B})
 
 
 def test_no_workshop_at_all_is_a_failed_lookup(monkeypatch):
@@ -73,7 +76,7 @@ def test_the_total_is_resolved_in_the_background_then_cached(monkeypatch):
     first = mod_download.expected_total([A])
     assert first["state"] == "resolving"
     assert mod_download.expected_total([A]) == {
-        "state": "ready", "bytes": 100, "mods": 1, "missing": 0,
+        "state": "ready", "bytes": 100, "mods": 1, "missing": 0, "ids": frozenset({A}),
     }
     mod_download.expected_total([A])
     assert calls == [A]
@@ -91,6 +94,26 @@ def test_speed_and_growth_come_from_the_samples():
     mod_download.record("c1", 1000, now=25.0)
     still = mod_download.record("c1", 1000, now=45.0)
     assert still == {"rate_bps": 0, "growing": False}
+
+
+def _mod_dir(root, name, size):
+    d = root / name
+    d.mkdir(parents=True)
+    (d / "data.pak").write_bytes(b"x" * size)
+
+
+def test_only_the_wanted_mod_folders_count(tmp_path):
+    addons = tmp_path / "addons"
+    _mod_dir(addons, A, 100)                     # bare id
+    _mod_dir(addons, f"Some Mod_{B.lower()}", 20)  # name_id, any case
+    _mod_dir(addons, C, 5000)                    # an earlier template's mod
+    _mod_dir(addons, "tmp", 3)                   # not a mod folder: always counts
+    (tmp_path / "loose.bin").write_bytes(b"x" * 7)
+    paths = [tmp_path]
+    assert mod_download.downloaded_bytes(paths, frozenset({A, B})) == 130
+    # Total not known yet: everything counts, as it did before.
+    assert mod_download.downloaded_bytes(paths, None) == 5130
+    assert mod_download.downloaded_bytes([tmp_path / "nope"], None) == 0
 
 
 def test_a_new_container_starts_a_fresh_history():
@@ -155,6 +178,18 @@ def test_a_starting_server_reports_its_mod_download(monkeypatch, tmp_path):
     assert md["expected_bytes"] == 1000
     assert md["expected_state"] == "ready"
     assert md["mods"] == 1
+
+
+def test_an_earlier_templates_mods_are_not_counted(monkeypatch, tmp_path):
+    # #235: switched from a big template to a smaller one, the old mods stayed on
+    # disk and the bar read "28.84 GB of 10.47 GB".
+    _stats_setup(monkeypatch, tmp_path, "starting")
+    _mod_dir(tmp_path / "instances" / "1" / "workshop", f"Old_{C}", 50_000)
+    # The first poll starts the lookup; until it answers, everything counts.
+    assert instance_service.instance_stats(1)["mod_download"]["downloaded_bytes"] == 50_300
+    md = instance_service.instance_stats(1)["mod_download"]
+    assert md["expected_state"] == "ready"
+    assert (md["downloaded_bytes"], md["expected_bytes"]) == (300, 1000)
 
 
 def test_an_online_server_reports_no_download(monkeypatch, tmp_path):

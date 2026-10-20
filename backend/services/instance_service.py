@@ -1218,10 +1218,12 @@ def instance_stats(instance_id: int) -> dict:
         log_text = "\n".join(text for _, text in log_lines)
         stats["server_state"] = server_state(container, log_text)
         if stats["server_state"] == STATE_STARTING:
-            # The same measurement as the Maintenance "Downloaded & baked mods"
-            # row. Only walked while starting, so an online server pays nothing.
-            downloaded, _ = _dir_usage(_target_paths(instance_id, DATA_MODS))
-            stats["mod_download"] = mod_download.progress(container.id, downloaded, run_config)
+            # The same folders as the Maintenance "Downloaded & baked mods" row,
+            # less the mods of an earlier template. Only walked while starting,
+            # so an online server pays nothing.
+            stats["mod_download"] = mod_download.progress(
+                container.id, _target_paths(instance_id, DATA_MODS), run_config,
+            )
         stats["roster"] = parse_roster(log_lines, now=datetime.now(UTC))
         for player in stats["roster"]:
             player["admin"] = bool(
