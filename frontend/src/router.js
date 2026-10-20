@@ -15,6 +15,7 @@ import Backup from './views/Backup.vue'
 import Downloads from './views/Downloads.vue'
 import Network from './views/Network.vue'
 import Guide from './views/Guide.vue'
+import Setup from './views/Setup.vue'
 import SectionLayout from './views/SectionLayout.vue'
 
 const router = createRouter({
@@ -31,6 +32,8 @@ const router = createRouter({
   // lists (#189).
   routes: [
     { path: '/login', name: 'login', component: Login, meta: { public: true } },
+    // First-run setup (#241): signed in, but without the rail around it.
+    { path: '/setup', name: 'setup', component: Setup, meta: { bare: true } },
     { path: '/servers', name: 'instances', component: Instances },
     // Overview is the bare /servers/:id; the other tabs add a segment (#189).
     { path: '/servers/:id/:tab?', name: 'instance-detail', component: InstanceDetail, props: true },
@@ -97,11 +100,31 @@ export function setAuthed(value) {
   authed = value
 }
 
+// Whether a brand-new install still has to go through the setup screen (#241).
+// Asked once per page load; the screen clears it when it is finished or skipped.
+let setupPending = null
+
+async function checkSetup() {
+  if (setupPending === null) {
+    try {
+      setupPending = (await api('/api/system/setup')).pending
+    } catch {
+      return false // ask again on the next navigation
+    }
+  }
+  return setupPending
+}
+
+export function setSetupPending(value) {
+  setupPending = value
+}
+
 router.beforeEach(async (to) => {
   if (to.meta.public) return true
   if (!(await checkAuth())) {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
+  if (to.name !== 'setup' && (await checkSetup())) return { name: 'setup' }
   return true
 })
 

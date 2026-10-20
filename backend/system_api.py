@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends
 
 import auth
 import config
-from services import docker_service, instance_service
+from services import docker_service, instance_service, onboarding
 
 router = APIRouter(prefix="/api/system", tags=["system"])
 
@@ -59,6 +59,19 @@ def warnings(_user: str = Depends(auth.require_session)):
     if engine:
         found.append(engine)
     return {"warnings": found}
+
+
+@router.get("/setup")
+async def setup_status(_user: str = Depends(auth.require_session)):
+    """Whether the GUI should open on the first-run setup screen (#241)."""
+    return {"pending": await asyncio.to_thread(onboarding.pending)}
+
+
+@router.post("/setup/done")
+async def setup_done(_user: str = Depends(auth.require_session)):
+    """The setup screen was finished or skipped; it is not shown again."""
+    await asyncio.to_thread(onboarding.finish)
+    return {"pending": False}
 
 
 @router.get("/network")

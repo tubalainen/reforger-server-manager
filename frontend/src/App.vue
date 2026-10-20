@@ -66,7 +66,7 @@ onUnmounted(() => clearInterval(updatePoll))
 </script>
 
 <template>
-  <router-view v-if="route.meta.public" />
+  <router-view v-if="route.meta.public || route.meta.bare" />
 
   <div v-else class="rsm-shell">
     <nav class="rsm-rail" aria-label="Main">

@@ -58,11 +58,13 @@ Players connect through UDP game ports, not the web UI. The default ranges are `
 
 ### First run
 
-After signing in:
+After signing in, a brand-new install opens on a setup screen with the three downloads every server needs:
 
-1. Pull the server runtime image under **System › Server files**.
-2. Download the stable or experimental server files on the same page.
-3. Create a template under **Library**, then create and start a server from it under **Servers**.
+1. The SteamCMD image, which downloads the game's server files.
+2. The Arma Reforger server files: Stable, and Experimental if you want it.
+3. The server runtime image every server runs in.
+
+**Download everything** fetches all three. You can skip the screen; everything on it is also under **System › Server files**, and it is not shown again. Then create a template under **Library**, and create and start a server from it under **Servers**.
 
 The default server runtime is the [ACE Mod-compatible image](https://github.com/acemod/reforger), configurable with `REFORGER_SERVER_IMAGE`.
 

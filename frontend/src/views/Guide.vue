@@ -431,13 +431,16 @@ const faq = [
         <h2 class="h5">Getting started</h2>
         <p class="text-secondary small mb-3">
           One-time setup, in order. Steps 1–2 download the pieces every server needs;
-          steps 3–4 create and start your first server.
+          steps 3–4 create and start your first server. On a brand-new install the GUI
+          opens on a setup screen that does steps 1–2 with one
+          <strong>Download everything</strong> button; it shows once.
         </p>
         <ol class="mb-2">
           <li class="mb-2">
-            <strong>Pull the server runtime image.</strong> Go to
+            <strong>Pull the two Docker images.</strong> Go to
             <router-link :to="{ name: 'server-files' }">System › Server files</router-link>
-            and pull the Docker image servers run from. This happens once.
+            and pull the SteamCMD image, which downloads the server files, and the
+            server runtime image every server runs in. This happens once.
           </li>
           <li class="mb-2">
             <strong>Download the server files</strong> for the branch you want (Stable for

@@ -23,7 +23,7 @@ import system_api
 import templates_api
 import web
 import workshop_api
-from services import auto_update, docker_service, fleet_history, instance_service
+from services import auto_update, docker_service, fleet_history, instance_service, onboarding
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("manager")
@@ -66,6 +66,11 @@ async def lifespan(_app: FastAPI):
             "Docker-controlling GUI (see the SECURITY errors above). Fix the "
             "configuration, or bind the GUI to 127.0.0.1."
         )
+    # A brand-new install opens on the setup screen; decided once (#241).
+    try:
+        await asyncio.to_thread(onboarding.settle)
+    except Exception as exc:  # no setup screen is better than no manager
+        logger.warning("Could not decide on the first-run setup screen: %s", exc)
     # Seed the Mods Overview registry from existing templates so mods that were
     # baked in before the registry existed still show up (#131). Idempotent.
     try:
