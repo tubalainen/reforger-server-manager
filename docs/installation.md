@@ -14,6 +14,7 @@ This guide covers Linux, public VPS, and Windows installations, plus networking,
 | [A second manager on the same machine](#several-installs-on-one-machine) | Another team, next to an install that already runs | `http://localhost:7781` |
 | [Several teams on a VPS](#several-teams-on-a-vps-the-shared-edge) | Another team on a VPS, at a domain of its own | `https://team2.your-domain` |
 | [The Server Supervisor](#the-server-supervisor) | Whoever manages a machine with several installs: all of them on one read-only page | `http://localhost:7090` |
+| [`rsm cli`](#the-servers-in-a-terminal-rsm-cli) | Whoever manages a Linux machine: every stack's servers in a terminal, with start, stop and restart | `sudo rsm cli` |
 
 ## Security
 
@@ -286,7 +287,7 @@ For each stack it shows:
 
 Across the machine it shows the totals (servers running, players, CPU and memory, each with the last hour as a small graph) and a **Needs attention** list: a manager or gate that is down, a stack without a Docker gate, two stacks whose ports overlap, a port two servers share, a server outside its stack's range, a server that keeps restarting or ran out of memory, a Docker Engine too old for game servers, a machine whose CPU or memory is nearly full, and managers older than the Supervisor.
 
-It changes nothing. There is no start, stop or edit button on the page. Each team's servers are run from its own manager.
+It changes nothing. There is no start, stop or edit button on the page. Each team's servers are run from its own manager. To start, stop or restart a team's server from the machine itself, use [`sudo rsm cli`](#the-servers-in-a-terminal-rsm-cli).
 
 ### How it is kept read-only
 
@@ -361,7 +362,9 @@ To let `rsm` drive it too: `echo 'RSM_DIR=/opt/rsm-supervisor' | sudo tee /etc/r
 - **Up/Down** (or `j`/`k`) selects a server. **s** starts it; **x** stops it and **r** restarts it, each after a `y` to confirm, which names the players still on it.
 - `--stack NAME` shows one stack only. `--once` prints the table once and exits, as it also does when the output is not a terminal (`rsm cli --once | mail ...`).
 - Each start, stop and restart is done by that stack's own manager (`docker exec -u app NAME-manager python manage.py stop ID`), exactly as a click in its GUI: the team sees it, and a stopped server is not taken for a crash and started again.
-- A stack whose manager predates v0.80.0 is listed with *its manager predates rsm cli*: update it with `sudo rsm update --stack NAME`.
+- A stack whose manager predates v0.80.0 is listed with *its manager predates rsm cli*: update it with `sudo rsm update --stack NAME`. `sudo rsm update --all` updates every manager and `rsm` itself in one go.
+- It runs as root, or as a user in the `docker` group: the access that already reaches every stack's containers. It needs no password, because each manager signs its own session for the command, and nothing listens on a port for it.
+- It differs from the Supervisor's page in two ways. It cannot be opened from another computer, except over SSH. And it shows no *Needs attention* list, no ports and no graphs.
 
 ## Networking and firewalls
 
