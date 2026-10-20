@@ -428,8 +428,9 @@ jobs:
           subs=''
           for s in reforger team2; do
             sub=$(docker network inspect -f '{{(index .IPAM.Config 0).Subnet}}' "$s-proxy")
+            # The edge by name, never the subnet: its gateway is the host (F2).
             trusted=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$s-manager" | sed -n 's/^TRUSTED_PROXIES=//p')
-            test "$sub" = "$trusted"
+            test "$trusted" = rsm-edge
             ip=$(docker inspect -f "{{(index .NetworkSettings.Networks \"$s-proxy\").IPAddress}}" rsm-edge)
             python3 -c "import ipaddress, sys; sys.exit(ipaddress.ip_address('$ip') not in ipaddress.ip_network('$sub'))"
             subs="$subs $sub"
@@ -468,7 +469,26 @@ jobs:
           done
           curl -fsS -H 'Host: sup.test' http://127.0.0.1/api/health | grep -q ok
           trusted=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' rsm-supervisor | sed -n 's/^TRUSTED_PROXIES=//p')
-          test "$trusted" = "$(docker network inspect -f '{{(index .IPAM.Config 0).Subnet}}' rsm-supervisor-proxy)"
+          test "$trusted" = rsm-edge
+          # Security review 2026-10-20, F2. From the host, straight to the
+          # Supervisor's address on the proxy network, the connection comes from
+          # that network's gateway: its X-Forwarded-For must not be believed.
+          login() { curl -s -o /dev/null -H 'Content-Type: application/json' -d '{"username":"x","password":"wrong"}' "$@"; }
+          last_failed() { docker logs rsm-supervisor 2>&1 | grep 'Failed login attempt from' | tail -1; }
+          sup_ip=$(docker inspect -f '{{(index .NetworkSettings.Networks "rsm-supervisor-proxy").IPAddress}}' rsm-supervisor)
+          login -H 'X-Forwarded-For: 203.0.113.77' "http://$sup_ip:8080/api/auth/login"
+          sleep 1
+          last_failed | tee direct.log
+          grep -q 'Failed login attempt from' direct.log
+          ! grep -q 203.0.113.77 direct.log
+          # Through the edge it is believed: the client named is the one the edge
+          # saw, never the edge itself (and never what the client claimed).
+          edge_ip=$(docker inspect -f '{{(index .NetworkSettings.Networks "rsm-supervisor-proxy").IPAddress}}' rsm-edge)
+          login -H 'Host: sup.test' -H 'X-Forwarded-For: 203.0.113.88' http://127.0.0.1/api/auth/login
+          sleep 1
+          last_failed | tee edge.log
+          ! grep -q "from $edge_ip\$" edge.log
+          ! grep -q 203.0.113.88 edge.log
           # Its observer still has no network at all.
           test "$(docker inspect -f '{{.HostConfig.NetworkMode}}' rsm-supervisor-observer)" = none
 

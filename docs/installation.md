@@ -32,9 +32,9 @@ Manager-created containers also use `no-new-privileges`. The [security review](s
 The application also enforces safer exposed defaults:
 
 - When bound beyond `127.0.0.1`, it refuses to start with the example password.
-- Disabling built-in login on an exposed bind requires `AUTH_DELEGATED_ACK=true`, confirming that an upstream proxy authenticates every request.
+- Disabling built-in login requires `AUTH_DELEGATED_ACK=true` on any bind, confirming that an upstream proxy authenticates every request. Programs on the host, and game servers on host networking, still reach the GUI without that proxy. With the login off the GUI answers only to `localhost`, IP addresses, `SITE_ADDRESS` and the names in `ALLOWED_HOSTS` (against DNS rebinding).
 - Session cookies are marked `Secure` behind HTTPS.
-- Set `TRUSTED_PROXIES` when using a reverse proxy so rate limiting sees the real client address. The VPS installer does this automatically.
+- Set `TRUSTED_PROXIES` when using a reverse proxy so rate limiting sees the real client address. Name the proxy itself (an address or a container name), not its Docker network: that network's gateway is the host. The VPS compose files do this automatically (`caddy`, or `rsm-edge` behind the edge).
 - The GUI password can be changed from the GUI, under **System › Account**. It is stored hashed in that install's database and replaces `ADMIN_PASSWORD` from then on; changing it needs the current password, at least 12 characters, and logs out every other session. **Log out everywhere** on the same page ends every session, yours included.
 - A forgotten GUI password is reset by whoever manages the machine: `sudo rsm reset-password` (add `--stack NAME` when there are several), or `docker exec -u app reforger-manager python manage.py reset-password`. The `ADMIN_PASSWORD` in that install's `.env` is then the password again, and everyone is logged out.
 
@@ -199,7 +199,7 @@ On a VPS, give the new stack a domain of its own: `sudo rsm add-stack team2 --do
 
 ### Several teams on a VPS: the shared edge
 
-Only one program can hold ports 80 and 443. With one stack on a VPS that is the stack's own Caddy. With several, it is the **edge**: one shared Caddy, an install of its own in `/opt/rsm-edge`, that serves each stack's GUI at a domain of its own and gets and renews every certificate. The stacks still share nothing else. The edge reaches each manager over that stack's own proxy network, so one team's containers cannot reach another's. Each manager believes the client address the edge passes on (`TRUSTED_PROXIES`) from that network's subnet only.
+Only one program can hold ports 80 and 443. With one stack on a VPS that is the stack's own Caddy. With several, it is the **edge**: one shared Caddy, an install of its own in `/opt/rsm-edge`, that serves each stack's GUI at a domain of its own and gets and renews every certificate. The stacks still share nothing else. The edge reaches each manager over that stack's own proxy network, so one team's containers cannot reach another's. Each manager believes the client address the edge passes on (`TRUSTED_PROXIES=rsm-edge`) from the edge's own address only.
 
 Point a DNS A record per team at the VPS first, then:
 

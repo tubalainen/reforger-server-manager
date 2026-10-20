@@ -56,16 +56,51 @@ def test_web_exposed_detects_bind():
         assert web_exposed(_settings(web_bind=exposed)) is True
 
 
-def test_loopback_is_frictionless_even_when_insecure():
-    # Example password + no auth on localhost are only warnings, never fatal.
+def test_loopback_is_frictionless_even_with_the_example_password():
+    # The example password on localhost is only a warning, never fatal.
     fatal, warnings = startup_security_issues(
         _settings(admin_password=config.EXAMPLE_PASSWORD)
     )
     assert fatal == []
     assert any("example value" in w for w in warnings)
 
+
+def test_no_login_needs_the_ack_on_loopback_too():
+    # 127.0.0.1 is every program on the host and every game server on host
+    # networking, not only the proxy (security review 2026-10-20, F4).
     fatal, _ = startup_security_issues(_settings(auth_enabled=False))
+    assert fatal and any("AUTH_DELEGATED_ACK" in f for f in fatal)
+    fatal, warnings = startup_security_issues(
+        _settings(auth_enabled=False, auth_delegated_ack=True)
+    )
     assert fatal == []
+    assert any("host networking" in w for w in warnings)
+
+
+def test_trusting_a_whole_network_is_warned_about():
+    nets, names, _ = config._parse_proxies("172.31.242.0/24")
+    _, warnings = startup_security_issues(_settings(trusted_proxies=nets))
+    assert any("whole network" in w for w in warnings)
+    nets, names, _ = config._parse_proxies("10.0.0.5,caddy")
+    _, warnings = startup_security_issues(
+        _settings(trusted_proxies=nets, trusted_proxy_hosts=names))
+    assert not any("whole network" in w for w in warnings)
+
+
+def test_trusted_proxies_take_addresses_networks_and_names():
+    nets, names, invalid = config._parse_proxies(
+        "10.0.0.5, 172.31.242.0/24 ,caddy,RSM-Edge,not a host,300.1.2.3,")
+    assert [str(n) for n in nets] == ["10.0.0.5/32", "172.31.242.0/24"]
+    assert names == ("caddy", "rsm-edge")
+    assert invalid == ("not a host", "300.1.2.3")
+
+
+def test_host_of():
+    for raw, host in (("reforger.example.com:443", "reforger.example.com"),
+                      ("[::1]:7780", "::1"), ("::1", "::1"), ("https://X.example/", "x.example"),
+                      ("http://two.test", "two.test"), (":80", ""), ("", ""),
+                      ("192.168.1.20:7780", "192.168.1.20"), ("name.example.", "name.example")):
+        assert config._host_of(raw) == host, raw
 
 
 def test_exposed_with_example_password_is_fatal():

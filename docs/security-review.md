@@ -697,9 +697,9 @@ code running in host-networked game servers on Linux.
 | # | Finding | Severity | Status |
 |---|---------|----------|--------|
 | **F1** | Gate: an image pull could reach Docker as an image *import* | **HIGH** | Fixed in v0.81.1 |
-| **F2** | `TRUSTED_PROXIES` names the whole proxy subnet, gateway included: login throttle bypass from the host | **MEDIUM** | Open |
+| **F2** | `TRUSTED_PROXIES` names the whole proxy subnet, gateway included: login throttle bypass from the host | **MEDIUM** | Fixed in v0.81.3 |
 | **F3** | Shell injection through file names in the clean-up and restore helper containers | **MEDIUM** | Fixed in v0.81.2 |
-| **F4** | `AUTH_ENABLED=false` reachable around the proxy; no Host allow-list (DNS rebinding) | **MEDIUM** | Open |
+| **F4** | `AUTH_ENABLED=false` reachable around the proxy; no Host allow-list (DNS rebinding) | **MEDIUM** | Fixed in v0.81.3 |
 | **F5** | Gate: endpoint settings and anonymous volumes not checked | **LOW** | Fixed in v0.81.1 |
 | **F6** | Host tooling refreshes itself from `main`, unverified | **LOW** | Backlog |
 | **F7** | RCON listens on every interface, no password rule | **LOW** | Backlog |
@@ -728,7 +728,7 @@ with no body. Every pull names its tag: without one Docker downloads every tag. 
 `gate-e2e` sends both forms of the import to a real daemon and checks the helper image is
 unchanged.
 
-### F2 — the trusted proxy list includes the host · MEDIUM · open
+### F2 — the trusted proxy list includes the host · MEDIUM · fixed in v0.81.3
 **Files:** `docker-compose.vps.yaml` (`TRUSTED_PROXIES: ${PROXY_SUBNET}`),
 `docker-compose.supervisor.behind-edge.yaml`, `backend/auth.py` (`client_ip`)
 
@@ -739,10 +739,15 @@ in it — is therefore a "trusted proxy" and may name its own `X-Forwarded-For`.
 identity per attempt means no throttle: unlimited online guessing of any team's password, and
 of the Supervisor's. Passwords set in the GUI are only held to 12 characters.
 
-**Fix planned:** trust the proxy's own address, not its subnet — a fixed `ipv4_address` for
-the stack's Caddy and for the edge on each `<stack>-proxy` network, and `TRUSTED_PROXIES` set
-to that one address. Where the engine is 28 or newer, an `isolated` gateway on the proxy
-networks as well.
+**Fix (v0.81.3):** `TRUSTED_PROXIES` takes container names, and the compose files name the
+proxy itself — `caddy`, or `rsm-edge` behind the shared edge. The manager looks the name up
+(cached for 30 s) and trusts exactly that address; a name that does not resolve is trusted
+nowhere. A `TRUSTED_PROXIES` entry wider than one address is warned about at startup, so an
+install still on its old compose file says so. `edge-e2e` sends a forged `X-Forwarded-For`
+from the host straight to the Supervisor's proxy-network address and checks it is not
+believed, while the edge's is. (Pinning addresses was the first plan; names need no subnet
+arithmetic in rsm and no new `.env` setting. An `isolated` gateway was ruled out: the
+single-stack Caddy publishes its ports through that network.)
 
 ### F3 — file names reach a shell · MEDIUM · fixed in v0.81.2
 **Files:** `backend/services/instance_service.py` (`clear_instance_data`),
@@ -761,7 +766,7 @@ no user-supplied path reaches the shell is wrong.
 ever a name. Uploaded archives with a control character in a member name are refused. Tests
 run both scripts through a real `sh` with a hostile name.
 
-### F4 — a delegated login can be walked around · MEDIUM · open
+### F4 — a delegated login can be walked around · MEDIUM · fixed in v0.81.3
 **Files:** `backend/config.py` (`startup_security_issues`), `backend/web.py`
 
 With `AUTH_ENABLED=false` the proxy in front is the login, but the manager stays reachable
@@ -769,9 +774,12 @@ without it: from the host, from every host-networked game server, and — on a l
 through DNS rebinding from any web page the operator opens (the Origin then equals the Host,
 and with the login off no cookie is needed). The manager accepts any `Host` header.
 
-**Fix planned:** a Host allow-list on the manager and the Supervisor (localhost, the site
-address, plus `ALLOWED_HOSTS`), `AUTH_DELEGATED_ACK` required even on a loopback bind, and
-`.env.example` saying that game servers on host networking reach the GUI directly.
+**Fix (v0.81.3):** with the login off, the manager and the Supervisor answer only to
+`localhost`, an IP address, `SITE_ADDRESS` and the names in the new `ALLOWED_HOSTS` — every
+HTTP request and every WebSocket handshake (`auth.host_allowed`); with the login on nothing
+changes. `AUTH_ENABLED=false` needs `AUTH_DELEGATED_ACK=true` on every bind, and
+`.env.example` says that the host and its host-networked game servers reach the GUI without
+the proxy.
 
 ### F5 — two smaller gate gaps · LOW · fixed in v0.81.1
 `NetworkingConfig.EndpointsConfig.<network>` was not held to a field list, so a create could

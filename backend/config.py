@@ -1,13 +1,14 @@
 """All runtime configuration, read from environment (.env via docker compose)."""
 import ipaddress
 import os
+import re
 import secrets
 from dataclasses import dataclass, field
 
 import stacks
 
 APP_NAME = "Reforger Server Manager"
-APP_VERSION = "0.81.2"
+APP_VERSION = "0.81.3"
 
 # The password shipped in .env.example. Refusing to start with it (when exposed)
 # is what stops a "just ran docker compose up" box from facing the internet on
@@ -38,14 +39,21 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() not in ("0", "false", "no", "off")
 
 
-def _parse_networks(raw: str | None) -> tuple[tuple, tuple[str, ...]]:
-    """Parse 'IP,CIDR,...' into (networks, malformed entries).
+_HOSTNAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,251}[A-Za-z0-9])?$")
 
-    A bare address is accepted as a single-host network. Malformed entries are
-    returned rather than raised so startup can warn about them by name instead
-    of silently trusting a shorter list than the operator intended.
+
+def _parse_proxies(raw: str | None) -> tuple[tuple, tuple[str, ...], tuple[str, ...]]:
+    """Parse 'IP,CIDR,NAME,...' into (networks, host names, malformed entries).
+
+    A bare address is accepted as a single-host network. A name — `caddy`,
+    `rsm-edge` — is the proxy's container, looked up when a request arrives, so
+    exactly its address is trusted and not the network around it (security
+    review 2026-10-20, F2). Malformed entries are returned rather than raised so
+    startup can warn about them by name instead of silently trusting a shorter
+    list than the operator intended.
     """
     networks = []
+    names = []
     invalid = []
     for part in (raw or "").split(","):
         part = part.strip()
@@ -54,8 +62,28 @@ def _parse_networks(raw: str | None) -> tuple[tuple, tuple[str, ...]]:
         try:
             networks.append(ipaddress.ip_network(part, strict=False))
         except ValueError:
-            invalid.append(part)
-    return tuple(networks), tuple(invalid)
+            if _HOSTNAME_RE.fullmatch(part) and not part.replace(".", "").isdigit():
+                names.append(part.lower())
+            else:
+                invalid.append(part)
+    return tuple(networks), tuple(names), tuple(invalid)
+
+
+def _host_of(raw: str) -> str:
+    """The host name of a Host header or a site address, lower case, no port.
+
+    'reforger.example.com:443' -> 'reforger.example.com', '[::1]:7780' -> '::1',
+    'https://x.example' -> 'x.example', ':80' -> ''.
+    """
+    raw = (raw or "").strip().lower()
+    for scheme in ("http://", "https://"):
+        raw = raw.removeprefix(scheme)
+    raw = raw.split("/", 1)[0]
+    if raw.startswith("["):
+        return raw[1:].split("]", 1)[0]
+    if raw.count(":") > 1:
+        return raw  # a bare IPv6 address
+    return raw.split(":", 1)[0].rstrip(".")
 
 
 def _port_range(raw: str | None, fallback: tuple[int, int]) -> tuple[int, int]:
@@ -100,7 +128,16 @@ class Settings:
     # client for login throttling (security review R4). Empty = trust nothing and
     # always use the direct peer, which is the safe default for a direct bind.
     trusted_proxies: tuple = ()
+    # Proxies named by their container (`caddy`, `rsm-edge`): their address is
+    # looked up, so exactly that one is trusted (auth.client_ip).
+    trusted_proxy_hosts: tuple[str, ...] = field(default=())
     trusted_proxies_invalid: tuple[str, ...] = field(default=())
+    # Host names the GUI answers to while the built-in login is off, besides
+    # localhost, any IP address and SITE_ADDRESS (security review 2026-10-20,
+    # F4): with no login, a page on another name is a DNS-rebinding attack.
+    allowed_hosts: tuple[str, ...] = field(default=())
+    # SITE_ADDRESS's host name (the VPS Caddy and the edge serve the GUI there).
+    site_host: str = ""
     # Interactive API docs (/docs, /redoc, /openapi.json). Off by default: they
     # enumerate every endpoint of a Docker-controlling API to anyone who asks
     # (security review R6).
@@ -153,7 +190,10 @@ class Settings:
         generated = not secret
         if generated:
             secret = secrets.token_hex(32)
-        trusted, trusted_bad = _parse_networks(os.environ.get("TRUSTED_PROXIES"))
+        trusted, trusted_names, trusted_bad = _parse_proxies(os.environ.get("TRUSTED_PROXIES"))
+        allowed_hosts = tuple(
+            h for h in (_host_of(p) for p in os.environ.get("ALLOWED_HOSTS", "").split(",")) if h
+        )
         origins = tuple(
             o.strip().rstrip("/")
             for o in os.environ.get("ALLOWED_ORIGINS", "").split(",")
@@ -164,7 +204,10 @@ class Settings:
             rsm_stack=stack,
             session_cookie_name=os.environ.get("SESSION_COOKIE_NAME", "").strip(),
             trusted_proxies=trusted,
+            trusted_proxy_hosts=trusted_names,
             trusted_proxies_invalid=trusted_bad,
+            allowed_hosts=allowed_hosts,
+            site_host=_host_of(os.environ.get("SITE_ADDRESS", "")),
             api_docs=_env_bool("API_DOCS", False),
             allowed_origins=origins,
             content_security_policy=os.environ.get("CONTENT_SECURITY_POLICY", "").strip(),
@@ -219,9 +262,10 @@ def startup_security_issues(
 ) -> tuple[list[str], list[str]]:
     """Return (fatal, warnings) for the current configuration.
 
-    Fatal issues abort startup; they are only raised when the GUI looks
+    Fatal issues abort startup. Password issues are only fatal when the GUI looks
     network-exposed (a non-loopback WEB_BIND), so a localhost-only run stays
-    frictionless while an exposed one must be deliberately safe. This is the
+    frictionless while an exposed one must be deliberately safe; a login that is
+    switched off needs AUTH_DELEGATED_ACK wherever the GUI is bound. This is the
     single source of truth for both the startup gate and its tests.
 
     `gui_password_set`: the password was changed in the GUI (#204), so it — not
@@ -234,18 +278,25 @@ def startup_security_issues(
 
     if not s.auth_enabled:
         # The built-in login is off; a reverse proxy is meant to enforce auth.
-        if exposed and not s.auth_delegated_ack:
+        # Required on a loopback bind too (security review 2026-10-20, F4):
+        # 127.0.0.1 is not just this machine's browser — every program on the
+        # host, and every game server on host networking (Workshop mods
+        # included), reaches it without passing the proxy.
+        if not s.auth_delegated_ack:
+            where = f"on WEB_BIND={s.web_bind!r}" if exposed else "on this machine"
             fatal.append(
-                f"AUTH_ENABLED=false exposes the Docker-controlling GUI on "
-                f"WEB_BIND={s.web_bind!r} with NO built-in login. Put a reverse "
+                f"AUTH_ENABLED=false opens the Docker-controlling GUI {where} with "
+                f"NO built-in login — to every program on this host and every game "
+                f"server on host networking, not only to the proxy. Put a reverse "
                 f"proxy that authenticates every request in front of it and set "
-                f"AUTH_DELEGATED_ACK=true to confirm — or set AUTH_ENABLED=true, "
-                f"or bind the GUI to 127.0.0.1."
+                f"AUTH_DELEGATED_ACK=true to confirm, or set AUTH_ENABLED=true."
             )
         else:
             warnings.append(
                 "AUTH_ENABLED=false — the built-in login is DISABLED. A reverse "
-                "proxy in front MUST enforce authentication; the GUI controls Docker."
+                "proxy in front MUST enforce authentication; the GUI controls Docker. "
+                "Programs on this host and game servers on host networking reach "
+                "the GUI without the proxy."
             )
     elif gui_password_set:
         if not s.admin_username:
@@ -279,6 +330,19 @@ def startup_security_issues(
                 "especially before exposing the GUI beyond localhost."
             )
 
+    wide = [str(n) for n in s.trusted_proxies if n.num_addresses > 1]
+    if wide:
+        # A Docker network's gateway is the host itself, inside the network's own
+        # range: everything on the host would be a "proxy" that may name its own
+        # client address, and the login throttle would stop no one (F2).
+        warnings.append(
+            "TRUSTED_PROXIES names a whole network (" + ", ".join(wide) + "). If it "
+            "is a Docker network, everything on this host — game servers on host "
+            "networking included — reaches the GUI from that network's gateway and "
+            "can choose its own X-Forwarded-For, which defeats the login throttle. "
+            "Name the proxy itself instead (TRUSTED_PROXIES=caddy, or rsm-edge "
+            "behind the shared edge): the compose files of v0.81.3 do."
+        )
     if s.trusted_proxies_invalid:
         # Named explicitly: a typo'd entry silently shrinks the trust list, and
         # the symptom (throttling keyed on the proxy again) is hard to spot.

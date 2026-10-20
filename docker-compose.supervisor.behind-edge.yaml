@@ -9,15 +9,17 @@
 #     edge joins too. rsm creates it with the subnet in PROXY_SUBNET (.env).
 #     It is not the network the Supervisor shares with its observer: that one
 #     keeps having nobody else on it.
-#   * It believes X-Forwarded-For from that subnet only, so login throttling
-#     sees each real client, not the edge.
+#   * It believes X-Forwarded-For from the edge only — by name: it looks up the
+#     edge's address and trusts that one address, not the subnet, whose
+#     gateway is the host itself (security review 2026-10-20, F2). Login
+#     throttling sees each real client, not the edge.
 #   * It is on the internet now, so it refuses to start on a weak password,
 #     like any exposed install (the page itself stays on 127.0.0.1 as before).
 services:
   supervisor:
     environment:
       WEB_BIND: "0.0.0.0"
-      TRUSTED_PROXIES: ${PROXY_SUBNET:?set PROXY_SUBNET in .env (rsm edge add --supervisor does)}
+      TRUSTED_PROXIES: rsm-edge
     networks:
       - supervisor
       - proxy
