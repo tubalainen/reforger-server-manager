@@ -2,13 +2,13 @@
 import { onMounted, onUnmounted, reactive, nextTick } from 'vue'
 import { api } from '../api'
 import { formatBytes, formatTimestamp } from '../format'
+import { useBranchDownload, useImagePull } from '../jobs'
 import HelpTip from '../components/HelpTip.vue'
+import JobProgress from '../components/JobProgress.vue'
 
 const state = reactive({ branches: [], docker: true, error: '', steamcmd_image: '', server_image: '' })
-const logs = reactive({})
 const updateInfo = reactive({})
 const checking = reactive({})
-const sockets = {}
 const logPanes = {}
 // The daily update check and its two toggles (#177).
 const autoUpdate = reactive({
@@ -17,10 +17,50 @@ const autoUpdate = reactive({
   branches: [], busy: false,
 })
 let autoPoll = null
-// The reforger runtime image each instance is created from (issue #50).
-const img = reactive({ present: false, job: null, log: [] })
-let imgSocket = null
-const imgLogPane = { el: null }
+
+function scrollPane(key) {
+  nextTick(() => {
+    const el = logPanes[key]
+    if (el) el.scrollTop = el.scrollHeight
+  })
+}
+
+// The SteamCMD image the server-file downloads run in (#241), and the reforger
+// runtime image each server's container is created from (issue #50).
+const steamcmd = useImagePull('/api/serverfiles/steamcmd-image', {
+  onUpdate: () => scrollPane('steamcmd'),
+  onClose: () => refresh(),
+})
+const runtime = useImagePull('/api/serverfiles/image', {
+  onUpdate: () => scrollPane('runtime'),
+  onClose: () => refresh(),
+})
+
+const images = [
+  {
+    key: 'steamcmd', pull: steamcmd, title: 'SteamCMD image',
+    setting: 'steamcmd_image', env: 'STEAMCMD_IMAGE',
+    blurb: 'Downloads the game server files from Steam, pulled once.',
+    about: 'The Docker image each server-file download runs in:',
+    done: 'Image pulled — you can download the server files now.',
+  },
+  {
+    key: 'runtime', pull: runtime, title: 'Server runtime image',
+    setting: 'server_image', env: 'REFORGER_SERVER_IMAGE',
+    blurb: 'Every server runs from this image, pulled once.',
+    about: "The Docker image each server's container is created from:",
+    done: 'Image pulled — you can start your servers now.',
+  },
+]
+
+// One download per branch, made the first time the branch is listed.
+const files = {}
+function filesFor(branch) {
+  return (files[branch] ||= useBranchDownload(branch, {
+    onUpdate: () => scrollPane(branch),
+    onClose: () => refresh(),
+  }))
+}
 
 async function checkUpdate(branch) {
   checking[branch] = true
@@ -99,114 +139,38 @@ const badge = { stable: 'text-bg-success', experimental: 'text-bg-warning' }
 const fmtBytes = (n) => formatBytes(n, { base: 1000, empty: '' })
 const fmtDate = formatTimestamp
 
-function branchState(name) {
-  return state.branches.find((b) => b.branch === name)
-}
-
 async function refresh() {
   try {
     const data = await api('/api/serverfiles')
     state.docker = data.docker
-    state.branches = data.branches
+    // Each branch card reads its download's live state.
+    state.branches = data.branches.map((b) => ({ ...b, files: filesFor(b.branch) }))
     state.steamcmd_image = data.steamcmd_image
     state.server_image = data.server_image
-    img.present = data.server_image_present
-    img.job = data.server_image_job
+    steamcmd.state.present = data.steamcmd_image_present
+    steamcmd.state.job = data.steamcmd_image_job
+    runtime.state.present = data.server_image_present
+    runtime.state.job = data.server_image_job
     state.error = ''
     await loadAutoUpdate()
     for (const b of data.branches) {
-      if (b.job?.status === 'running') connect(b.branch)
+      const f = filesFor(b.branch)
+      f.state.job = b.job
+      f.state.installed = b.installed
+      if (b.job?.status === 'running') f.connect()
     }
-    if (img.job?.status === 'running') connectImage()
+    for (const img of images) {
+      if (img.pull.state.job?.status === 'running') img.pull.connect()
+    }
   } catch (e) {
     state.error = e.message
   }
 }
 
-function scrollLog(branch) {
-  nextTick(() => {
-    const el = logPanes[branch]
-    if (el) el.scrollTop = el.scrollHeight
-  })
-}
-
-function connect(branch) {
-  if (sockets[branch]) return
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-  const ws = new WebSocket(`${proto}://${location.host}/api/serverfiles/${branch}/ws`)
-  sockets[branch] = ws
-  ws.onmessage = (msg) => {
-    const ev = JSON.parse(msg.data)
-    const b = branchState(branch)
-    if (!b) return
-    if (ev.type === 'snapshot') {
-      Object.assign(b, ev.state)
-      logs[branch] = ev.log || []
-      scrollLog(branch)
-    } else if (ev.type === 'log') {
-      const lines = (logs[branch] ||= [])
-      lines.push(ev.line)
-      if (lines.length > 500) lines.shift()
-      scrollLog(branch)
-    } else if (ev.type === 'progress') {
-      if (b.job) Object.assign(b.job, ev)
-    } else if (ev.type === 'status') {
-      b.job = ev.job
-      if (ev.installed) b.installed = ev.installed
-    }
-  }
-  ws.onclose = () => {
-    delete sockets[branch]
-    refresh()
-  }
-}
-
-async function startDownload(branch) {
-  const b = branchState(branch)
+// Start a pull or a download; what it ran into goes in the page's alert.
+async function run(start) {
   try {
-    b.job = await api(`/api/serverfiles/${branch}/download`, { method: 'POST' })
-    logs[branch] = []
-    connect(branch)
-  } catch (e) {
-    state.error = e.message
-  }
-}
-
-function connectImage() {
-  if (imgSocket) return
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-  const ws = new WebSocket(`${proto}://${location.host}/api/serverfiles/image/ws`)
-  imgSocket = ws
-  ws.onmessage = (msg) => {
-    const ev = JSON.parse(msg.data)
-    if (ev.type === 'snapshot') {
-      img.job = ev.job
-      img.present = ev.present
-      img.log = ev.log || []
-    } else if (ev.type === 'log') {
-      img.log.push(ev.line)
-      if (img.log.length > 500) img.log.shift()
-    } else if (ev.type === 'progress') {
-      if (img.job) Object.assign(img.job, ev)
-    } else if (ev.type === 'status') {
-      img.job = ev.job
-      if (ev.present !== null) img.present = ev.present
-    }
-    nextTick(() => {
-      if (imgLogPane.el) imgLogPane.el.scrollTop = imgLogPane.el.scrollHeight
-    })
-  }
-  ws.onclose = () => {
-    imgSocket = null
-    refresh()
-  }
-}
-
-async function pullImage() {
-  try {
-    img.job = await api('/api/serverfiles/image/pull', { method: 'POST' })
-    img.log = []
-    connectImage()
+    await start()
   } catch (e) {
     state.error = e.message
   }
@@ -214,8 +178,9 @@ async function pullImage() {
 
 onMounted(refresh)
 onUnmounted(() => {
-  for (const ws of Object.values(sockets)) ws.close()
-  if (imgSocket) imgSocket.close()
+  for (const f of Object.values(files)) f.close()
+  steamcmd.close()
+  runtime.close()
   if (autoPoll) clearInterval(autoPoll)
 })
 </script>
@@ -230,76 +195,55 @@ onUnmounted(() => {
     </div>
     <div v-if="state.error" class="alert alert-warning py-2">{{ state.error }}</div>
 
-    <!-- Server runtime image: the Docker image instances are created from,
-         separate from the steamcmd server files above (issue #50). -->
-    <div class="card mb-3">
+    <!-- The two Docker images: SteamCMD, which the server-file downloads run in
+         (#241), and the runtime image every server is created from (#50).
+         Both are separate from the game's server files below. -->
+    <div v-for="img in images" :key="img.key" class="card mb-3">
       <div class="card-body">
         <div class="d-flex justify-content-between align-items-start mb-2 flex-wrap gap-2">
           <div>
-            <h2 class="h5 mb-1">Server runtime image</h2>
+            <h2 class="h5 mb-1">{{ img.title }}</h2>
             <p class="text-secondary small mb-0">
-              Every server runs from this image, pulled once.
-              <HelpTip label="About the runtime image">
-                <p>
-                  The Docker image each server's container is created from:
-                  <code>{{ state.server_image }}</code>.
-                </p>
+              {{ img.blurb }}
+              <HelpTip :label="`About the ${img.title}`">
+                <p>{{ img.about }} <code>{{ state[img.setting] }}</code>.</p>
                 <p>
                   It is separate from the game's server files below. Set
-                  <code>REFORGER_SERVER_IMAGE</code> in <code>.env</code> to use another one.
+                  <code>{{ img.env }}</code> in <code>.env</code> to use another one.
                 </p>
               </HelpTip>
             </p>
           </div>
           <span
             class="badge align-self-center"
-            :class="img.present ? 'text-bg-success' : 'text-bg-secondary'"
-          >{{ img.present ? 'Installed' : 'Not installed' }}</span>
+            :class="img.pull.state.present ? 'text-bg-success' : 'text-bg-secondary'"
+          >{{ img.pull.state.present ? 'Installed' : 'Not installed' }}</span>
         </div>
 
-        <div v-if="img.job && img.job.status === 'running'" class="mb-2">
-          <div class="d-flex justify-content-between small mb-1">
-            <span class="text-capitalize">{{ img.job.phase }}</span>
-            <span>
-              {{ img.job.percent.toFixed(1) }}%
-              <template v-if="img.job.bytes_total">
-                ({{ fmtBytes(img.job.bytes_done) }} / {{ fmtBytes(img.job.bytes_total) }})
-              </template>
-            </span>
-          </div>
-          <div class="progress" style="height: 0.75rem">
-            <div
-              class="progress-bar progress-bar-striped progress-bar-animated"
-              :style="{ width: img.job.percent + '%' }"
-            ></div>
-          </div>
-        </div>
-
-        <div v-if="img.job && img.job.status === 'error'" class="alert alert-danger py-2 small mb-2">
-          {{ img.job.error }}
-        </div>
-        <div v-if="img.job && img.job.status === 'success'" class="alert alert-success py-2 small mb-2">
-          Image pulled — you can start your servers now.
-        </div>
+        <JobProgress :job="img.pull.state.job" />
+        <div
+          v-if="img.pull.state.job && img.pull.state.job.status === 'success'"
+          class="alert alert-success py-2 small mb-2"
+        >{{ img.done }}</div>
 
         <button
           class="btn btn-primary"
-          :disabled="!state.docker || (img.job && img.job.status === 'running')"
-          @click="pullImage"
+          :disabled="!state.docker || img.pull.state.job?.status === 'running'"
+          @click="run(img.pull.pull)"
         >
           <span
-            v-if="img.job && img.job.status === 'running'"
+            v-if="img.pull.state.job?.status === 'running'"
             class="spinner-border spinner-border-sm me-1"
           ></span>
-          {{ img.present ? 'Re-pull image' : 'Pull image' }}
+          {{ img.pull.state.present ? 'Re-pull image' : 'Pull image' }}
         </button>
 
         <pre
-          v-if="img.log.length"
-          :ref="(el) => (imgLogPane.el = el)"
+          v-if="img.pull.state.log.length"
+          :ref="(el) => (logPanes[img.key] = el)"
           class="mt-3 p-2 bg-black text-light rounded small mb-0"
           style="max-height: 16rem; overflow-y: auto; white-space: pre-wrap"
-        >{{ img.log.join('\n') }}</pre>
+        >{{ img.pull.state.log.join('\n') }}</pre>
       </div>
     </div>
 
@@ -380,35 +324,20 @@ onUnmounted(() => {
               <span class="badge" :class="badge[b.branch]">app {{ b.app_id }}</span>
             </div>
 
-            <p v-if="b.installed" class="text-secondary small mb-2">
-              Installed — build {{ b.installed.build_id }}
-              <template v-if="b.installed.size_bytes"> · {{ fmtBytes(b.installed.size_bytes) }}</template>
-              <template v-if="b.installed.last_updated"> · updated {{ fmtDate(b.installed.last_updated) }}</template>
+            <p v-if="b.files.state.installed" class="text-secondary small mb-2">
+              Installed — build {{ b.files.state.installed.build_id }}
+              <template v-if="b.files.state.installed.size_bytes">
+                · {{ fmtBytes(b.files.state.installed.size_bytes) }}</template>
+              <template v-if="b.files.state.installed.last_updated">
+                · updated {{ fmtDate(b.files.state.installed.last_updated) }}</template>
             </p>
             <p v-else class="text-secondary small mb-2">Not installed.</p>
 
-            <div v-if="b.job && b.job.status === 'running'" class="mb-2">
-              <div class="d-flex justify-content-between small mb-1">
-                <span class="text-capitalize">{{ b.job.phase }}</span>
-                <span>
-                  {{ b.job.percent.toFixed(1) }}%
-                  <template v-if="b.job.bytes_total">
-                    ({{ fmtBytes(b.job.bytes_done) }} / {{ fmtBytes(b.job.bytes_total) }})
-                  </template>
-                </span>
-              </div>
-              <div class="progress" style="height: 0.75rem">
-                <div
-                  class="progress-bar progress-bar-striped progress-bar-animated"
-                  :style="{ width: b.job.percent + '%' }"
-                ></div>
-              </div>
-            </div>
-
-            <div v-if="b.job && b.job.status === 'error'" class="alert alert-danger py-2 small mb-2">
-              {{ b.job.error }}
-            </div>
-            <div v-if="b.job && b.job.status === 'success'" class="alert alert-success py-2 small mb-2">
+            <JobProgress :job="b.files.state.job" />
+            <div
+              v-if="b.files.state.job?.status === 'success'"
+              class="alert alert-success py-2 small mb-2"
+            >
               Download completed.
             </div>
 
@@ -428,14 +357,14 @@ onUnmounted(() => {
             <div class="d-flex gap-2">
               <button
                 class="btn btn-primary"
-                :disabled="!state.docker || (b.job && b.job.status === 'running')"
-                @click="startDownload(b.branch)"
+                :disabled="!state.docker || b.files.state.job?.status === 'running'"
+                @click="run(b.files.download)"
               >
                 <span
-                  v-if="b.job && b.job.status === 'running'"
+                  v-if="b.files.state.job?.status === 'running'"
                   class="spinner-border spinner-border-sm me-1"
                 ></span>
-                {{ b.installed ? 'Update server files' : 'Download server files' }}
+                {{ b.files.state.installed ? 'Update server files' : 'Download server files' }}
               </button>
               <button
                 class="btn btn-outline-secondary"
@@ -445,9 +374,9 @@ onUnmounted(() => {
                 {{ checking[b.branch] ? 'Checking…' : 'Check for updates' }}
               </button>
               <button
-                v-if="b.installed"
+                v-if="b.files.state.installed"
                 class="btn btn-outline-danger ms-auto"
-                :disabled="!state.docker || (b.job && b.job.status === 'running')"
+                :disabled="!state.docker || b.files.state.job?.status === 'running'"
                 @click="removeFiles(b.branch)"
               >
                 Remove
@@ -455,18 +384,14 @@ onUnmounted(() => {
             </div>
 
             <pre
-              v-if="logs[b.branch]?.length"
+              v-if="b.files.state.log.length"
               :ref="(el) => (logPanes[b.branch] = el)"
               class="mt-3 p-2 bg-black text-light rounded small mb-0"
               style="max-height: 16rem; overflow-y: auto; white-space: pre-wrap"
-            >{{ logs[b.branch].join('\n') }}</pre>
+            >{{ b.files.state.log.join('\n') }}</pre>
           </div>
         </div>
       </div>
     </div>
-
-    <p class="text-secondary small mt-3 mb-0">
-      SteamCMD image: <code>{{ state.steamcmd_image }}</code>
-    </p>
   </div>
 </template>

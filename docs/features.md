@@ -81,7 +81,9 @@ A server's own page keeps every server listed down the left and splits into five
 
 All of this lives under **System › Server files**.
 
+- A brand-new install opens on a setup screen that pulls the SteamCMD image and the server runtime image and downloads the server files, with one **Download everything** button. It shows once; skipping it is fine.
 - Download stable and experimental Arma Reforger server files with SteamCMD.
+- Pull the SteamCMD image with live progress, instead of Docker fetching it silently on the first download.
 - Watch download progress and recent output in real time.
 - Check daily for server and Workshop updates.
 - Optionally download new builds automatically and restart affected servers.

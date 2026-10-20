@@ -7,7 +7,7 @@ from pydantic import BaseModel
 import auth
 import config
 from services import auto_update, docker_service, instance_service
-from services.image_service import image
+from services.image_service import ImageService, image, steamcmd_image
 from services.jobs import stream_job
 from services.steam_service import steam
 
@@ -36,6 +36,10 @@ async def serverfiles_status(_user: str = Depends(auth.require_session)):
     return {
         "docker": docker_ok,
         "steamcmd_image": config.settings.steamcmd_image,
+        "steamcmd_image_present": (
+            await asyncio.to_thread(steamcmd_image.present) if docker_ok else False
+        ),
+        "steamcmd_image_job": steamcmd_image.job.snapshot() if steamcmd_image.job else None,
         "server_image": config.settings.reforger_server_image,
         "server_image_present": (
             await asyncio.to_thread(image.present) if docker_ok else False
@@ -45,20 +49,17 @@ async def serverfiles_status(_user: str = Depends(auth.require_session)):
     }
 
 
-@router.post("/image/pull", status_code=202)
-async def pull_server_image(_user: str = Depends(auth.require_session)):
-    """Pull the reforger runtime image the instances are created from (#50)."""
+async def _pull(service: ImageService) -> dict:
     if not await asyncio.to_thread(docker_service.ping):
         raise HTTPException(status_code=409, detail="Docker daemon is not reachable")
     try:
-        job = await image.start()
+        job = await service.start()
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return job.snapshot()
 
 
-@router.websocket("/image/ws")
-async def image_events(websocket: WebSocket):
+async def _pull_events(websocket: WebSocket, service: ImageService) -> None:
     if not auth.request_origin_ok(websocket):
         await websocket.close(code=4403)  # cross-site WebSocket hijacking (R12)
         return
@@ -66,13 +67,35 @@ async def image_events(websocket: WebSocket):
         await websocket.close(code=4401)
         return
     await websocket.accept()
-    job = image.job
+    job = service.job
     await stream_job(websocket, job, {
         "type": "snapshot",
         "job": job.snapshot() if job else None,
-        "present": await asyncio.to_thread(image.present),
+        "present": await asyncio.to_thread(service.present),
         "log": list(job.log) if job else [],
     })
+
+
+@router.post("/image/pull", status_code=202)
+async def pull_server_image(_user: str = Depends(auth.require_session)):
+    """Pull the reforger runtime image the instances are created from (#50)."""
+    return await _pull(image)
+
+
+@router.websocket("/image/ws")
+async def image_events(websocket: WebSocket):
+    await _pull_events(websocket, image)
+
+
+@router.post("/steamcmd-image/pull", status_code=202)
+async def pull_steamcmd_image(_user: str = Depends(auth.require_session)):
+    """Pull the SteamCMD image the server-file downloads run in (#241)."""
+    return await _pull(steamcmd_image)
+
+
+@router.websocket("/steamcmd-image/ws")
+async def steamcmd_image_events(websocket: WebSocket):
+    await _pull_events(websocket, steamcmd_image)
 
 
 class AutoUpdateSettings(BaseModel):

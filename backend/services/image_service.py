@@ -6,6 +6,10 @@ clean host it is never present (`docker compose up` only pulls the manager
 image, and the server image is not a compose service), so starting an
 instance fails with ImageNotFound. This service lets the Downloads tab pull
 it, streaming progress with the same job/WebSocket shape as steam downloads.
+
+The SteamCMD image the server-file downloads run in is pulled the same way
+(#241): Docker would fetch it by itself on the first download, but silently,
+with the download's progress bar stuck on "starting" meanwhile.
 """
 import asyncio
 import logging
@@ -48,32 +52,40 @@ class PullJob(ProgressJob):
 
 
 class ImageService:
-    """Manages a single at-a-time pull of the reforger server image."""
+    """Manages a single at-a-time pull of one configured image.
 
-    def __init__(self):
+    *setting* names the config.settings field holding the image reference, read
+    on every use so a test (or a reloaded config) sees the current value.
+    """
+
+    def __init__(self, setting: str = "reforger_server_image", label: str = "Server image"):
+        self.setting = setting
+        self.label = label
         self.job: PullJob | None = None
         self._task: asyncio.Task | None = None
+
+    @property
+    def ref(self) -> str:
+        return getattr(config.settings, self.setting)
 
     # ---- public API ----------------------------------------------------------
 
     def present(self) -> bool:
-        """True if the server image is already available to the daemon."""
+        """True if the image is already available to the daemon."""
         try:
-            docker_service.get_client().images.get(config.settings.reforger_server_image)
+            docker_service.get_client().images.get(self.ref)
             return True
         except ImageNotFound:
             return False
         except DockerException as exc:
-            logger.warning("Could not check for server image: %s", exc)
+            logger.warning("Could not check for %s: %s", self.label.lower(), exc)
             return False
 
     async def start(self) -> PullJob:
         """Kick off an image pull. Raises RuntimeError if one is running."""
         if self.job and self.job.status == "running":
-            raise RuntimeError("An image pull is already running")
-        job = PullJob(
-            image=config.settings.reforger_server_image, started_at=time.time()
-        )
+            raise RuntimeError(f"A {self.label.lower()} pull is already running")
+        job = PullJob(image=self.ref, started_at=time.time())
         self.job = job
         self._task = asyncio.create_task(self._run(job))
         return job
@@ -82,7 +94,7 @@ class ImageService:
 
     async def _run(self, job: PullJob) -> None:
         loop = asyncio.get_running_loop()
-        logger.info("Pulling server image: %s", job.image)
+        logger.info("Pulling %s: %s", self.label.lower(), job.image)
         job.broadcast({"type": "status", "job": job.snapshot(), "present": None})
         try:
             await asyncio.to_thread(self._pull, job, loop)
@@ -156,10 +168,10 @@ class ImageService:
         job.finish(status, error)
         if status == "success":
             job.phase = "completed"
-            logger.info("Server image pulled: %s", job.image)
+            logger.info("%s pulled: %s", self.label, job.image)
         else:
             job.phase = "failed"
-            logger.warning("Server image pull failed: %s: %s", job.image, error)
+            logger.warning("%s pull failed: %s: %s", self.label, job.image, error)
         job.broadcast({
             "type": "status",
             "job": job.snapshot(),
@@ -176,3 +188,4 @@ def _clean_error(message: str) -> str:
 
 
 image = ImageService()
+steamcmd_image = ImageService("steamcmd_image", "SteamCMD image")
