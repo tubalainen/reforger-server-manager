@@ -169,6 +169,10 @@ Reforger Server Manager — for whoever manages this machine
   rsm reset-password      forget the password set in the GUI; .env's applies again
   rsm uninstall           remove the containers; asks before deleting any data
 
+  rsm cli                 every stack's game servers live in the terminal: status
+                          and players online; start, stop and restart them
+       [--stack NAME]     only this stack's    [--once] print the table and exit
+
   Several installs on this machine (stacks, one per team):
   rsm stacks              list them
   rsm ports               every stack's GUI port and UDP ranges, and any overlap
@@ -1362,6 +1366,302 @@ cmd_edge() {
 }
 
 # --------------------------------------------------------------------------- #
+# rsm cli (#237): every stack's game servers in the terminal, with controls
+# --------------------------------------------------------------------------- #
+# What the Server Supervisor's page shows, plus start, stop and restart. Each
+# stack's manager is asked through `docker exec ... python manage.py`, which
+# goes through that manager's own API: a server stopped behind its back would
+# look like a crash to it and be started again.
+CLI_REFRESH=${RSM_CLI_REFRESH:-5}   # seconds between refreshes
+ESC=$(printf '\033')
+
+# One stack's lines for the screen, tab-separated:
+#   S STACK ID STATUS STATE PLAYERS MAX FPS CPU MEM UPTIME NAME   a server
+#   M STACK MESSAGE                                             something wrong
+#   E STACK                                                     no servers yet
+cli_stack_rows() {
+    _c="$1-manager"
+    if [ "$(docker inspect -f '{{.State.Running}}' "$_c" 2>/dev/null)" != true ]; then
+        printf 'M\t%s\tthe manager is not running: sudo rsm start --stack %s\n' "$1" "$1"
+        return 0
+    fi
+    if ! _out=$(docker exec -u app "$_c" python manage.py servers 2>&1); then
+        case "$_out" in
+            *usage:*) _out="its manager predates rsm cli: sudo rsm update --stack $1" ;;
+            *) _out=$(printf '%s' "$_out" | tail -n 1) ;;
+        esac
+        printf 'M\t%s\t%s\n' "$1" "$_out"
+        return 0
+    fi
+    if [ -z "$_out" ]; then
+        printf 'E\t%s\n' "$1"
+    else
+        printf '%s\n' "$_out" | awk -v p="S\t$1\t" '{ print p $0 }'
+    fi
+}
+
+# Every stack's lines into $CLI_DATA, the stacks asked side by side.
+cli_collect() {
+    for _s in $CLI_STACKS; do
+        cli_stack_rows "$_s" > "$CLI_TMP/$_s" 2>/dev/null &
+    done
+    wait
+    for _s in $CLI_STACKS; do cat "$CLI_TMP/$_s"; done > "$CLI_DATA"
+    CLI_COUNT=$(grep -c '^S' "$CLI_DATA" || true)
+    # The selection follows its server when the list changes.
+    _at=$(awk -F '\t' -v s="$CLI_SEL_STACK" -v i="$CLI_SEL_ID" \
+        '$1 == "S" { n++; if ($2 == s && $3 == i) { print n; exit } }' "$CLI_DATA")
+    [ -z "$_at" ] || CLI_SEL=$_at
+    cli_clamp
+}
+
+cli_clamp() {
+    [ "$CLI_SEL" -le "$CLI_COUNT" ] || CLI_SEL=$CLI_COUNT
+    [ "$CLI_SEL" -ge 1 ] || CLI_SEL=1
+    _row=$(cli_row)
+    CLI_SEL_STACK=$(printf '%s' "$_row" | cut -f 2)
+    CLI_SEL_ID=$(printf '%s' "$_row" | cut -f 3)
+}
+
+cli_row() {  # the selected server's line
+    awk -F '\t' -v n="$CLI_SEL" '$1 == "S" && ++i == n { print; exit }' "$CLI_DATA"
+}
+
+# The machine, from /proc: its name, load and memory.
+cli_host() {
+    _load=$(cut -d ' ' -f 1-3 /proc/loadavg 2>/dev/null) || _load='?'
+    _mem=$(awk '/^MemTotal:/ { t = $2 } /^MemAvailable:/ { a = $2 }
+        END { if (t) printf "%.1fG of %.1fG", (t - a) / 1048576, t / 1048576 }' \
+        /proc/meminfo 2>/dev/null) || _mem=''
+    printf '%s   load %s   memory %s' "$(hostname 2>/dev/null || echo '?')" "$_load" "${_mem:-?}"
+}
+
+# The screen, drawn from $CLI_DATA. In --once mode: no selection, no colours.
+cli_draw() {  # cli_draw interactive(0|1)
+    _cols=80; _lines=24
+    _size=$( (stty size < /dev/tty) 2>/dev/null) || _size=''
+    case "$_size" in
+        [1-9]*' '[1-9]*) _lines=${_size% *}; _cols=${_size#* } ;;
+    esac
+    awk -F '\t' -v live="$1" -v sel="$CLI_SEL" -v cols="$_cols" -v lines="$_lines" \
+        -v host="$(cli_host)" -v now="$(date '+%H:%M:%S')" -v msg="$CLI_MSG" \
+        -v nstacks="$(printf '%s\n' $CLI_STACKS | wc -l)" '
+    function human(b) {
+        if (b == "-") return "-"
+        b += 0
+        return b >= 1073741824 ? sprintf("%.1fG", b / 1073741824) : sprintf("%dM", b / 1048576)
+    }
+    function since(s,   d, h, m) {
+        if (s == "-") return "-"
+        s += 0; d = int(s / 86400); h = int(s % 86400 / 3600); m = int(s % 3600 / 60)
+        if (d) return d "d" h "h"
+        if (h) return h "h" m "m"
+        return m ? m "m" : s "s"
+    }
+    function pad(s, w) {  # left-aligned in w columns, cut with a ~ if longer
+        if (length(s) > w) s = substr(s, 1, w - 1) "~"
+        return sprintf("%-" w "s", s)
+    }
+    function state(status, st) {
+        if (status == "running") return st == "-" ? "running" : st
+        if (status == "exited" || status == "created" || status == "absent") return "stopped"
+        return status
+    }
+    function paint(word, text,   c) {
+        if (!live) return text
+        if (word == "online") c = "32"
+        else if (word == "starting" || word == "restarting") c = "33"
+        else if (word == "stopped") c = "2"
+        else if (word != "running") c = "31"
+        return c == "" ? text : "\033[" c "m" text "\033[0m"
+    }
+    function out(text) { printf "%s%s\n", text, live ? "\033[K" : "" }
+    { row[++n] = $0; if (length($2) > sw) sw = length($2) }
+    END {
+        if (sw < 5) sw = 5
+        # Fixed: margin 3, stack + 2, state 10, players 8, fps 5, cpu 7, mem 7, up 7
+        nw = cols - 1 - 3 - (sw + 2) - 10 - 8 - 5 - 7 - 7 - 7 - 2
+        if (nw > 40) nw = 40
+        if (nw < 10) nw = 10
+        width = 2 + sw + 2 + nw + 2 + 10 + 8 + 5 + 7 + 7 + 7
+        rule = sprintf("%" width "s", ""); eq = rule
+        gsub(/ /, "-", rule); gsub(/ /, "=", eq)
+
+        title = "Reforger Server Manager - rsm cli"
+        out(" " pad(title, width - length(now)) now)
+        out(" " substr(host, 1, cols - 2))
+        out(" " eq)
+        out("   " pad("STACK", sw) "  " pad("SERVER", nw) "  " pad("STATE", 10) \
+            sprintf("%8s%5s%7s%7s%7s", "PLAYERS", "FPS", "CPU", "MEM", "UP"))
+        out(" " rule)
+
+        # Scroll so the selected server stays on screen.
+        for (i = 1; i <= n; i++) {
+            split(row[i], f, "\t")
+            if (f[1] != "S") continue
+            servers++
+            if (++k == sel) at = i
+            if (f[4] != "running") continue
+            running++
+            if (f[5] == "online") online++
+            if (f[6] != "-") players += f[6]
+        }
+        room = lines - 13; if (room < 3) room = 3
+        first = 1
+        if (live && n > room && at > room) first = at - room + 1
+        last = first + room - 1; if (!live || last > n) last = n
+        if (first > 1) out("   ... " first - 1 " more above")
+
+        for (i = first; i <= last; i++) {
+            split(row[i], f, "\t")
+            stack = pad(f[2], sw) "  "
+            if (f[1] == "M") { out("   " stack paint("error", "! " f[3])); continue }
+            if (f[1] == "E") { out("   " stack "(no servers yet)"); continue }
+            word = state(f[4], f[5])
+            pl = "-"
+            if (f[4] == "running" && f[6] != "-") pl = f[6] (f[7] == "-" ? "" : "/" f[7])
+            rest = sprintf("%8s%5s%7s%7s%7s", pl, f[8] == "-" ? "-" : int(f[8]),
+                f[9] == "-" ? "-" : f[9] "%", human(f[10]), since(f[11]))
+            name = pad(f[12], nw) "  "
+            if (live && i == at) out("\033[7m > " stack name pad(word, 10) rest "\033[0m")
+            else out("   " stack name paint(word, pad(word, 10)) rest)
+        }
+        if (last < n) out("   ... " n - last " more below")
+        out(" " rule)
+        out(sprintf("   %d stack%s   %d server%s   %d running   %d online   %d player%s online",
+            nstacks, nstacks == 1 ? "" : "s", servers, servers == 1 ? "" : "s",
+            running, online, players, players == 1 ? "" : "s"))
+        if (!live) exit
+        out("")
+        out("   [Up/Down] select   [s] start   [x] stop   [r] restart   [u] refresh   [q] quit")
+        out(msg == "" ? "" : "   " substr(msg, 1, cols - 4))
+    }' "$CLI_DATA"
+}
+
+# One key: up, down, a letter, or nothing once $1 seconds pass.
+cli_key() {
+    _t=$(( $1 * 10 )); [ "$_t" -le 255 ] || _t=255
+    stty min 0 time "$_t" < /dev/tty
+    _k=$(dd bs=1 count=1 < /dev/tty 2>/dev/null) || _k=''
+    if [ "$_k" = "$ESC" ]; then
+        stty min 0 time 1 < /dev/tty
+        case "$(dd bs=2 count=1 < /dev/tty 2>/dev/null)" in
+            '[A'|OA) _k=up ;;
+            '[B'|OB) _k=down ;;
+            *) _k='' ;;
+        esac
+    fi
+    printf '%s' "$_k"
+}
+
+cli_redraw() { printf '\033[H'; cli_draw 1; printf '\033[J'; }
+
+# Start, stop or restart the selected server, through its manager.
+cli_act() {  # cli_act start|stop|restart
+    _row=$(cli_row)
+    if [ -z "$_row" ]; then CLI_MSG="There is no server to $1."; return 0; fi
+    _stack=$(printf '%s' "$_row" | cut -f 2)
+    _id=$(printf '%s' "$_row" | cut -f 3)
+    _status=$(printf '%s' "$_row" | cut -f 4)
+    _players=$(printf '%s' "$_row" | cut -f 6)
+    _name=$(printf '%s' "$_row" | cut -f 12)
+    if [ "$1" = start ] && [ "$_status" = running ]; then
+        CLI_MSG="$_name is already running."; return 0
+    fi
+    if [ "$1" = stop ] && [ "$_status" != running ]; then
+        CLI_MSG="$_name is not running."; return 0
+    fi
+    if [ "$1" != start ] && [ "$_status" = running ]; then
+        _who=''
+        case "$_players" in
+            ''|-|0) ;;
+            1) _who=', 1 player online' ;;
+            *) _who=", $_players players online" ;;
+        esac
+        case "$1" in stop) _ask=Stop ;; *) _ask=Restart ;; esac
+        CLI_MSG="$_ask $_name ($_stack$_who)? [y/N]"
+        cli_redraw
+        case "$(cli_key 25)" in [Yy]) ;; *) CLI_MSG='Cancelled.'; return 0 ;; esac
+    fi
+    case "$1" in start) _doing=Starting ;; stop) _doing=Stopping ;; *) _doing=Restarting ;; esac
+    CLI_MSG="$_doing $_name ($_stack)..."
+    cli_redraw
+    if _out=$(docker exec -u app "$_stack-manager" python manage.py "$1" "$_id" 2>&1); then
+        CLI_MSG="Done - $_out"
+    else
+        CLI_MSG="Could not $1 $_name: $(printf '%s' "$_out" | tail -n 1)"
+    fi
+    cli_collect
+}
+
+cli_end() {
+    [ -z "${CLI_STTY:-}" ] || stty "$CLI_STTY" < /dev/tty 2>/dev/null || true
+    printf '\033[?25h\033[?1049l'
+    rm -rf "$CLI_TMP"
+}
+
+cmd_cli() {
+    _once=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --once) _once=1 ;;
+            *) die "cli: unknown option '$1' (--once, --stack NAME)" ;;
+        esac
+        shift
+    done
+    command -v docker >/dev/null 2>&1 || die "Docker is not installed here"
+    if [ -n "$STACK_ARG" ]; then
+        stack_conf "$STACK_ARG" >/dev/null || die "there is no stack named '$STACK_ARG' (see: rsm stacks)"
+        CLI_STACKS=$STACK_ARG
+    else
+        CLI_STACKS=$(stack_names)
+        [ -n "$CLI_STACKS" ] || die "no install found — run one of the Linux installers first"
+    fi
+    CLI_TMP=$(mktemp -d)
+    CLI_DATA=$CLI_TMP/screen
+    : > "$CLI_DATA"
+    CLI_SEL=1; CLI_SEL_STACK=''; CLI_SEL_ID=''; CLI_MSG=''; CLI_COUNT=0
+
+    # Without a terminal, or asked to: the table once, as plain text.
+    if [ "$_once" = 1 ] || [ ! -t 1 ] || ! have_tty; then
+        cli_collect
+        cli_draw 0
+        rm -rf "$CLI_TMP"
+        return 0
+    fi
+
+    CLI_STTY=$(stty -g < /dev/tty)
+    trap cli_end EXIT
+    trap 'exit 130' INT TERM HUP
+    stty -icanon -echo < /dev/tty
+    printf '\033[?1049h\033[?25l\033[H\033[2J'
+    CLI_MSG='Reading the servers...'
+    cli_redraw
+    CLI_MSG=''
+    cli_collect
+    _last=$(date +%s)
+    while :; do
+        cli_redraw
+        _wait=$(( CLI_REFRESH - ($(date +%s) - _last) ))
+        [ "$_wait" -ge 1 ] || _wait=1
+        _key=$(cli_key "$_wait")
+        case "$_key" in
+            q|Q) break ;;
+            up|k) CLI_SEL=$((CLI_SEL - 1)); cli_clamp ;;
+            down|j) CLI_SEL=$((CLI_SEL + 1)); cli_clamp ;;
+            s) cli_act start; _last=$(date +%s) ;;
+            x) cli_act stop; _last=$(date +%s) ;;
+            r) cli_act restart; _last=$(date +%s) ;;
+            u) CLI_MSG=''; cli_collect; _last=$(date +%s) ;;
+        esac
+        if [ $(( $(date +%s) - _last )) -ge "$CLI_REFRESH" ]; then
+            cli_collect
+            _last=$(date +%s)
+        fi
+    done
+}
+
+# --------------------------------------------------------------------------- #
 # Commands for one stack
 # --------------------------------------------------------------------------- #
 stack_cmd() {
@@ -1476,6 +1776,7 @@ case "$CMD" in
     remove-stack) cmd_remove_stack "$@"; exit 0 ;;
     supervisor) cmd_supervisor "$@"; exit 0 ;;
     edge) cmd_edge "$@"; exit $? ;;
+    cli) cmd_cli "$@"; exit $? ;;
     start|stop|restart|status|update|check) ALLOWS_ALL=1 ;;
     logs|config|reset-password|uninstall)
         [ "$ALL" = 0 ] || die "'$CMD' works on one stack at a time: use --stack NAME" ;;

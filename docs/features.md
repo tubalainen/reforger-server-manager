@@ -103,6 +103,7 @@ Port values are assigned per server by the manager. Imported port settings there
 - Several independent installs on one machine, one per team, each seeing only its own servers, ports and data (`rsm add-stack`, or the Windows installer's `-Stack`).
 - On a VPS, a domain per team behind one shared HTTPS front, the edge (`rsm add-stack NAME --domain DOMAIN`, `rsm edge`), which reaches each team's manager over that team's own network only.
 - The Server Supervisor: every install on the machine on one read-only page, for whoever manages the machine. It shows each stack's manager, gate, ports and servers, the totals, and what needs attention, and it never sees a team's password or a server's log text.
+- `rsm cli`: every stack's game servers live in the terminal, with their state, players, FPS, CPU, memory and uptime, and start, stop and restart for whoever manages the machine.
 - Fail-closed defaults when the GUI is exposed beyond localhost.
 - A logout-all endpoint for invalidating every active session.
 - Support for trusted reverse proxies and delegated authentication.
