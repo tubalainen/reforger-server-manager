@@ -24,7 +24,7 @@ describe('modsSummary', () => {
 
 describe('modStateLabel', () => {
   it('names every state the backend reports', () => {
-    for (const s of ['behind', 'current', 'locked', 'missing', 'unknown']) {
+    for (const s of ['behind', 'current', 'locked', 'missing', 'unreadable', 'unknown']) {
       expect(modStateLabel(s)).not.toBe(s)
     }
   })

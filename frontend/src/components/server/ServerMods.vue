@@ -82,6 +82,7 @@ const STATE_CLASS = {
   current: 'text-bg-success',
   locked: 'text-bg-secondary',
   missing: 'text-bg-info',
+  unreadable: 'text-bg-danger',
   unknown: 'text-bg-light border',
 }
 </script>
