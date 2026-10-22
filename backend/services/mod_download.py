@@ -22,6 +22,16 @@ ran before stay on disk. Each mod sits in its own folder named after its Worksho
 id ("591AF5BDA9F7CE8B", or "Name_591AF5BDA9F7CE8B"), so once the total is known
 only the folders of the mods it covers are counted. Without that, a server
 switched to a smaller template showed "28.84 GB of 10.47 GB" (#235).
+
+Comparing everything on disk with the Workshop total only works from an empty
+folder. A start that updates mods (#246) begins with nearly all of it on disk,
+and the mods take more room on disk than the Workshop says, so the bar read
+"20.45 GB of 19.28 GB · 100 %" while it was still downloading. So each run gets
+a plan, taken once the sizes are known: the mods missing from disk, or on disk
+at another version than config.json pins. Only those count. One is done once
+its folder holds the pinned version; a new one's folder counts as it fills,
+capped at its size. A mod being updated is rewritten in place (seen on a real
+host: no folder keeps two versions), so it counts nothing until it is done.
 """
 import json
 import logging
@@ -31,6 +41,7 @@ import threading
 import time
 from pathlib import Path
 
+from services import mod_versions
 from services.workshop_service import WorkshopError, normalize_asset_id, workshop
 
 logger = logging.getLogger("manager.mod_download")
@@ -55,6 +66,8 @@ _lock = threading.Lock()
 _expected: dict[tuple, tuple[float, dict]] = {}
 _resolving: set[tuple] = set()
 _samples: dict[str, list[tuple[float, int]]] = {}
+# run key -> {"seen": monotonic, "mods": {modId: {"size", "kind", "want"}}}
+_plans: dict[str, dict] = {}
 
 # A folder named after a Workshop id, bare or behind the mod's name.
 _MOD_DIR_RE = re.compile(r"(?:^|_)([0-9A-F]{16})$", re.IGNORECASE)
@@ -101,6 +114,8 @@ def _resolve(ids: tuple) -> dict:
         # Which mod folders the download is made of. The ones the Workshop could
         # not size are still downloaded by the server, so they count too.
         "ids": frozenset(i.upper() for i in (*ids, *sizes, *missing)),
+        # Each mod's own size, for the per-run plan (#246).
+        "sizes": {i.upper(): s for i, s in sizes.items()},
     }
 
 
@@ -213,15 +228,64 @@ def _file_bytes(path: str) -> int:
         return 0
 
 
-def progress(key: str, paths: list[Path], config_json: str | None) -> dict:
-    """The `mod_download` block of a starting server's stats."""
+def _make_plan(expected: dict, roots: list[Path], pinned: dict[str, str]) -> dict:
+    """What this run has to fetch: missing mods, and mods at another version."""
+    dirs = mod_versions.mod_dirs(roots)
+    installed = mod_versions.installed_versions(roots)
+    mods = {}
+    for mid in expected["ids"]:
+        want = pinned.get(mid)
+        # A folder with no readable version is a download cut short: still to come.
+        if mid not in dirs or mid not in installed:
+            kind = "new"
+        elif want and installed.get(mid) != want:
+            kind = "update"
+        else:
+            continue
+        mods[mid] = {"size": int(expected.get("sizes", {}).get(mid) or 0),
+                     "kind": kind, "want": want}
+    return mods
+
+
+def _plan_progress(mods: dict, roots: list[Path], names: dict[str, str]) -> dict:
+    dirs = mod_versions.mod_dirs(roots)
+    installed = mod_versions.installed_versions(roots)
+    done = got = 0
+    for mid, m in mods.items():
+        have = installed.get(mid)
+        if have and (m["want"] is None or have == m["want"]):
+            done += 1
+            got += m["size"]
+        elif m["kind"] == "new" and mid in dirs:
+            got += min(m["size"], sum(_tree_bytes(str(d)) for d in dirs[mid]))
+    updating = [mid for mid, m in mods.items() if m["kind"] == "update"]
+    return {
+        "plan_mods": len(mods),
+        "plan_done": done,
+        "plan_bytes": sum(m["size"] for m in mods.values()),
+        "plan_done_bytes": got,
+        # "update" when every mod to fetch is already on disk at another version
+        "plan_kind": "update" if mods and len(updating) == len(mods) else "download",
+        "plan_names": [names.get(mid) or mid for mid in sorted(mods)][:3],
+    }
+
+
+def progress(key: str, paths: list[Path], config_json: str | None,
+             roots: list[Path] | None = None, pinned: dict[str, str] | None = None,
+             names: dict[str, str] | None = None) -> dict:
+    """The `mod_download` block of a starting server's stats.
+
+    `key` names one run of a container (id and start time). With `roots` and
+    `pinned` (the versions this run's config.json names), the block also carries
+    the run's plan: what it actually has to fetch (#246).
+    """
     expected = expected_total(mod_ids(config_json))
     wanted = expected.get("ids")
     downloaded = downloaded_bytes(paths, wanted)
     # Counting fewer folders once the total arrives is a drop, not a download
     # that went backwards: a fresh history, so the speed is not skewed by it.
     history = f"{key}/{'mods' if wanted is not None else 'all'}"
-    return {
+    out = {
         "downloaded_bytes": downloaded,
         "expected_bytes": expected["bytes"],
         "expected_state": expected["state"],
@@ -229,6 +293,20 @@ def progress(key: str, paths: list[Path], config_json: str | None) -> dict:
         "missing": expected["missing"],
         **record(history, downloaded),
     }
+    if roots is None or pinned is None or expected["state"] != EXPECTED_READY:
+        return out
+    now = time.monotonic()
+    with _lock:
+        for k in [k for k, p in _plans.items() if now - p["seen"] > _FORGET_AFTER]:
+            del _plans[k]
+        plan = _plans.get(key)
+    if plan is None:
+        # Taken once per run: a mod that finishes must not drop out of the total.
+        plan = {"mods": _make_plan(expected, roots, pinned)}
+    plan["seen"] = now
+    with _lock:
+        _plans[key] = plan
+    return {**out, **_plan_progress(plan["mods"], roots, names or {})}
 
 
 def _reset() -> None:
@@ -237,3 +315,4 @@ def _reset() -> None:
         _expected.clear()
         _resolving.clear()
         _samples.clear()
+        _plans.clear()

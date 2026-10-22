@@ -15,6 +15,7 @@ import { formatBytes } from './format'
 //   phase 'loading'     it stopped growing: the server is loading what it has
 export function downloadView(md) {
   if (!md) return { show: false }
+  if (md.plan_mods != null) return planView(md)
   const done = md.downloaded_bytes || 0
   const total = md.expected_state === 'ready' && md.expected_bytes > 0 ? md.expected_bytes : null
   const percent = total ? Math.min(100, Math.round((done / total) * 100)) : null
@@ -50,6 +51,38 @@ export function downloadView(md) {
       ? `Downloading mods: ${formatBytes(done)} of ${formatBytes(total)} · ${percent} %`
       : `Downloading mods: ${formatBytes(done)} so far`,
     detail: [speed, mods, lookupNote(md)].filter(Boolean).join(' · '),
+  }
+}
+
+// With the run's plan (#246): only what this start has to fetch counts. Updating
+// mods are rewritten in place, so they count once done; new ones as they fill.
+function planView(md) {
+  const n = md.plan_mods
+  const mods = (k) => `${k} mod${k === 1 ? '' : 's'}`
+  const loading = (label) => ({
+    show: true, phase: 'loading', percent: 100, animated: false, label,
+    detail: modsNote(md),
+  })
+  if (!n) return loading('Mods up to date — loading the world…')
+  if (md.growing === false && md.plan_done >= n) {
+    return loading(`${md.plan_kind === 'update' ? 'Mods updated' : 'Mods downloaded'} — loading the world…`)
+  }
+  const percent = md.plan_bytes > 0
+    ? Math.min(100, Math.round((md.plan_done_bytes / md.plan_bytes) * 100))
+    : Math.round((md.plan_done / n) * 100)
+  const speed = md.rate_bps > 0 ? `${formatBytes(md.rate_bps)}/s` : ''
+  const names = (md.plan_names || []).join(', ') + (n > (md.plan_names || []).length ? ', …' : '')
+  if (md.plan_kind === 'update') {
+    return {
+      show: true, phase: 'downloading', percent, animated: true,
+      label: `Updating ${mods(n)}: ${md.plan_done} of ${n} done`,
+      detail: [names, speed].filter(Boolean).join(' · '),
+    }
+  }
+  return {
+    show: true, phase: 'downloading', percent, animated: true,
+    label: `Downloading mods: ${formatBytes(md.plan_done_bytes)} of ${formatBytes(md.plan_bytes)} · ${percent} %`,
+    detail: [speed, `${md.plan_done} of ${mods(n)} done`].filter(Boolean).join(' · '),
   }
 }
 

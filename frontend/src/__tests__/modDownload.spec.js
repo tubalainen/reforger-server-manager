@@ -13,6 +13,46 @@ const md = (over) => ({
   ...over,
 })
 
+describe('downloadView with the run plan (#246)', () => {
+  const plan = (over) => md({
+    downloaded_bytes: 20 * 1024 * MB, // the whole template already on disk
+    growing: true,
+    rate_bps: 10 * MB,
+    plan_mods: 2,
+    plan_done: 0,
+    plan_bytes: 300 * MB,
+    plan_done_bytes: 0,
+    plan_kind: 'update',
+    plan_names: ['IwoJima2026', 'CongosDynamicLights'],
+    ...over,
+  })
+
+  it('counts only the mods being updated, not everything on disk', () => {
+    const v = downloadView(plan({ plan_done: 1, plan_done_bytes: 100 * MB }))
+    expect(v.phase).toBe('downloading')
+    expect(v.percent).toBe(33)
+    expect(v.label).toBe('Updating 2 mods: 1 of 2 done')
+    expect(v.detail).toBe('IwoJima2026, CongosDynamicLights · 10.0 MB/s')
+  })
+
+  it('says the mods are up to date when nothing needs fetching', () => {
+    const v = downloadView(plan({ plan_mods: 0, plan_bytes: 0 }))
+    expect(v.phase).toBe('loading')
+    expect(v.label).toBe('Mods up to date — loading the world…')
+  })
+
+  it('moves on to loading once every mod is done and the disk is quiet', () => {
+    const v = downloadView(plan({ plan_done: 2, plan_done_bytes: 300 * MB, growing: false }))
+    expect(v.label).toBe('Mods updated — loading the world…')
+  })
+
+  it('shows bytes for a first download', () => {
+    const v = downloadView(plan({ plan_kind: 'download', plan_done_bytes: 150 * MB, plan_names: [] }))
+    expect(v.label).toBe('Downloading mods: 150.0 MB of 300.0 MB · 50 %')
+    expect(v.detail).toBe('10.0 MB/s · 0 of 2 mods done')
+  })
+})
+
 describe('downloadView (#235)', () => {
   it('shows nothing once the server is not starting', () => {
     expect(downloadView(null).show).toBe(false)

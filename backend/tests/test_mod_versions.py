@@ -324,6 +324,36 @@ def test_the_scheduled_restart_updates_mods_only_when_enabled(monkeypatch, enabl
     assert calls == [(1, enabled)]
 
 
+def test_a_stopped_server_skips_its_restart_and_is_not_restarted_later(monkeypatch):
+    from datetime import datetime, timedelta
+
+    _add_instance(desired_state="stopped", mod_auto_update=True,
+                  restart_schedule_json='{"times": ["04:00"]}',
+                  last_scheduled_restart=datetime.now() - timedelta(days=2))
+    calls = []
+    monkeypatch.setattr(instance_service.docker_service, "ping", lambda: True)
+    monkeypatch.setattr(instance_service, "restart_instance",
+                        lambda i, update_mods=False: calls.append(i))
+
+    # 04:00 passes while it is stopped: nothing is restarted...
+    monkeypatch.setattr(instance_service, "datetime",
+                        type("D", (datetime,), {"now": staticmethod(
+                            lambda: datetime.now().replace(hour=4, minute=0, second=10))}))
+    instance_service.apply_scheduled_restarts()
+    assert calls == []
+    # ...and starting it at 04:30 does not get it restarted for the missed 04:00.
+    with Session(models.get_engine()) as session:
+        inst = session.get(Instance, 1)
+        inst.desired_state = "running"
+        session.add(inst)
+        session.commit()
+    monkeypatch.setattr(instance_service, "datetime",
+                        type("D", (datetime,), {"now": staticmethod(
+                            lambda: datetime.now().replace(hour=4, minute=30, second=0))}))
+    instance_service.apply_scheduled_restarts()
+    assert calls == []
+
+
 def test_every_other_restart_keeps_the_mods(monkeypatch):
     calls = []
     monkeypatch.setattr(instance_service, "stop_instance", lambda i: None)
