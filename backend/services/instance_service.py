@@ -29,6 +29,7 @@ from models import Instance, Template, get_engine
 from services import (
     docker_service,
     fleet_history,
+    load_order,
     mod_download,
     mod_versions,
     ports,
@@ -1312,6 +1313,37 @@ _MAX_LOG_FILES = 300
 
 def _profile_dir(instance_id: int) -> Path:
     return Path(config.settings.data_dir) / "instances" / str(instance_id) / "profile"
+
+
+def engine_load_order(instance_id: int) -> dict:
+    """The order the engine mounted this server's mods in at its last start, and
+    how that compares with the config.json it was given (#257)."""
+    with Session(get_engine()) as session:
+        if not session.get(Instance, instance_id):
+            raise InstanceError("Server not found")
+    log = load_order.latest_console_log(_profile_dir(instance_id))
+    if log is None:
+        return {"available": False,
+                "reason": "No console log yet: the order shows once the server has started."}
+    try:
+        mounted = load_order.parse(load_order.read_head(log))
+    except OSError:
+        return {"available": False, "reason": "Could not read the server's console log."}
+    if not mounted:
+        return {"available": False,
+                "reason": "The last start has not mounted its mods yet (or its log does not say)."}
+    idir = Path(config.settings.data_dir) / "instances" / str(instance_id)
+    try:
+        cfg = json.loads((idir / "configs" / CONFIG_FILENAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cfg = {}
+    listed = mod_versions.config_mod_ids(cfg)
+    names = {str(m.get("modId") or "").upper(): m.get("name") for m in mod_versions.config_mods(cfg)}
+    result = load_order.compare(mounted, listed)
+    for row in result["mounted"]:
+        row["listed_name"] = names.get(row["modId"]) if row["modId"] else None
+    return {"available": True, "log": log.relative_to(_profile_dir(instance_id)).as_posix(),
+            "logged_at": log.stat().st_mtime, **result}
 
 
 def list_log_files(instance_id: int) -> list[dict]:

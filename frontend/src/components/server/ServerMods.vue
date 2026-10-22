@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { api } from '../../api'
 import { formatBytes } from '../../format'
 import ModIdLink from '../ModIdLink.vue'
-import { modStateLabel, modsSummary } from '../../modVersions'
+import { loadOrderSummary, modStateLabel, modsSummary } from '../../modVersions'
 
 // The template's mods on this server: the version on disk against the Workshop's
 // newest release, and the two ways to move them (#246). Every ordinary start
@@ -97,6 +97,23 @@ async function run(kind) {
   }
 }
 
+// The order the engine actually mounted the mods in at the last start, read from the
+// server's console.log (#257). Fetched when the section is opened.
+const order = ref(null)
+const orderBusy = ref(false)
+async function loadOrder(open) {
+  if (!open || orderBusy.value) return
+  orderBusy.value = true
+  try {
+    order.value = await api(`/api/instances/${props.inst.id}/load-order`)
+  } catch (e) {
+    order.value = { available: false, reason: e.message }
+  } finally {
+    orderBusy.value = false
+  }
+}
+const orderSummary = computed(() => loadOrderSummary(order.value))
+
 const unlocked = computed(() => (info.value?.mods || []).filter((m) => !m.locked).length)
 
 const STATE_CLASS = {
@@ -179,6 +196,44 @@ const STATE_CLASS = {
         </p>
       </template>
       <p v-else-if="loading" class="text-secondary small">Asking the Workshop for the newest versions…</p>
+
+      <details class="mb-3 small" @toggle="loadOrder($event.target.open)">
+        <summary class="text-secondary">Load order the engine used at the last start</summary>
+        <p v-if="orderBusy && !order" class="text-secondary mt-2 mb-0">Reading the server's log…</p>
+        <p v-else-if="order && !order.available" class="text-secondary mt-2 mb-0">{{ order.reason }}</p>
+        <template v-else-if="order">
+          <p class="mt-2 mb-2">{{ orderSummary }}</p>
+          <div class="table-responsive">
+            <table class="table table-sm align-middle small mb-1">
+              <thead>
+                <tr>
+                  <th scope="col">Loaded</th>
+                  <th scope="col">Mod</th>
+                  <th scope="col">In your list</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="m in order.mounted" :key="m.position" :class="{ 'text-secondary': m.base_game }">
+                  <td class="rsm-num">{{ m.position }}</td>
+                  <td class="text-break">
+                    {{ m.listed_name || m.name }}
+                    <small v-if="m.base_game" class="d-block">the base game</small>
+                    <small v-else-if="m.modId" class="d-block text-secondary">{{ m.modId }}</small>
+                  </td>
+                  <td>
+                    <template v-if="m.listed_at">#{{ m.listed_at }}</template>
+                    <span v-else-if="!m.base_game" class="badge text-bg-info">not listed</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="text-secondary mb-0">
+            From <code>{{ order.log }}</code>. The engine mounts mods one by one; "In your list" is
+            each mod's place in the config.json this start was given.
+          </p>
+        </template>
+      </details>
 
       <div class="d-flex flex-wrap gap-2">
         <button

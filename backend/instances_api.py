@@ -336,6 +336,16 @@ async def mod_updates(
     return await asyncio.to_thread(_view, instance_id)
 
 
+@router.get("/{instance_id}/load-order")
+async def load_order(instance_id: int, _user: str = Depends(auth.require_session)):
+    """The order the engine mounted the mods in at the last start, from the
+    server's console.log, against the config.json it was given (#257)."""
+    try:
+        return await asyncio.to_thread(instance_service.engine_load_order, instance_id)
+    except InstanceError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.get("/{instance_id}/mods")
 async def mods(instance_id: int, _user: str = Depends(auth.require_session)):
     """The template's mods: the version on disk against the Workshop's (#246)."""
