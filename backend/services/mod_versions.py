@@ -45,9 +45,11 @@ _LOOKUP_WORKERS = 8
 
 
 def addon_roots(instance_dir: Path) -> list[Path]:
-    """Where a server keeps its downloaded mods: the Workshop folder's addons dir,
-    plus the copy some builds keep inside the profile."""
-    return [instance_dir / "workshop" / "addons", instance_dir / "profile" / "addons"]
+    """Where a server keeps its downloaded mods: the Workshop folder's addons dir
+    (seen on a real host), the Workshop folder itself and the profile's addons
+    dir (where other builds have put them)."""
+    return [instance_dir / "workshop" / "addons", instance_dir / "workshop",
+            instance_dir / "profile" / "addons"]
 
 
 def mod_dirs(roots: list[Path]) -> dict[str, list[Path]]:
@@ -210,8 +212,9 @@ def summarise(report: dict) -> str:
 def status(cfg: dict, roots: list[Path], names: dict[str, str] | None = None) -> dict:
     """The template's mods with the version on disk and the Workshop's latest.
 
-    `state` per mod: locked (the template fixes a version), current, behind,
-    missing (not downloaded yet), unknown (the Workshop gave no answer).
+    `state` per mod: missing (not downloaded yet), locked (the template fixes a
+    version), current, behind, unknown (the Workshop gave no answer). A locked
+    mod that is not on disk is "missing": the lock is still in `locked`.
     """
     installed = installed_versions(roots)
     entries = []
@@ -225,10 +228,10 @@ def status(cfg: dict, roots: list[Path], names: dict[str, str] | None = None) ->
     for e in entries:
         e["installed"] = installed.get(e["modId"])
         e["latest"] = latest.get(e["modId"])
-        if e["locked"]:
-            e["state"] = "locked"
-        elif not e["installed"]:
+        if not e["installed"]:
             e["state"] = "missing"
+        elif e["locked"]:
+            e["state"] = "locked"
         elif not e["latest"]:
             e["state"] = "unknown"
         elif e["installed"] != e["latest"]:
@@ -236,4 +239,6 @@ def status(cfg: dict, roots: list[Path], names: dict[str, str] | None = None) ->
             behind += 1
         else:
             e["state"] = "current"
-    return {"mods": entries, "updates_available": behind}
+    return {"mods": entries, "updates_available": behind,
+            # Nothing for an update to move: every mod is locked in the template.
+            "all_locked": bool(entries) and all(e["locked"] for e in entries)}

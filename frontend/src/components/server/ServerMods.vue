@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { api } from '../../api'
 import { formatBytes } from '../../format'
 import ModIdLink from '../ModIdLink.vue'
@@ -12,6 +12,8 @@ import { modStateLabel, modsSummary } from '../../modVersions'
 const props = defineProps({
   inst: { type: Object, required: true },
   players: { type: Number, default: null },
+  // starting | online | … from the live stats: the mods are on disk once online
+  serverState: { type: String, default: '' },
 })
 const emit = defineEmits(['update'])
 
@@ -22,11 +24,13 @@ const error = ref('')
 const notice = ref('')
 const busy = ref('')
 const confirming = ref('') // '' | 'update' | 'redownload'
+const checkedAt = ref('')
 
 async function load() {
   loading.value = true
   try {
     info.value = await api(`/api/instances/${props.inst.id}/mods`)
+    checkedAt.value = new Date().toLocaleTimeString()
     error.value = ''
   } catch (e) {
     error.value = e.message
@@ -35,6 +39,11 @@ async function load() {
   }
 }
 onMounted(load)
+defineExpose({ load })
+// What is on disk changes when the server starts, stops or finishes downloading.
+watch(() => `${props.inst.status}|${props.serverState}`, (now, before) => {
+  if (before !== undefined) load()
+})
 
 const summary = computed(() => (info.value ? modsSummary(info.value) : ''))
 const playersLine = computed(() => {
@@ -65,6 +74,8 @@ async function run(kind) {
     busy.value = ''
   }
 }
+
+const unlocked = computed(() => (info.value?.mods || []).filter((m) => !m.locked).length)
 
 const STATE_CLASS = {
   behind: 'text-bg-warning',
@@ -101,6 +112,11 @@ const STATE_CLASS = {
         A version locked in the template never changes.
       </p>
 
+      <div v-if="info?.all_locked" class="alert alert-secondary py-2 small">
+        Every mod in this server's template is locked to a version, so neither the daily
+        restart nor Force update changes them. To follow new Workshop releases, unlock the
+        mods in the template (the Mods step's <em>Unlock all</em>).
+      </div>
       <div v-if="error" class="alert alert-warning py-2 small">{{ error }}</div>
       <div v-if="notice" class="alert alert-success py-2 small">{{ notice }}</div>
 
@@ -124,14 +140,20 @@ const STATE_CLASS = {
                 </td>
                 <td class="rsm-num">{{ m.installed || '—' }}</td>
                 <td class="rsm-num">{{ m.latest || '—' }}</td>
-                <td>
+                <td class="text-nowrap">
                   <span class="badge" :class="STATE_CLASS[m.state]">{{ modStateLabel(m.state, m.locked) }}</span>
+                  <span v-if="m.locked && m.state !== 'locked'" class="badge text-bg-secondary ms-1">
+                    Locked at {{ m.locked }}
+                  </span>
                 </td>
               </tr>
             </tbody>
           </table>
         </div>
-        <p class="text-secondary small">{{ summary }}</p>
+        <p class="text-secondary small">
+          {{ summary }}
+          <template v-if="checkedAt"> Checked {{ checkedAt }}.</template>
+        </p>
       </template>
       <p v-else-if="loading" class="text-secondary small">Asking the Workshop for the newest versions…</p>
 
@@ -172,7 +194,11 @@ const STATE_CLASS = {
                 The server is stopped. Force update <strong>starts it</strong>, since only a
                 running server downloads mods, and it stays running afterwards.
               </p>
-              <p v-if="info && !info.updates_available" class="small text-secondary mb-0">
+              <p v-if="info && !unlocked" class="small text-warning mb-0">
+                Every mod is locked in the template, so this changes no versions; it only
+                restarts the server.
+              </p>
+              <p v-else-if="info && !info.updates_available" class="small text-secondary mb-0">
                 The last check found no newer versions, so this may change nothing.
               </p>
             </template>
