@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 import auth
-from services import docker_service, instance_backup, instance_service
+from services import docker_service, instance_backup, instance_service, log_explain, mod_order
 from services.instance_service import InstanceError
 
 logger = logging.getLogger("manager.instances_api")
@@ -59,6 +59,11 @@ class StartOptions(BaseModel):
     clear: list[Literal["mods", "saves", "logs"]] = Field(default_factory=list)
     # Archive the saved game before "saves" deletes it
     backup_first: bool = False
+
+
+class ExplainLine(BaseModel):
+    # The error line, as the Console shows it; it must be in this server's log
+    line: str = Field(min_length=1, max_length=4000)
 
 
 class Redownload(BaseModel):
@@ -282,6 +287,37 @@ async def restart_schedule(
     except InstanceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return await asyncio.to_thread(_view, instance_id)
+
+
+@router.post("/{instance_id}/logs/explain")
+async def explain_log_line(
+    instance_id: int, body: ExplainLine, _user: str = Depends(auth.require_session)
+):
+    """Ask the configured AI what an error line means (#254).
+
+    The prompt is built from this server's own log around that line; the
+    browser's text only picks the line. Returns {reply, model, sent}, where
+    `sent` is the excerpt exactly as it left the manager.
+    """
+    status = await asyncio.to_thread(mod_order.status)
+    if not status["available"]:
+        raise HTTPException(status_code=503, detail=status["reason"] or "No AI service is working.")
+    try:
+        ctx = await asyncio.to_thread(instance_service.log_context, instance_id)
+        lines, at = log_explain.excerpt(ctx["lines"], body.line)
+    except InstanceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except log_explain.LineNotFound as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="That line is no longer in the server's log. Pick it again from a fresh view.",
+        ) from exc
+    prompt = log_explain.build_prompt(lines, at, ctx["mods"], ctx["scenario"])
+    try:
+        result = await asyncio.to_thread(log_explain.ask, prompt)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {**result, "sent": prompt}
 
 
 @router.put("/{instance_id}/mod-updates")
