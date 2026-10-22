@@ -83,18 +83,35 @@ async function action(verb) {
 // tabs, and the Overview can show the last few lines of the same stream.
 const logLines = ref([])
 let ws = null
+// True once the stream has ended: the container stopped, or there was none yet.
+const logsEnded = ref(false)
 function connectLogs() {
   if (ws) ws.close()
   logLines.value = []
+  logsEnded.value = false
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-  ws = new WebSocket(`${proto}://${location.host}/api/instances/${props.id}/logs`)
-  ws.onmessage = (msg) => {
+  const socket = new WebSocket(`${proto}://${location.host}/api/instances/${props.id}/logs`)
+  socket.onmessage = (msg) => {
     const ev = JSON.parse(msg.data)
     logLines.value.push(ev.line)
     if (logLines.value.length > 2000) logLines.value.shift()
   }
+  // Only this stream's end counts, not that of one we closed to replace it.
+  socket.onclose = () => {
+    if (ws === socket) logsEnded.value = true
+  }
+  ws = socket
 }
 const errorCount = computed(() => logLines.value.filter(isErrorLine).length)
+// Once a stream has ended, follow the next run as soon as the server is up again.
+// A fixed delay after Start lost the race with a slower start (one that first asks
+// the Workshop for every mod's version, #246) and left "No container yet" for good,
+// and a start from elsewhere (Force update, a schedule) never reconnected at all.
+// A crashed server keeps its last lines on screen until it runs again. Checked on
+// each stats poll, so a stream that keeps ending is retried every 5 s, not in a loop.
+watch(stats, (s) => {
+  if (logsEnded.value && s?.status === 'running') connectLogs()
+})
 
 // --- Header bits -----------------------------------------------------------------
 const connect = computed(() => stats.value?.connect || '')

@@ -1183,6 +1183,26 @@ def running_instance_names_for_branch(branch: str) -> list[str]:
     return names
 
 
+def _run_config_mods(idir: Path) -> tuple[dict[str, str], dict[str, str]]:
+    """The versions and names the config.json this run started with gives its mods.
+
+    That file, not the template, says what the server was told to fetch: it is
+    where a start writes the pinned versions (#246).
+    """
+    try:
+        cfg = json.loads((idir / "configs" / CONFIG_FILENAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}, {}
+    pinned, names = {}, {}
+    for m in mod_versions.config_mods(cfg):
+        mid = str(m.get("modId") or "").upper()
+        if m.get("version"):
+            pinned[mid] = m["version"]
+        if m.get("name"):
+            names[mid] = m["name"]
+    return pinned, names
+
+
 def instance_stats(instance_id: int) -> dict:
     """Live runtime info for the instance status bar.
 
@@ -1242,8 +1262,13 @@ def instance_stats(instance_id: int) -> dict:
             # The same folders as the Maintenance "Downloaded & baked mods" row,
             # less the mods of an earlier template. Only walked while starting,
             # so an online server pays nothing.
+            idir = Path(config.settings.data_dir) / "instances" / str(instance_id)
+            pinned, names = _run_config_mods(idir)
             stats["mod_download"] = mod_download.progress(
-                container.id, _target_paths(instance_id, DATA_MODS), run_config,
+                # one key per run: a restart reuses the container (#246)
+                f"{container.id}/{_started_at(container)}",
+                _target_paths(instance_id, DATA_MODS), run_config,
+                roots=mod_versions.addon_roots(idir), pinned=pinned, names=names,
             )
         stats["roster"] = parse_roster(log_lines, now=datetime.now(UTC))
         for player in stats["roster"]:
@@ -2020,8 +2045,13 @@ def apply_scheduled_restarts() -> None:
     """Restart instances whose daily schedule has come due. Non-fatal.
 
     Called from the background monitor. Only instances that should be running
-    (desired_state == 'running') are considered; the occurrence is marked
+    (desired_state == 'running') are restarted; the occurrence is marked
     serviced before the restart so a slow stop/start isn't retried next tick.
+
+    A stopped server's occurrence is marked serviced too, and skipped. Left
+    unmarked it stayed due for the grace hour, so starting the server at 04:30
+    got it restarted (and, with mod updates on, updated) 15 seconds later for
+    the 04:00 it had missed.
     """
     if not docker_service.ping():
         return
@@ -2029,8 +2059,6 @@ def apply_scheduled_restarts() -> None:
     with Session(get_engine()) as session:
         instances = _all_instances(session)
     for inst in instances:
-        if inst.desired_state != "running":
-            continue
         times = schedule_times(inst)
         if not times:
             continue
@@ -2046,6 +2074,10 @@ def apply_scheduled_restarts() -> None:
             fresh.last_scheduled_restart = now
             session.add(fresh)
             session.commit()
+        if inst.desired_state != "running":
+            logger.info("Scheduled restart of instance %s (%02d:%02d) skipped: it is stopped",
+                        inst.name, due.hour, due.minute)
+            continue
         logger.info(
             "Scheduled restart of instance %s (%02d:%02d)%s", inst.name, due.hour, due.minute,
             ", updating its mods" if inst.mod_auto_update else "",
