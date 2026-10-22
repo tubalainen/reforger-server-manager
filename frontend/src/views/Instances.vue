@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
 import DeleteServerDialog from '../components/DeleteServerDialog.vue'
+import CleanStartDialog from '../components/server/CleanStartDialog.vue'
 import Sparkline from '../components/Sparkline.vue'
 import StageBadge from '../components/StageBadge.vue'
 import { groupByStage, versionOptions } from '../stages'
@@ -166,7 +167,19 @@ const fmtNext = (s) => (s.next_restart ? s.next_restart.slice(11) : '—')
 const scenarioOf = (s) =>
   s.template_id == null ? 'No template selected' : s.scenario_name || s.template_name || '—'
 
+// Start after a switch to another template asks what of the old one's data to
+// clear first; the dialog then starts the server.
+const cleanStart = ref(null)
+async function cleanStarted() {
+  cleanStart.value = null
+  await load()
+}
+
 async function action(s, verb) {
+  if (verb === 'start' && s.template_switched) {
+    cleanStart.value = s
+    return
+  }
   pending[s.id] = verb
   error.value = ''
   try {
@@ -549,6 +562,12 @@ onUnmounted(() => clearInterval(poll))
       :server="deleting"
       @close="deleting = null"
       @deleted="onDeleted"
+    />
+    <CleanStartDialog
+      v-if="cleanStart"
+      :server="cleanStart"
+      @close="cleanStart = null"
+      @started="cleanStarted"
     />
   </div>
 </template>

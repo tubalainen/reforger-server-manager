@@ -753,7 +753,9 @@ const faq = [
             once its template was edited after the server started, and one click restarts it.
             Swapping a server to a different template warns you if the persistent-save
             target (hive id) would change, and offers to back the current world up before
-            it does.
+            it does. The first Start after a swap asks what of the old template's data to
+            clear first — its downloaded mods, its saved game (backed up first unless you
+            untick it) and its logs — or to keep it all.
           </li>
           <li class="mb-2">
             <strong>Server files:</strong> the shared per-branch install lives under

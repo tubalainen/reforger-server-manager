@@ -213,6 +213,10 @@ class Instance(SQLModel, table=True):
     # Let a scheduled restart move the template's mods to their newest Workshop
     # release (#246). Every other start keeps the versions on disk.
     mod_auto_update: bool = False
+    # The template this server last started with: its mods, saves and logs on
+    # disk came from that one. When the template is switched, the next Start in
+    # the GUI offers to clear them first. No foreign key: the template may be gone.
+    last_started_template_id: int | None = None
     created_at: datetime = Field(default_factory=_utcnow)
 
 
@@ -327,6 +331,13 @@ def _migrate(engine) -> None:
             conn.execute(text(
                 "UPDATE instance SET mod_auto_update = 1 WHERE restart_schedule_json != ''"
             ))
+            conn.commit()
+        # the template a server last started with. Existing servers are taken to
+        # have started with the one they have now, so nobody is asked until they
+        # actually switch.
+        if "last_started_template_id" not in icols:
+            conn.execute(text("ALTER TABLE instance ADD COLUMN last_started_template_id INTEGER"))
+            conn.execute(text("UPDATE instance SET last_started_template_id = template_id"))
             conn.commit()
         # pinned Prod template version (#223); NULL = run the latest
         if "template_version" not in icols:

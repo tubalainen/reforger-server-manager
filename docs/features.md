@@ -67,6 +67,7 @@ A server's own page keeps every server listed down the left and splits into five
 - Recover servers after manager or host restarts.
 - Configure auto-start and scheduled restarts.
 - Apply template changes to existing servers.
+- Start fresh after switching a server to another template: the first Start asks whether to clear the old template's downloaded mods, saved game (backed up first by default) and logs, or keep them.
 - See assigned game, A2S, and RCON ports without managing leases manually.
 - Back up and restore the saved game data — the world, plus the databases the scenario
   and its mods keep beside it — download a backup or upload one back, and have the
