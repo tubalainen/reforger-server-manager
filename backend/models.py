@@ -210,6 +210,9 @@ class Instance(SQLModel, table=True):
     # `datetime` column and would store an aware one as UTC, which would shift
     # the schedule by the timezone offset.
     last_scheduled_restart: NaiveDatetime | None = None
+    # Let a scheduled restart move the template's mods to their newest Workshop
+    # release (#246). Every other start keeps the versions on disk.
+    mod_auto_update: bool = False
     created_at: datetime = Field(default_factory=_utcnow)
 
 
@@ -312,6 +315,17 @@ def _migrate(engine) -> None:
         if "last_scheduled_restart" not in icols:
             conn.execute(text(
                 "ALTER TABLE instance ADD COLUMN last_scheduled_restart DATETIME"
+            ))
+            conn.commit()
+        # mod updates on the scheduled restart (#246). Before it, every start
+        # took the newest mods, so a server that already restarts daily keeps
+        # updating at that restart; the others now keep what is on disk.
+        if "mod_auto_update" not in icols:
+            conn.execute(text(
+                "ALTER TABLE instance ADD COLUMN mod_auto_update BOOLEAN NOT NULL DEFAULT 0"
+            ))
+            conn.execute(text(
+                "UPDATE instance SET mod_auto_update = 1 WHERE restart_schedule_json != ''"
             ))
             conn.commit()
         # pinned Prod template version (#223); NULL = run the latest

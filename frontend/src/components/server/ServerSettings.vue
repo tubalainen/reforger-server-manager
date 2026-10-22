@@ -16,6 +16,7 @@ import {
 } from '../../settingsForm'
 import { groupByStage, versionOptions } from '../../stages'
 import StoredData from '../StoredData.vue'
+import ServerMods from './ServerMods.vue'
 
 // A server's settings as one form with one Save (#189). Edit anything, see what is
 // unsaved, save it all at once. Fields that rebuild the container are locked while
@@ -25,6 +26,8 @@ const props = defineProps({
   inst: { type: Object, required: true },
   connect: { type: String, default: '' },
   addressDetected: { type: Boolean, default: false },
+  // players online now, for the mod-update confirmations (#246)
+  players: { type: Number, default: null },
 })
 const emit = defineEmits(['update', 'changed', 'delete'])
 
@@ -417,6 +420,33 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
               </div>
             </div>
           </div>
+
+          <div class="rsm-row">
+            <label for="set-mod-updates" class="rsm-row-label">Update mods on the daily restart</label>
+            <div class="d-flex align-items-start gap-3">
+              <div class="form-check form-switch mb-0 mt-1">
+                <input
+                  id="set-mod-updates"
+                  v-model="draft.mod_auto_update"
+                  class="form-check-input"
+                  :class="{ 'rsm-changed': isChanged('mod_auto_update') }"
+                  type="checkbox"
+                  role="switch"
+                  :disabled="!draft.restart_times.length"
+                />
+              </div>
+              <span class="form-text mt-0">
+                <template v-if="draft.restart_times.length">
+                  The daily restart moves the template's mods to their newest Workshop release.
+                  Every other start keeps the versions already downloaded.
+                </template>
+                <template v-else>
+                  Add a daily restart time first. Without one, mods change only with
+                  <strong>Force update</strong> under Mods below.
+                </template>
+              </span>
+            </div>
+          </div>
         </div>
       </fieldset>
 
@@ -446,6 +476,12 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
     </form>
 
     <!-- Acts at once, so outside the form -->
+    <ServerMods
+      :inst="inst"
+      :players="players"
+      @update="(v) => emit('update', v)"
+    />
+
     <StoredData
       :id="inst.id"
       :running="running"

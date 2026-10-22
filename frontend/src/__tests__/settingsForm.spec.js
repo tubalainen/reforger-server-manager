@@ -129,6 +129,20 @@ describe('planSave', () => {
     expect(steps[1].body).toEqual({ game_port: 2005, a2s_port: 17777, rcon_port: 19999 })
     expect(steps[3].body).toEqual({ times: ['06:00'] })
   })
+
+  it('saves mod updates on its own endpoint, after the restart times (#246)', () => {
+    const base = settingsFrom(inst())
+    expect(base.mod_auto_update).toBe(false)
+    const steps = planSave(base, { ...base, restart_times: ['06:00'], mod_auto_update: true })
+    expect(steps.map((s) => s.key)).toEqual(['schedule', 'mods'])
+    expect(steps[1]).toEqual({
+      key: 'mods',
+      label: 'mod updates',
+      path: '/mod-updates',
+      body: { enabled: true },
+    })
+    expect(settingsFrom(inst({ mod_auto_update: true })).mod_auto_update).toBe(true)
+  })
 })
 
 describe('step labels', () => {

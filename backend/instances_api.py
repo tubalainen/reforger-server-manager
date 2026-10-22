@@ -48,6 +48,11 @@ class RestartSchedule(BaseModel):
     times: list[str] = Field(default_factory=list)
 
 
+class ModUpdates(BaseModel):
+    # Update the template's mods on the scheduled restart (#246)
+    enabled: bool
+
+
 class UpdatePorts(BaseModel):
     game_port: int | None = Field(default=None, ge=1, le=65535)
     a2s_port: int | None = Field(default=None, ge=1, le=65535)
@@ -242,6 +247,44 @@ async def restart_schedule(
     except InstanceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return await asyncio.to_thread(_view, instance_id)
+
+
+@router.put("/{instance_id}/mod-updates")
+async def mod_updates(
+    instance_id: int, body: ModUpdates, _user: str = Depends(auth.require_session)
+):
+    try:
+        await asyncio.to_thread(instance_service.set_mod_auto_update, instance_id, body.enabled)
+    except InstanceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return await asyncio.to_thread(_view, instance_id)
+
+
+@router.get("/{instance_id}/mods")
+async def mods(instance_id: int, _user: str = Depends(auth.require_session)):
+    """The template's mods: the version on disk against the Workshop's (#246)."""
+    try:
+        return await asyncio.to_thread(instance_service.mod_status, instance_id)
+    except InstanceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/{instance_id}/mods/update")
+async def force_update_mods(instance_id: int, _user: str = Depends(auth.require_session)):
+    """Restart (or start) with the template's mods at their newest release."""
+    await asyncio.to_thread(_action, instance_service.force_update_mods, instance_id)
+    return await asyncio.to_thread(_view, instance_id)
+
+
+@router.post("/{instance_id}/mods/redownload")
+async def redownload_mods(instance_id: int, _user: str = Depends(auth.require_session)):
+    """Delete the template's mods and start, so they download and bake afresh."""
+    try:
+        result = await asyncio.to_thread(instance_service.redownload_mods, instance_id)
+    except InstanceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    view = await asyncio.to_thread(_view, instance_id)
+    return {**view, **result}
 
 
 @router.delete("/{instance_id}", status_code=204)

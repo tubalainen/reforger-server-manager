@@ -11,7 +11,7 @@ export const LOCKED_WHILE_RUNNING = [
 const FIELDS = [
   'name', 'branch', 'template_id', 'template_version',
   'game_port', 'a2s_port', 'rcon_port',
-  'auto_restart', 'auto_start', 'restart_times',
+  'auto_restart', 'auto_start', 'restart_times', 'mod_auto_update',
 ]
 
 const TIME_RE = /^([01]?\d|2[0-3]):([0-5]\d)$/
@@ -41,6 +41,8 @@ export function settingsFrom(inst) {
     auto_restart: !!inst.auto_restart,
     auto_start: !!inst.auto_start,
     restart_times: normaliseTimes(inst.restart_times),
+    // update the template's mods on the scheduled restart (#246)
+    mod_auto_update: !!inst.mod_auto_update,
   }
 }
 
@@ -94,6 +96,7 @@ const STEP_LABEL = {
   template: 'template',
   restart: 'restart behaviour',
   schedule: 'daily restarts',
+  mods: 'mod updates',
 }
 
 /**
@@ -148,6 +151,14 @@ export function planSave(baseline, draft) {
       label: STEP_LABEL.schedule,
       path: '/schedule',
       body: { times: draft.restart_times },
+    })
+  }
+  if (touched(['mod_auto_update'])) {
+    steps.push({
+      key: 'mods',
+      label: STEP_LABEL.mods,
+      path: '/mod-updates',
+      body: { enabled: draft.mod_auto_update },
     })
   }
   return steps
