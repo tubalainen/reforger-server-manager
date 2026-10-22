@@ -1784,10 +1784,8 @@ def list_views() -> list[dict]:
         return views
 
 
-def log_context(instance_id: int, tail: int = 5000) -> dict:
-    """The server's recent log lines and its template's scenario and mod names,
-    for explaining an error line (#254). Every run the container kept counts:
-    the Console shows the previous run's tail too."""
+def _template_context(instance_id: int) -> dict:
+    """The scenario and mod names of the template a server runs (#254)."""
     with Session(get_engine()) as session:
         inst = session.get(Instance, instance_id)
         if not inst:
@@ -1795,6 +1793,19 @@ def log_context(instance_id: int, tail: int = 5000) -> dict:
         target = stages.run_target(session, inst)
         config_json = target.content.config_json if target else "{}"
         scenario = target.content.scenario_name if target else ""
+    try:
+        cfg = json.loads(config_json or "{}")
+    except ValueError:
+        cfg = {}
+    names = [m.get("name") or m.get("modId") for m in mod_versions.config_mods(cfg)]
+    return {"scenario": scenario, "mods": [n for n in names if n]}
+
+
+def log_context(instance_id: int, tail: int = 5000) -> dict:
+    """The server's recent log lines and its template's scenario and mod names,
+    for explaining an error line (#254). Every run the container kept counts:
+    the Console shows the previous run's tail too."""
+    ctx = _template_context(instance_id)
     container = docker_service.find_instance_container(instance_id)
     if container is None:
         raise InstanceError("This server has no container, so there is no log to read.")
@@ -1802,13 +1813,31 @@ def log_context(instance_id: int, tail: int = 5000) -> dict:
         raw = container.logs(tail=tail).decode("utf-8", errors="replace")
     except DockerException as exc:
         raise InstanceError("Could not read the server's log.") from exc
+    return {**ctx, "lines": raw.splitlines()}
+
+
+# Crash dumps are binary: there is nothing in them an AI could read.
+_TEXT_LOG_SUFFIXES = {".log", ".rpt", ".txt"}
+
+
+def log_file_context(instance_id: int, relpath: str, max_bytes: int) -> dict:
+    """The end of one of a server's log files (as the Console's file list shows
+    them, through the same path guard as their download), plus its template's
+    scenario and mod names, for explaining what went wrong in it (#254)."""
+    target = resolve_log_file(instance_id, relpath)
+    if target.suffix.lower() not in _TEXT_LOG_SUFFIXES:
+        raise InstanceError("That is a crash dump, not a text log: there is nothing in it to read.")
     try:
-        cfg = json.loads(config_json or "{}")
-    except ValueError:
-        cfg = {}
-    names = [m.get("name") or m.get("modId") for m in mod_versions.config_mods(cfg)]
-    return {"lines": raw.splitlines(), "scenario": scenario,
-            "mods": [n for n in names if n]}
+        with target.open("rb") as f:
+            size = f.seek(0, 2)
+            f.seek(max(0, size - max_bytes))
+            raw = f.read().decode("utf-8-sig", errors="replace")
+    except OSError as exc:
+        raise InstanceError("Could not read that log file.") from exc
+    lines = raw.splitlines()
+    if size > max_bytes and lines:
+        lines = lines[1:]  # the first line was cut in half
+    return {**_template_context(instance_id), "lines": lines}
 
 
 def _template_switch_view(inst: Instance, template_names: dict[int, str] | None) -> dict:

@@ -111,9 +111,9 @@ const faq = [
   },
   {
     q: 'Where is the "Ask AI" button on Console errors?',
-    a: `It shows on the red error lines of a server's Console once an AI service is set up
-       in .env (AI_ORDER_URL, the same one the template wizard's AI mod order uses) and
-       answering — for a local Ollama, also with its model downloaded. The manager checks
+    a: `It shows on the red error lines of a server's Console, and on its log files, once an
+       AI service is set up in .env (AI_ORDER_URL) and answering — for a local Ollama, also
+       with its model downloaded. The manager checks
        that every few minutes. It sends the lines before the error and the template's mod
        names, with IP addresses, Steam ids, BattlEye GUIDs and identity ids removed; the
        answer dialog shows exactly what was sent. An AI can be wrong: take its answer as a
@@ -161,20 +161,14 @@ const faq = [
        versions are written into config.json.`,
   },
   {
-    q: 'Does the order of the mods matter, and what does "Order with an AI…" do?',
+    q: 'Does the order of the mods matter?',
     a: `The list on the Mods step is written to config.json in exactly the order you see, so
-       you control it: drag a row, use its ↑ ↓, or pick Sort › Dependencies first to put every mod
-       after the mods it requires. Community guidance is that frameworks and libraries
-       belong at the top and mods that patch or override other mods at the bottom, because
-       a later entry gets the last word. We could not find an official Bohemia statement
-       that the engine honours the array order at all — it may well resolve the order
-       itself — so treat ordering as something that can help and cannot hurt, not as a fix
-       for a broken server. Sort › Order with an AI… writes the question for you: copy the prompt into
-       ChatGPT, Gemini or Claude (all free) and paste the answer back, or press one button
-       if your admin has configured an AI service in .env — a local Ollama on the same machine
-       works too, so the list never leaves it. Nothing is sent anywhere until
-       you press the button, the prompt contains only mod ids, names and which mod needs
-       which, and no answer is applied until you have seen exactly what it would move.`,
+       you control it: drag a row, use its ↑ ↓, or pick Sort › Dependencies first (or the yellow
+       Fix order button) to put every mod after the mods it requires — the one rule that
+       clearly matters. We could not find an official Bohemia statement that the engine
+       honours the array order beyond that — it may well resolve the order itself — so treat
+       any other ordering as something that can help and cannot hurt, not as a fix for a
+       broken server.`,
   },
   {
     q: 'What is the difference between Stable and Experimental?',

@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest'
 import {
   adoptEditedMods,
   applyModTemplate,
-  applyOrderIds,
   clearScenarioMods,
   dependencyViolations,
   extractModId,
@@ -372,112 +371,6 @@ describe('dependencyViolations / topoOrder', () => {
       mod('C'),
     ]
     expect(topoOrder(cyclic).map((m) => m.modId).sort()).toEqual(['A', 'B', 'C'])
-  })
-})
-
-describe('applyOrderIds (an order proposed by an AI or pasted in)', () => {
-  const list = () => [mod('A1'), mod('B1'), mod('C1')]
-
-  it('reorders to match the ids given', () => {
-    const out = applyOrderIds(list(), ['C1', 'A1', 'B1'])
-    expect(out.mods.map((m) => m.modId)).toEqual(['C1', 'A1', 'B1'])
-    expect(out.missing).toEqual([])
-    expect(out.unknown).toEqual([])
-  })
-
-  it('accepts lower-case ids, because a model will happily re-type them', () => {
-    expect(applyOrderIds(list(), ['c1', 'a1', 'b1']).mods.map((m) => m.modId)).toEqual(
-      ['C1', 'A1', 'B1'],
-    )
-  })
-
-  it('ignores an id that is not in the template and reports it', () => {
-    const out = applyOrderIds(list(), ['C1', 'DEADBEEFDEADBEEF', 'A1', 'B1'])
-    expect(out.mods.map((m) => m.modId)).toEqual(['C1', 'A1', 'B1'])
-    expect(out.unknown).toEqual(['DEADBEEFDEADBEEF'])
-  })
-
-  it('keeps a mod the answer forgot, near where it already was', () => {
-    const out = applyOrderIds(list(), ['C1', 'A1']) // B1 (index 1) never mentioned
-    expect(out.mods.map((m) => m.modId)).toEqual(['C1', 'B1', 'A1'])
-    expect(out.missing).toEqual(['B1'])
-  })
-
-  it('treats a repeated id as one mod rather than duplicating it', () => {
-    const out = applyOrderIds(list(), ['C1', 'A1', 'C1', 'B1'])
-    expect(out.mods.map((m) => m.modId)).toEqual(['C1', 'A1', 'B1'])
-  })
-
-  it('never changes which mods are in the list', () => {
-    const before = list()
-    for (const ids of [[], ['ZZZZZZZZZZZZZZZZ'], ['B1'], ['C1', 'B1', 'A1']]) {
-      const out = applyOrderIds(before, ids)
-      expect([...out.mods.map((m) => m.modId)].sort()).toEqual(['A1', 'B1', 'C1'])
-    }
-  })
-})
-
-describe('reading a mod order out of a real AI reply', () => {
-  // The parser is extractModIds: whatever shape the answer arrives in, the ids
-  // in it, in order, are the answer. These are the shapes models actually emit.
-  const ids = ['595F2BF2F44836FB', '1337C0DE5DABBEEF', 'BADC0DEDABBEDA5E']
-  const mods = ids.map((id) => mod(id))
-  const expectOrder = (text, want) =>
-    expect(applyOrderIds(mods, extractModIds(text)).mods.map((m) => m.modId)).toEqual(want)
-
-  it('reads the format the prompt asks for', () => {
-    expectOrder(
-      `BADC0DEDABBEDA5E | Core Lib | framework, everything builds on it
-1337C0DE5DABBEEF | Weapons | content pack
-595F2BF2F44836FB | Tweaks | patches the others, goes last`,
-      ['BADC0DEDABBEDA5E', '1337C0DE5DABBEEF', '595F2BF2F44836FB'],
-    )
-  })
-
-  it('reads a numbered list with a preamble the model was told not to write', () => {
-    expectOrder(
-      `Sure! Here is the recommended load order:
-
-1. BADC0DEDABBEDA5E (Core Lib)
-2. 595F2BF2F44836FB (Tweaks)
-3. 1337C0DE5DABBEEF (Weapons)`,
-      ['BADC0DEDABBEDA5E', '595F2BF2F44836FB', '1337C0DE5DABBEEF'],
-    )
-  })
-
-  it('reads a fenced JSON array', () => {
-    expectOrder(
-      '```json\n["1337c0de5dabbeef", "badc0dedabbeda5e", "595f2bf2f44836fb"]\n```',
-      ['1337C0DE5DABBEEF', 'BADC0DEDABBEDA5E', '595F2BF2F44836FB'],
-    )
-  })
-
-  it('reads a markdown table', () => {
-    expectOrder(
-      `| # | Mod | Id |
-|---|-----|----|
-| 1 | Core Lib | BADC0DEDABBEDA5E |
-| 2 | Weapons | 1337C0DE5DABBEEF |
-| 3 | Tweaks | 595F2BF2F44836FB |`,
-      ['BADC0DEDABBEDA5E', '1337C0DE5DABBEEF', '595F2BF2F44836FB'],
-    )
-  })
-
-  it('ignores trailing remarks that mention a mod again', () => {
-    // The first mention wins, so a closing "note that BADC… is the framework"
-    // cannot promote a mod that was listed last.
-    expectOrder(
-      `1337C0DE5DABBEEF
-BADC0DEDABBEDA5E
-595F2BF2F44836FB
-
-Note: 595F2BF2F44836FB patches 1337C0DE5DABBEEF, which is why it is last.`,
-      ['1337C0DE5DABBEEF', 'BADC0DEDABBEDA5E', '595F2BF2F44836FB'],
-    )
-  })
-
-  it('finds nothing to do in an answer with no ids at all', () => {
-    expect(extractModIds('I cannot help with that.')).toEqual([])
   })
 })
 

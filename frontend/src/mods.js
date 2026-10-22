@@ -287,40 +287,6 @@ export function topoOrder(mods) {
   return out
 }
 
-// ---- Applying an order that came from outside (#164) ------------------------
-
-// Reorder `mods` to follow `ids` (an order proposed by an AI, or read off a
-// pasted list). Nothing is ever added or removed by this:
-//   * ids that aren't in the list are reported as `unknown` and ignored;
-//   * mods the order never mentions are reported as `missing` and slotted back
-//     in at the position they hold today, rather than being swept to the end.
-export function applyOrderIds(mods, ids) {
-  const byId = new Map(mods.map((m) => [m.modId, m]))
-  const seen = new Set()
-  const unknown = []
-  const ordered = []
-  for (const raw of ids) {
-    const id = (raw || '').toUpperCase()
-    if (seen.has(id)) continue // a repeat later in the reply is not a second mod
-    seen.add(id)
-    if (!byId.has(id)) {
-      unknown.push(id)
-      continue
-    }
-    ordered.push(byId.get(id))
-  }
-  const missing = mods.filter((m) => !seen.has(m.modId))
-  for (const m of missing) {
-    const at = mods.indexOf(m)
-    ordered.splice(Math.min(at, ordered.length), 0, m)
-  }
-  return {
-    mods: ordered,
-    missing: missing.map((m) => m.modId),
-    unknown,
-  }
-}
-
 // ---- Loading a mod template into a template's mod list (#166) ---------------
 
 // The mods that must survive a "replace": the mod backing the selected scenario

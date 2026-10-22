@@ -398,9 +398,11 @@ After signing in:
 
 Multiple users can use the GUI simultaneously. Lists refresh automatically, and template editing uses temporary locks to prevent conflicting changes. Live logs and download progress use WebSockets, which standard nginx and Caddy configurations pass through.
 
-## AI mod ordering with Ollama (optional)
+## AI error explanations with Ollama (optional)
 
-The template wizard's **Sort › Order with an AI…** always works by copy and paste. To answer it in one click without sending the mod list anywhere, run [Ollama](https://ollama.com) — the compose files carry it as an optional service with NVIDIA GPU access (on Linux this needs the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/); Docker Desktop on Windows needs nothing extra). Add to `.env`:
+With an AI service set up, the red error lines in a server's **Console**, and its **Log & crash files**, get an **✨ Ask AI** button that explains what went wrong. The button shows only while the service answers. The question holds the lines around the error and the template's mod names, with IP addresses, Steam ids, BattlEye GUIDs and identity ids removed.
+
+To keep it all on your own machine, run [Ollama](https://ollama.com). The compose files carry it as an optional service with NVIDIA GPU access (on Linux this needs the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/); Docker Desktop on Windows needs nothing extra). Add to `.env`:
 
 ```bash
 COMPOSE_PROFILES=ollama
@@ -415,9 +417,9 @@ docker compose up -d
 docker exec reforger-ollama ollama pull qwen2.5:3b
 ```
 
-**Which model:** `qwen2.5:3b` (~1.9 GB) is the recommendation for a GPU with **4 GB** of memory and the default when `AI_ORDER_MODEL` is empty — it follows the answer format reliably and leaves room for the context a 100+ mod list needs. `llama3.2:3b` also fits. With 8 GB or more, `qwen2.5:7b` orders better. Avoid "thinking" models such as `qwen3` or `deepseek-r1` on a small GPU: they reason for minutes before answering.
+**Which model:** `qwen2.5:3b` (~1.9 GB) fits a GPU with **4 GB** of memory and is the default when `AI_ORDER_MODEL` is empty. `llama3.2:3b` also fits. With 8 GB or more, a bigger model explains better. A "thinking" model works too: the manager asks Ollama 0.9 or later to switch its thinking off.
 
-No NVIDIA GPU? Delete the `deploy:` block of the `ollama` service and it runs on the CPU, slowly. Already running Ollama on the host? Skip the profile, start Ollama with `OLLAMA_HOST=0.0.0.0` (keep port 11434 firewalled from the internet) and set `AI_ORDER_URL=http://host.docker.internal:11434`. A reverse proxy in front of the manager must allow a request to take a few minutes (nginx's default `proxy_read_timeout` is 60s).
+**Ollama elsewhere:** on the host, or another machine on your network, start it with `OLLAMA_HOST=0.0.0.0`, firewall port 11434 so only the manager's host can reach it (Ollama has no password), skip the profile, and set `AI_ORDER_URL` to its address: `http://host.docker.internal:11434` for the same host, or `http://<its address>:11434`. No NVIDIA GPU? Delete the `deploy:` block of the `ollama` service and it runs on the CPU, slowly. A reverse proxy in front of the manager must allow a request to take a few minutes (nginx's default `proxy_read_timeout` is 60s).
 
 ## Updating setup files
 

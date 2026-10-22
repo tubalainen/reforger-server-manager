@@ -117,7 +117,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - docker-gate:/run/rsm-gate
 
-  # OPTIONAL local AI for the template wizard's "AI order" button (#199). Not
+  # OPTIONAL local AI for the Console's "Ask AI" button (#199, #254). Not
   # started unless the 'ollama' profile is on: add COMPOSE_PROFILES=ollama to
   # .env, then `docker compose up -d` and download a model once:
   #   docker exec reforger-ollama ollama pull qwen2.5:3b
