@@ -8,6 +8,7 @@ import { SERVER_TABS, tabParams } from '../../server'
 import { serverStatus } from '../../status'
 import DeleteServerDialog from '../DeleteServerDialog.vue'
 import StageBadge from '../StageBadge.vue'
+import CleanStartDialog from './CleanStartDialog.vue'
 import ServerConsole from './ServerConsole.vue'
 import ServerOverview from './ServerOverview.vue'
 import ServerPlayers from './ServerPlayers.vue'
@@ -61,21 +62,38 @@ const row = computed(() => (props.summary?.servers || []).find((s) => String(s.i
 const maxPlayers = computed(() => row.value?.max_players ?? null)
 const history = computed(() => props.summary?.history || [])
 
+// Start after a switch to another template first asks what of the old one's data
+// to clear (CleanStartDialog), which then starts the server itself.
+const cleanStart = ref(false)
+
 async function action(verb) {
+  if (verb === 'start' && inst.value?.template_switched) {
+    cleanStart.value = true
+    return
+  }
   pending.value = verb
   try {
-    inst.value = await api(`/api/instances/${props.id}/${verb}`, { method: 'POST' })
-    // Refresh the live stats at once: otherwise the status keeps showing the old
-    // server's "online" for up to a poll interval after a restart (#76).
-    await loadStats()
-    emit('changed')
-    // reconnect logs after start/restart (a new container may exist)
-    if (verb !== 'stop') setTimeout(connectLogs, 800)
+    await afterAction(verb, await api(`/api/instances/${props.id}/${verb}`, { method: 'POST' }))
   } catch (e) {
     error.value = e.message
   } finally {
     pending.value = ''
   }
+}
+
+async function afterAction(verb, view) {
+  inst.value = view
+  // Refresh the live stats at once: otherwise the status keeps showing the old
+  // server's "online" for up to a poll interval after a restart (#76).
+  await loadStats()
+  emit('changed')
+  // reconnect logs after start/restart (a new container may exist)
+  if (verb !== 'stop') setTimeout(connectLogs, 800)
+}
+
+async function cleanStarted(view) {
+  cleanStart.value = false
+  await afterAction('start', view)
 }
 
 // --- The log stream ------------------------------------------------------------
@@ -377,6 +395,12 @@ onUnmounted(() => {
         :server="inst"
         @close="deleting = false"
         @deleted="onDeleted"
+      />
+      <CleanStartDialog
+        v-if="cleanStart"
+        :server="inst"
+        @close="cleanStart = false"
+        @started="cleanStarted"
       />
     </template>
 

@@ -54,6 +54,13 @@ class ModUpdates(BaseModel):
     enabled: bool
 
 
+class StartOptions(BaseModel):
+    # Stored data to delete before starting: any of mods | saves | logs
+    clear: list[Literal["mods", "saves", "logs"]] = Field(default_factory=list)
+    # Archive the saved game before "saves" deletes it
+    backup_first: bool = False
+
+
 class Redownload(BaseModel):
     # "template": the template's mods and their dependencies; "all": every
     # downloaded mod, leftovers of earlier templates too (#246)
@@ -160,9 +167,30 @@ def _action(fn, instance_id: int):
 
 
 @router.post("/{instance_id}/start")
-async def start(instance_id: int, _user: str = Depends(auth.require_session)):
+async def start(
+    instance_id: int, body: StartOptions | None = None,
+    _user: str = Depends(auth.require_session),
+):
+    """Start a server; optionally clear stored data first.
+
+    The GUI offers the clearing after the server was switched to another
+    template, whose mods, saves and logs are not the ones on disk.
+    """
+    backup = None
+    if body and body.clear:
+        try:
+            # Before the clear: a backup of a world that is already gone is no backup.
+            if body.backup_first and "saves" in body.clear:
+                backup = await asyncio.to_thread(
+                    instance_backup.create_backup, instance_id, "Before a clean start",
+                    instance_backup.SOURCE_TEMPLATE_SWITCH,
+                )
+            await asyncio.to_thread(instance_service.clear_instance_data, instance_id, body.clear)
+        except InstanceError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     await asyncio.to_thread(_action, instance_service.start_instance, instance_id)
-    return await asyncio.to_thread(_view, instance_id)
+    view = await asyncio.to_thread(_view, instance_id)
+    return {**view, "backup": backup} if backup else view
 
 
 @router.post("/{instance_id}/stop")

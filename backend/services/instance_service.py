@@ -840,6 +840,7 @@ def start_instance(instance_id: int, update_mods: bool = False) -> None:
         # A fresh run must prove it is online from its own log (#76).
         forget_run(container.id)
         inst.desired_state = "running"
+        inst.last_started_template_id = inst.template_id
         session.add(inst)
         session.commit()
         logger.info("Started instance %s (container %s)", inst.name, container.id[:12])
@@ -1136,6 +1137,7 @@ def instance_view(
     docker_up: bool | None = None,
     template_updated_at=None,
     target: "stages.RunTarget | None" = None,
+    template_names: dict[int, str] | None = None,
 ) -> dict:
     # docker_up/containers are passed in by list_views, which resolves them ONCE for
     # the whole page. This used to ping the daemon per instance, inside a list
@@ -1167,6 +1169,7 @@ def instance_view(
         "restart_times": schedule_times(inst),
         "next_restart": next_restart_label(inst),
         "mod_auto_update": inst.mod_auto_update,
+        **_template_switch_view(inst, template_names),
         "status": status,
         "server_files_ready": server_files_ready(inst.branch),
     }
@@ -1676,6 +1679,7 @@ def instances_summary() -> dict:
     with Session(get_engine()) as session:
         instances = _all_instances(session)
         targets = stages.run_targets(session, instances)
+        names = dict(session.exec(select(Template.id, Template.name)).all())
 
     files_ready: dict[str, bool] = {}  # one filesystem check per branch, not per server
     servers = []
@@ -1704,6 +1708,7 @@ def instances_summary() -> dict:
             "scenario_name": content.scenario_name if content else "",
             "max_players": _max_players(content.config_json) if content else None,
             "template_changed": False,
+            **_template_switch_view(inst, names),
             "server_files_ready": files_ready[inst.branch],
             "next_restart": next_restart_label(inst),
             "uptime_seconds": None,
@@ -1768,14 +1773,28 @@ def list_views() -> list[dict]:
     with Session(get_engine()) as session:
         instances = _all_instances(session)
         targets = stages.run_targets(session, instances)
+        names = dict(session.exec(select(Template.id, Template.name)).all())
         views = []
         for i in instances:
             t = targets.get(i.id)
             views.append(instance_view(
                 i, t.template.name if t else None, containers, docker_up,
-                t.changed_at if t else None, target=t,
+                t.changed_at if t else None, target=t, template_names=names,
             ))
         return views
+
+
+def _template_switch_view(inst: Instance, template_names: dict[int, str] | None) -> dict:
+    """Switched to another template since it last started? Then the mods, saves
+    and logs on disk came from the old one, and Start in the GUI offers to clear
+    them first. Switching back to that template asks nothing."""
+    return {
+        "template_switched": (
+            inst.last_started_template_id is not None and inst.template_id is not None
+            and inst.last_started_template_id != inst.template_id
+        ),
+        "previous_template_name": (template_names or {}).get(inst.last_started_template_id),
+    }
 
 
 def _stage_view(inst: Instance, target: "stages.RunTarget | None") -> dict:
