@@ -354,6 +354,28 @@ remove_legacy_network() {
     return 0
 }
 
+# The manager version a container runs: its image's reforger-manager.version
+# label (every image since v0.67.0). Empty when there is no such container or
+# no label.
+image_version() {
+    docker inspect -f '{{index .Config.Labels "reforger-manager.version"}}' "$1" 2>/dev/null |
+        grep -v '^<no value>$' || true
+}
+
+# Say what an update did: "v0.83.0 -> v0.83.1", or that it already had the
+# newest. Run from the folder whose .env pins MANAGER_VERSION, if anything does.
+report_version() {  # report_version WHAT BEFORE AFTER
+    _pin=$(env_value MANAGER_VERSION)
+    if [ -z "$3" ]; then
+        echo "$1: could not read the version it runs now."
+    elif [ "$2" = "$3" ]; then
+        echo "$1: already on v$3${_pin:+ (pinned by MANAGER_VERSION=$_pin in .env)}."
+    else
+        echo "$1: ${2:+v}${2:-an unknown version} -> v$3"
+        echo "  What's new: https://github.com/$REPO/releases/tag/v$3"
+    fi
+}
+
 # `rsm` itself only ever arrived with an installer run, so a fix to it reached
 # nobody who did not re-install (#167). Refresh it at the END of an update, from
 # main (or RSM_REF): it is host tooling that drives every stack, whatever
@@ -741,6 +763,13 @@ sdc() {
     fi
 }
 
+supervisor_update() {
+    _before=$(image_version rsm-supervisor)
+    sdc pull && sdc up -d || return 1
+    report_version "The Server Supervisor" "$_before" "$(image_version rsm-supervisor)"
+    check_supervisor_compose
+}
+
 supervisor_url() {
     _port=$(env_value WEB_PORT); _port=${_port:-7090}
     if [ "$(env_value WEB_BIND)" = "0.0.0.0" ]; then
@@ -906,11 +935,7 @@ cmd_supervisor() {
         logs)
             if [ $# -eq 0 ]; then sdc logs -f --tail 200 supervisor; else sdc logs -f --tail 200 "$@"; fi
             ;;
-        update)
-            sdc pull
-            sdc up -d
-            check_supervisor_compose
-            ;;
+        update) supervisor_update ;;
         *) die "rsm supervisor: unknown command '$_sub' (install, start, stop, restart, status, logs, update, remove)" ;;
     esac
 }
@@ -1678,10 +1703,14 @@ stack_cmd() {
             if [ $# -eq 0 ]; then dc logs -f --tail 200 manager; else dc logs -f --tail 200 "$@"; fi
             ;;
         update)
+            _before=$(image_version "$STACK-manager")
+            echo "Updating stack '$STACK' (now on ${_before:+v}${_before:-an unknown version})..."
             dc pull
             dc up -d
             echo "Updated. Current images:"
             dc images
+            echo
+            report_version "Stack '$STACK'" "$_before" "$(image_version "$STACK-manager")"
             echo
             echo "Checking the setup files against this release..."
             check_setup_files
@@ -1798,8 +1827,7 @@ if [ "$ALL" = 1 ]; then
     done
     if [ "$CMD" = update ] && supervisor_installed; then
         echo "== the Server Supervisor"
-        ( use_supervisor && sdc pull && sdc up -d && check_supervisor_compose ) ||
-            _failed="$_failed supervisor"
+        ( use_supervisor && supervisor_update ) || _failed="$_failed supervisor"
         echo
     fi
     if [ "$CMD" = update ] && edge_installed; then
