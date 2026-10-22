@@ -1,13 +1,16 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { api } from '../../api'
 
-// What an error line in the Console means, asked of the AI service set up in .env
-// (#254). The manager builds the question from its own copy of the log around
-// this line, with IP addresses and player ids removed; "What was sent" shows it.
+// What went wrong, asked of the AI service set up in .env (#254): about one error
+// line of the Console (`line`), or about one of the server's log files (`path`),
+// where the manager picks the last error in it. Either way the manager builds the
+// question from its own copy of the log, with IP addresses and player ids removed;
+// "What was sent" shows it.
 const props = defineProps({
   serverId: { type: [String, Number], required: true },
-  line: { type: String, required: true },
+  line: { type: String, default: '' },
+  path: { type: String, default: '' },
   ai: { type: Object, required: true }, // /api/system/ai: {provider, model}
 })
 const emit = defineEmits(['close'])
@@ -17,18 +20,27 @@ const reply = ref('')
 const sent = ref('')
 const model = ref('')
 const error = ref('')
+const errorLine = ref(props.line)
+const summary = ref(null) // for a file: {errors, kinds, warnings, lines}
+const title = computed(() => (props.path ? 'What went wrong in this log?' : 'What does this error mean?'))
 
 async function ask() {
   busy.value = true
   error.value = ''
   try {
-    const res = await api(`/api/instances/${props.serverId}/logs/explain`, {
-      method: 'POST',
-      body: { line: props.line },
-    })
+    const res = props.path
+      ? await api(`/api/instances/${props.serverId}/logfiles/explain`, {
+          method: 'POST',
+          body: { path: props.path },
+        })
+      : await api(`/api/instances/${props.serverId}/logs/explain`, {
+          method: 'POST',
+          body: { line: props.line },
+        })
     reply.value = res.reply
     sent.value = res.sent
     model.value = res.model
+    if (props.path) summary.value = res.summary || null
   } catch (e) {
     error.value = e.message
   } finally {
@@ -43,11 +55,20 @@ onMounted(ask)
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title">✨ What does this error mean?</h5>
+          <h5 class="modal-title">✨ {{ title }}</h5>
           <button type="button" class="btn-close" aria-label="Close" @click="emit('close')"></button>
         </div>
         <div class="modal-body">
-          <pre class="rsm-ai-line small mb-3">{{ line }}</pre>
+          <p v-if="path" class="small text-secondary mb-2">
+            <code class="text-break">{{ path }}</code>
+            <template v-if="summary && summary.errors">
+              — {{ summary.errors }} error lines of {{ summary.kinds }} kinds in
+              {{ summary.lines }} lines, sent as one example of each with how often it
+              occurred.
+            </template>
+            <template v-else-if="summary"> — no error lines in it, so its last lines were sent.</template>
+          </p>
+          <pre v-if="errorLine" class="rsm-ai-line small mb-3">{{ errorLine }}</pre>
           <div v-if="busy" class="text-secondary small">
             <span class="spinner-border spinner-border-sm me-2"></span>
             Asking {{ ai.provider === 'ollama' ? 'Ollama' : 'the AI service' }}
@@ -68,8 +89,8 @@ onMounted(ask)
             <details class="small">
               <summary class="text-secondary">What was sent</summary>
               <p class="text-secondary mt-2 mb-1">
-                The lines before the error, from this server's log, and the template's mod
-                names. IP addresses, Steam ids, BattlEye GUIDs and identity ids were removed.
+                Lines from this server's log and the template's mod names. IP addresses, Steam
+                ids, BattlEye GUIDs and identity ids were removed.
               </p>
               <pre class="rsm-ai-sent">{{ sent }}</pre>
             </details>

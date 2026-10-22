@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 import auth
-from services import docker_service, instance_backup, instance_service, log_explain, mod_order
+from services import ai_client, docker_service, instance_backup, instance_service, log_explain
 from services.instance_service import InstanceError
 
 logger = logging.getLogger("manager.instances_api")
@@ -64,6 +64,11 @@ class StartOptions(BaseModel):
 class ExplainLine(BaseModel):
     # The error line, as the Console shows it; it must be in this server's log
     line: str = Field(min_length=1, max_length=4000)
+
+
+class ExplainFile(BaseModel):
+    # A path as the log-file list gives it, relative to the server's profile
+    path: str = Field(min_length=1, max_length=1000)
 
 
 class Redownload(BaseModel):
@@ -299,7 +304,7 @@ async def explain_log_line(
     browser's text only picks the line. Returns {reply, model, sent}, where
     `sent` is the excerpt exactly as it left the manager.
     """
-    status = await asyncio.to_thread(mod_order.status)
+    status = await asyncio.to_thread(ai_client.status)
     if not status["available"]:
         raise HTTPException(status_code=503, detail=status["reason"] or "No AI service is working.")
     try:
@@ -516,6 +521,45 @@ async def download_logfile(
     except InstanceError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return FileResponse(target, filename=target.name, media_type="text/plain")
+
+
+@router.post("/{instance_id}/logfiles/explain")
+async def explain_logfile(
+    instance_id: int, body: ExplainFile, _user: str = Depends(auth.require_session)
+):
+    """Ask the configured AI what went wrong in one of the server's log files (#254).
+
+    The file is read here, through the same guard as its download, and the last
+    error in it (or its last lines) is what is asked about.
+    """
+    status = await asyncio.to_thread(ai_client.status)
+    if not status["available"]:
+        raise HTTPException(status_code=503, detail=status["reason"] or "No AI service is working.")
+    try:
+        ctx = await asyncio.to_thread(
+            instance_service.log_file_context, instance_id, body.path, log_explain.FILE_READ_BYTES,
+        )
+    except InstanceError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if not ctx["lines"]:
+        raise HTTPException(status_code=409, detail="That log file is empty.")
+    # Pruned first: each distinct error once, with its count (a real error.log
+    # went from ~100k tokens to ~2k). A file without errors: its last lines.
+    d = log_explain.digest(ctx["lines"])
+    if d["kinds"]:
+        prompt = log_explain.build_digest_prompt(d, ctx["mods"], ctx["scenario"], body.path)
+        answer_tokens = log_explain.DIGEST_ANSWER_TOKENS
+    else:
+        lines, at = log_explain.file_excerpt(ctx["lines"])
+        prompt = log_explain.build_prompt(lines, at, ctx["mods"], ctx["scenario"], source=body.path)
+        answer_tokens = log_explain.ANSWER_TOKENS
+    try:
+        result = await asyncio.to_thread(log_explain.ask, prompt, answer_tokens)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {**result, "sent": prompt,
+            "summary": {"errors": d["errors"], "kinds": len(d["kinds"]) + d["omitted"],
+                        "warnings": d["warnings"], "lines": len(ctx["lines"])}}
 
 
 @router.websocket("/{instance_id}/logs")

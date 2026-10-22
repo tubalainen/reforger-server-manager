@@ -23,11 +23,10 @@ Key template capabilities include:
   every server shares, re-rollable in the wizard; the template is named after it until
   you type a template name of your own.
 - Search the Workshop, fetch metadata, resolve dependencies, and preserve dependency order.
-- Drag mods into a load order, or ask an AI for one: paste the prompt into any free web
-  assistant, or answer it in one click with a local Ollama on your own GPU or any
-  OpenAI-compatible service.
-- With that AI service set up and answering, ask it what an error line in a server's
-  Console means (**Ask AI**). It gets the lines before the error and the template's mod
+- Drag mods into a load order, and let **Fix order** list every mod after the mods it requires.
+- With an AI service set up and answering (a local Ollama on your own GPU or any
+  OpenAI-compatible service), ask it what an error in a server's Console or log files
+  means (**Ask AI**). It gets the lines before the error and the template's mod
   names, with IP addresses and player ids removed, and the dialog shows exactly what was sent.
 - Lock mod versions or follow current releases.
 - Import an existing server `config.json` or export a generated configuration.

@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends
 
 import auth
 import config
-from services import docker_service, instance_service, mod_order, onboarding
+from services import ai_client, docker_service, instance_service, onboarding
 
 router = APIRouter(prefix="/api/system", tags=["system"])
 
@@ -66,7 +66,7 @@ async def ai_status(refresh: bool = False, _user: str = Depends(auth.require_ses
     """Whether the AI service in .env is set up and answering (#254), so the GUI
     offers AI features only when they work: {available, provider, model, reason}.
     Probed at most every few minutes unless `refresh`."""
-    return await asyncio.to_thread(mod_order.status, refresh)
+    return await asyncio.to_thread(ai_client.status, refresh)
 
 
 @router.get("/setup")

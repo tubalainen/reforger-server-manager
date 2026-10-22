@@ -49,6 +49,9 @@ function downloadLog(path) {
 // (#254). The manager checks that and remembers the answer for a few minutes.
 const ai = ref(null)
 const asking = ref('')
+// ...and on the log files, text ones only: a crash dump is binary.
+const askingFile = ref('')
+const isTextLog = (path) => /\.(log|rpt|txt)$/i.test(path)
 async function loadAi() {
   try {
     ai.value = await api('/api/system/ai')
@@ -126,6 +129,7 @@ onMounted(() => {
     </div>
 
     <AskAiDialog v-if="asking" :server-id="id" :line="asking" :ai="ai" @close="asking = ''" />
+    <AskAiDialog v-if="askingFile" :server-id="id" :path="askingFile" :ai="ai" @close="askingFile = ''" />
 
     <!-- Log & crash files -->
     <div class="card">
@@ -147,7 +151,13 @@ onMounted(() => {
                 <td class="text-break">{{ f.path }}</td>
                 <td class="rsm-num">{{ formatBytes(f.size) }}</td>
                 <td class="rsm-num">{{ formatTimestamp(f.modified) }}</td>
-                <td class="text-end">
+                <td class="text-end text-nowrap">
+                  <button
+                    v-if="ai?.available && isTextLog(f.path)"
+                    class="btn btn-sm btn-outline-secondary me-1"
+                    title="Ask the AI service what went wrong in this log"
+                    @click="askingFile = f.path"
+                  >✨ Ask AI</button>
                   <button class="btn btn-sm btn-outline-primary" @click="downloadLog(f.path)">
                     Download
                   </button>
