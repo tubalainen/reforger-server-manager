@@ -110,11 +110,22 @@ const faq = [
        same UDP ranges forwarded to this machine's LAN IP.`,
   },
   {
+    q: 'How do my server’s mods get updated?',
+    a: `Every start keeps the mod versions the server already downloaded, so a crash restart
+       never changes mods under your players. They move to the newest Workshop release only
+       when you say so: tick Update mods on the daily restart on the server's Settings tab (it
+       needs a daily restart time), or press Force update under Settings › Mods, which restarts
+       the server now. The Mods card lists each of the template's mods with the version on the
+       server and the Workshop's newest, and says when updates are available. A version locked
+       in the template never changes.`,
+  },
+  {
     q: 'I changed the template’s mods, restarted — and the server still runs the old ones.',
-    a: `The server downloads and "bakes" its addons once and then reuses that copy. Open the
-       server, stop it, and on its Settings tab use Maintenance to clear Downloaded & baked mods:
-       the next start fetches and bakes the template's current mod list from scratch (give it
-       a few minutes). Maintenance clears old logs too. Clearing the saved game — which resets
+    a: `The server downloads and "bakes" its addons once and then reuses that copy. On the
+       server's Settings tab, under Mods, use Redownload and bake: it stops the server, deletes
+       the template's mods and starts it so they download and bake from scratch (give it a few
+       minutes). Maintenance, below it, clears every downloaded mod, including those of
+       templates the server used before, and old logs too. Clearing the saved game — which resets
        the world, so take a backup first and only do that when you want a clean slate — is on
        the Saves tab. Changing a
        template's launch parameters no longer needs any of this: the server rebuilds its
@@ -724,7 +735,9 @@ const faq = [
             <em>auto-restart on crash</em> (brings the server back only if its process
             exits, not after a planned reboot), <em>auto-start on host/Docker restart</em>
             (the one that brings it back after a reboot), and scheduled daily restarts at
-            fixed times (server local time).
+            fixed times (server local time). A daily restart can also update the template's
+            mods to their newest Workshop release (<em>Update mods on the daily restart</em>);
+            every other start keeps the mod versions already downloaded.
           </li>
           <li class="mb-2">
             <strong>Saved game backups:</strong> one archive of a server's world — the save

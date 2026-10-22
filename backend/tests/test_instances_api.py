@@ -174,6 +174,16 @@ def test_schedule_set_normalise_and_clear(logged_in):
     assert r.json()["next_restart"] is None
 
 
+def test_mod_updates_toggle(logged_in):  # #246
+    tid = _template(logged_in)
+    iid = logged_in.post("/api/instances", json={"name": "modupd", "template_id": tid}).json()["id"]
+    # a new server keeps its mods until told otherwise
+    assert logged_in.get(f"/api/instances/{iid}").json()["mod_auto_update"] is False
+    r = logged_in.put(f"/api/instances/{iid}/mod-updates", json={"enabled": True})
+    assert r.status_code == 200 and r.json()["mod_auto_update"] is True
+    assert logged_in.put("/api/instances/999/mod-updates", json={"enabled": True}).status_code == 409
+
+
 def test_schedule_rejects_bad_time(logged_in):
     tid = _template(logged_in)
     iid = logged_in.post("/api/instances", json={"name": "schbad", "template_id": tid}).json()["id"]

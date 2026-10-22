@@ -30,6 +30,7 @@ from services import (
     docker_service,
     fleet_history,
     mod_download,
+    mod_versions,
     ports,
     stages,
     template_service,
@@ -203,15 +204,31 @@ def _instance_dir(inst: Instance) -> Path:
     return Path(config.settings.data_dir) / "instances" / str(inst.id)
 
 
-def _write_config(inst: Instance, template_config: str) -> Path:
-    """Write the per-instance config.json; return its in-container path."""
+def _write_config(inst: Instance, template_config: str,
+                  mods_mode: str = mod_versions.MODE_FREEZE) -> Path:
+    """Write the per-instance config.json; return its in-container path.
+
+    Every unlocked mod gets an exact version (#246): the one on disk, or with
+    `mods_mode` "update" the Workshop's current release.
+    """
     configs_dir = _instance_dir(inst) / "configs"
     configs_dir.mkdir(parents=True, exist_ok=True)
     (_instance_dir(inst) / "profile").mkdir(parents=True, exist_ok=True)
     (_instance_dir(inst) / "workshop").mkdir(parents=True, exist_ok=True)
     rendered = render_instance_config(template_config, inst, config.settings.public_address)
+    _pin_mod_versions(inst, rendered, mods_mode)
     (configs_dir / CONFIG_FILENAME).write_text(json.dumps(rendered, indent=2), encoding="utf-8")
     return configs_dir / CONFIG_FILENAME
+
+
+def _pin_mod_versions(inst: Instance, rendered: dict, mods_mode: str) -> None:
+    roots = mod_versions.addon_roots(_instance_dir(inst))
+    installed = mod_versions.installed_versions(roots)
+    latest = None
+    if mods_mode == mod_versions.MODE_UPDATE:
+        latest = mod_versions.latest_versions(mod_versions.config_mod_ids(rendered, unlocked=True))
+    report = mod_versions.pin_versions(rendered, mods_mode, installed, latest)
+    logger.info("Mods for %s (%s): %s", inst.name, mods_mode, mod_versions.summarise(report))
 
 
 # --------------------------------------------------------------------------- #
@@ -739,7 +756,10 @@ def _container_network_ok(container) -> bool:
         return True
 
 
-def start_instance(instance_id: int) -> None:
+def start_instance(instance_id: int, update_mods: bool = False) -> None:
+    """Start a server. Its mods stay at the versions on disk unless `update_mods`,
+    which pins them to the Workshop's current releases instead (#246)."""
+    mods_mode = mod_versions.MODE_UPDATE if update_mods else mod_versions.MODE_FREEZE
     if not docker_service.ping():
         raise InstanceError("Docker daemon is not reachable")
     with Session(get_engine()) as session:
@@ -792,7 +812,7 @@ def start_instance(instance_id: int) -> None:
                     logger.warning("Could not remove stale container for %s: %s", inst.name, exc)
                 container = None
         if container is None:
-            self_config_path = _write_config(inst, template_config)
+            self_config_path = _write_config(inst, template_config, mods_mode)
             try:
                 container = _create_container(inst, self_config_path, launch,
                                               template_config, template_name)
@@ -808,7 +828,7 @@ def start_instance(instance_id: int) -> None:
                 ) from exc
         else:
             # Re-render config in case the template changed since last start.
-            _write_config(inst, template_config)
+            _write_config(inst, template_config, mods_mode)
 
         try:
             container.start()
@@ -1146,6 +1166,7 @@ def instance_view(
         "auto_start": inst.auto_start,
         "restart_times": schedule_times(inst),
         "next_restart": next_restart_label(inst),
+        "mod_auto_update": inst.mod_auto_update,
         "status": status,
         "server_files_ready": server_files_ready(inst.branch),
     }
@@ -1530,11 +1551,21 @@ def clear_instance_data(instance_id: int, targets: list[str]) -> dict:
         victims.extend(paths)
         removed.append({"target": target, "size_bytes": size, "files": files})
 
+    _remove_in_container(instance_id, idir, victims)
+
+    logger.info("Cleared %s for instance %s", ", ".join(chosen), instance_id)
+    return {"removed": removed}
+
+
+def _remove_in_container(instance_id: int, idir: Path, victims: list[Path]) -> None:
+    """Delete paths under an instance dir with a short-lived root container.
+
+    The server runs as root, so what it wrote may be root-owned. The names are
+    what is on disk, and the game server — or a mod in it — chose them, so they
+    are passed as arguments and never become part of a command line: a name
+    holding a quote was a command of its own (security review 2026-10-20, F3).
+    """
     if victims:
-        # The names are what is on disk, and the game server — or a mod in it —
-        # chose them, so they are passed as arguments and never become part of
-        # a command line: a name holding a quote was a command of its own
-        # (security review 2026-10-20, F3).
         rel = [p.relative_to(idir).as_posix() for p in victims]
         try:
             docker_service.get_client().containers.run(
@@ -1555,9 +1586,6 @@ def clear_instance_data(instance_id: int, targets: list[str]) -> dict:
     # The server expects these to exist; it will refill them on the next start.
     (idir / "workshop").mkdir(parents=True, exist_ok=True)
     (idir / "profile").mkdir(parents=True, exist_ok=True)
-
-    logger.info("Cleared %s for instance %s", ", ".join(chosen), instance_id)
-    return {"removed": removed}
 
 
 def prune_old_logs() -> int:
@@ -1820,6 +1848,89 @@ def set_restart_schedule(instance_id: int, times: list[str]) -> None:
     logger.info("Set restart schedule for instance %s: %s", instance_id, normalised or "none")
 
 
+# --------------------------------------------------------------------------- #
+# Mod versions (#246)
+# --------------------------------------------------------------------------- #
+
+def set_mod_auto_update(instance_id: int, enabled: bool) -> None:
+    """Whether this server's scheduled restart updates its mods."""
+    with Session(get_engine()) as session:
+        inst = session.get(Instance, instance_id)
+        if not inst:
+            raise InstanceError("Server not found")
+        inst.mod_auto_update = bool(enabled)
+        session.add(inst)
+        session.commit()
+    logger.info("Mod updates on the scheduled restart for instance %s: %s",
+                instance_id, "on" if enabled else "off")
+
+
+def _rendered_template_config(instance_id: int) -> tuple[Instance, dict]:
+    """The instance and its template's config.json as the server would get it."""
+    with Session(get_engine()) as session:
+        inst = session.get(Instance, instance_id)
+        if not inst:
+            raise InstanceError("Server not found")
+        target = _run_target(session, inst)
+        cfg = render_instance_config(
+            target.content.config_json, inst, config.settings.public_address
+        )
+        session.expunge(inst)
+    return inst, cfg
+
+
+def _template_mod_folders(inst: Instance, cfg: dict) -> list[Path]:
+    """The folders of the template's mods and what they depend on (#246).
+
+    Mods left behind by an earlier template are not among them: they are not
+    this server's business any more, and wiping them would cost a long download
+    for nothing if that template comes back.
+    """
+    roots = mod_versions.addon_roots(_instance_dir(inst))
+    wanted = mod_versions.with_installed_dependencies(mod_versions.config_mod_ids(cfg), roots)
+    return [f for mid, fs in mod_versions.mod_dirs(roots).items() if mid in wanted for f in fs]
+
+
+def mod_status(instance_id: int) -> dict:
+    """The template's mods: the version on disk against the Workshop's latest."""
+    inst, cfg = _rendered_template_config(instance_id)
+    report = mod_versions.status(cfg, mod_versions.addon_roots(_instance_dir(inst)))
+    folders = _template_mod_folders(inst, cfg)
+    size, _files = _dir_usage(folders)
+    return {**report, "auto_update": inst.mod_auto_update,
+            "scheduled": bool(schedule_times(inst)),
+            # what Redownload and bake would delete
+            "redownload": {"folders": len(folders), "size_bytes": size}}
+
+
+def force_update_mods(instance_id: int) -> None:
+    """Restart now with the template's mods at their newest release.
+
+    A stopped server is started: only a running server downloads mods.
+    """
+    if container_status(instance_id) == "running":
+        restart_instance(instance_id, update_mods=True)
+    else:
+        start_instance(instance_id, update_mods=True)
+
+
+def redownload_mods(instance_id: int) -> dict:
+    """Stop, delete the template's mods (and what they depend on), start fresh."""
+    if not docker_service.ping():
+        raise InstanceError("Docker daemon is not reachable")
+    inst, cfg = _rendered_template_config(instance_id)
+    idir = _instance_dir(inst)
+    folders = _template_mod_folders(inst, cfg)
+    size, files = _dir_usage(folders)
+    if container_status(instance_id) == "running":
+        stop_instance(instance_id)
+    _remove_in_container(instance_id, idir, folders)
+    logger.info("Deleted %d mod folder(s) of instance %s for a fresh download",
+                len(folders), inst.name)
+    start_instance(instance_id, update_mods=True)
+    return {"removed_mods": len(folders), "size_bytes": size, "files": files}
+
+
 def _due_scheduled_restart(
     times: list[str], now: datetime, last: datetime | None, grace_seconds: int
 ) -> datetime | None:
@@ -1870,10 +1981,10 @@ def next_restart_label(inst: Instance, now: datetime | None = None) -> str | Non
     return nxt.strftime("%Y-%m-%d %H:%M") if nxt else None
 
 
-def restart_instance(instance_id: int) -> None:
+def restart_instance(instance_id: int, update_mods: bool = False) -> None:
     """Stop then start an instance (used by the API and the scheduler)."""
     stop_instance(instance_id)
-    start_instance(instance_id)
+    start_instance(instance_id, update_mods)
 
 
 def restart_instances_for_branch(branch: str) -> list[str]:
@@ -1935,9 +2046,13 @@ def apply_scheduled_restarts() -> None:
             fresh.last_scheduled_restart = now
             session.add(fresh)
             session.commit()
-        logger.info("Scheduled restart of instance %s (%02d:%02d)", inst.name, due.hour, due.minute)
+        logger.info(
+            "Scheduled restart of instance %s (%02d:%02d)%s", inst.name, due.hour, due.minute,
+            ", updating its mods" if inst.mod_auto_update else "",
+        )
         try:
-            restart_instance(inst.id)
+            # The one ordinary start that may move mods to a newer release (#246)
+            restart_instance(inst.id, update_mods=inst.mod_auto_update)
         except InstanceError as exc:
             logger.warning("Scheduled restart of %s failed: %s", inst.name, exc)
 

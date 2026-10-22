@@ -338,6 +338,7 @@ onUnmounted(() => {
         :inst="inst"
         :connect="connect"
         :address-detected="!!stats?.public_address_detected"
+        :players="stats?.players ?? null"
         @update="(v) => { inst = v; emit('changed') }"
         @changed="loadInstance(); emit('changed')"
         @delete="deleting = true"
