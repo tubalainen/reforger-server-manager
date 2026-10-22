@@ -18,6 +18,8 @@ Nothing here decides a mod order: it proposes one, the user applies it.
 """
 import logging
 import re
+import threading
+import time
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -207,7 +209,8 @@ def _ollama_chat_url(url: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, "/api/chat", "", ""))
 
 
-def _ollama_budget(prompt: str, mod_count: int) -> tuple[int, int]:
+def _ollama_budget(prompt: str, mod_count: int,
+                   answer_tokens: int | None = None) -> tuple[int, int]:
     """(num_ctx, num_predict) big enough for this prompt and its answer.
 
     Estimated, not tokenised: hex ids and table rows tokenise badly — measured
@@ -215,7 +218,7 @@ def _ollama_budget(prompt: str, mod_count: int) -> tuple[int, int]:
     tokens for each answer line (id, name, a short reason; ~26 measured). The answer budget also stops a small
     model that starts repeating itself from running until the timeout.
     """
-    answer = mod_count * 48 + 256
+    answer = answer_tokens or mod_count * 48 + 256
     needed = len(prompt) * 2 // 5 + answer + 256
     num_ctx = min(_OLLAMA_MAX_CTX, max(_OLLAMA_MIN_CTX, -(-needed // 1024) * 1024))
     return num_ctx, answer
@@ -310,7 +313,8 @@ def _ollama_hint(message: str, model: str) -> str:
     return message
 
 
-def _ask_ollama(prompt: str, model: str, mod_count: int) -> dict:
+def _ask_ollama(prompt: str, model: str, mod_count: int,
+                answer_tokens: int | None = None) -> dict:
     """Ollama through its own /api/chat, which — unlike its OpenAI-compatible
     route — accepts a context size for this one request (#199)."""
     settings = config.settings
@@ -318,7 +322,7 @@ def _ask_ollama(prompt: str, model: str, mod_count: int) -> dict:
     if settings.ai_order_key:
         # Ollama itself has no keys, but one behind an authenticating proxy does.
         headers["Authorization"] = f"Bearer {settings.ai_order_key}"
-    num_ctx, num_predict = _ollama_budget(prompt, mod_count)
+    num_ctx, num_predict = _ollama_budget(prompt, mod_count, answer_tokens)
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
@@ -332,7 +336,7 @@ def _ask_ollama(prompt: str, model: str, mod_count: int) -> dict:
     return {"reply": _content(data), "model": data.get("model") or model}
 
 
-def ask(prompt: str, mod_count: int = MAX_MODS) -> dict:
+def ask(prompt: str, mod_count: int = MAX_MODS, answer_tokens: int | None = None) -> dict:
     """Send `prompt` to the configured provider, return {reply, model}.
 
     Raises RuntimeError with a message meant for the user — every failure here
@@ -341,5 +345,85 @@ def ask(prompt: str, mod_count: int = MAX_MODS) -> dict:
     """
     chosen = provider()
     if chosen["name"] == "ollama":
-        return _ask_ollama(prompt, chosen["model"], mod_count)
+        return _ask_ollama(prompt, chosen["model"], mod_count, answer_tokens)
     return _ask_openai(prompt, chosen["model"])
+
+
+# --------------------------------------------------------------------------- #
+# Is it working? (#254)
+# --------------------------------------------------------------------------- #
+#
+# A button that only fails is worse than none, so features that are offered only
+# when the AI answers (the Console's "Ask AI") ask this first. Probing costs a
+# request, so the answer is kept for a while; a failed question forgets it, so
+# the next look probes again.
+
+STATUS_TTL = 300.0
+PROBE_TIMEOUT = 5.0
+_status_lock = threading.Lock()
+_status_cache: tuple[float, dict] | None = None
+
+
+def _models_url(url: str) -> str:
+    """The OpenAI-style model list next to a chat-completions URL."""
+    parts = urlsplit(url)
+    path = parts.path.rstrip("/")
+    if path.endswith("/chat/completions"):
+        path = path[: -len("/chat/completions")]
+    return urlunsplit((parts.scheme, parts.netloc, f"{path}/models", "", ""))
+
+
+def _probe() -> dict:
+    chosen = provider()
+    if not chosen:
+        return {"available": False, "reason": "No AI service is set up (AI_ORDER_URL in .env)."}
+    headers = {}
+    if config.settings.ai_order_key:
+        headers["Authorization"] = f"Bearer {config.settings.ai_order_key}"
+    base = {"provider": chosen["name"], "model": chosen["model"]}
+    try:
+        if chosen["name"] == "ollama":
+            parts = urlsplit(config.settings.ai_order_url)
+            tags = urlunsplit((parts.scheme, parts.netloc, "/api/tags", "", ""))
+            response = httpx.get(tags, headers=headers, timeout=PROBE_TIMEOUT)
+            response.raise_for_status()
+            names = {m.get("name", "") for m in response.json().get("models") or []}
+            model = chosen["model"]
+            if model not in names and f"{model}:latest" not in names:
+                return {**base, "available": False,
+                        "reason": f"Ollama answers, but the model {model} is not downloaded."}
+            return {**base, "available": True, "reason": ""}
+        response = httpx.get(_models_url(config.settings.ai_order_url), headers=headers,
+                             timeout=PROBE_TIMEOUT)
+        if response.status_code in (401, 403):
+            return {**base, "available": False,
+                    "reason": f"The AI service refused the key ({response.status_code})."}
+        # 404: a service without a model list. It answered, which is what counts.
+        if response.status_code >= 500:
+            return {**base, "available": False,
+                    "reason": f"The AI service is failing ({response.status_code})."}
+        return {**base, "available": True, "reason": ""}
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.info("AI service probe failed: %s", exc)
+        return {**base, "available": False, "reason": f"Could not reach the AI service: {exc}"}
+
+
+def status(refresh: bool = False) -> dict:
+    """{available, provider, model, reason}, probed at most every STATUS_TTL."""
+    global _status_cache
+    now = time.monotonic()
+    with _status_lock:
+        cached = _status_cache
+    if cached and not refresh and now - cached[0] < STATUS_TTL:
+        return cached[1]
+    result = _probe()
+    with _status_lock:
+        _status_cache = (now, result)
+    return result
+
+
+def forget_status() -> None:
+    """After a failed question: probe again next time instead of trusting the cache."""
+    global _status_cache
+    with _status_lock:
+        _status_cache = None

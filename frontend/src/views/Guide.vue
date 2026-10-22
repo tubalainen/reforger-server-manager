@@ -110,6 +110,16 @@ const faq = [
        same UDP ranges forwarded to this machine's LAN IP.`,
   },
   {
+    q: 'Where is the "Ask AI" button on Console errors?',
+    a: `It shows on the red error lines of a server's Console once an AI service is set up
+       in .env (AI_ORDER_URL, the same one the template wizard's AI mod order uses) and
+       answering — for a local Ollama, also with its model downloaded. The manager checks
+       that every few minutes. It sends the lines before the error and the template's mod
+       names, with IP addresses, Steam ids, BattlEye GUIDs and identity ids removed; the
+       answer dialog shows exactly what was sent. An AI can be wrong: take its answer as a
+       lead.`,
+  },
+  {
     q: 'How do my server’s mods get updated?',
     a: `Every start keeps the mod versions the server already downloaded, so a crash restart
        never changes mods under your players. They move to the newest Workshop release only

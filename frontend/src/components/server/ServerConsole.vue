@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { api } from '../../api'
 import { formatBytes, formatTimestamp } from '../../format'
 import { isErrorLine } from '../../log'
+import AskAiDialog from './AskAiDialog.vue'
 import ModDownloadProgress from './ModDownloadProgress.vue'
 
 // The live server log, full height, with an errors-only filter; the log and crash
@@ -44,9 +45,22 @@ function downloadLog(path) {
   window.location.href = `/api/instances/${props.id}/logfiles/download?path=${encodeURIComponent(path)}`
 }
 
+// "Ask AI" on error lines, only when the AI service in .env is set up and answering
+// (#254). The manager checks that and remembers the answer for a few minutes.
+const ai = ref(null)
+const asking = ref('')
+async function loadAi() {
+  try {
+    ai.value = await api('/api/system/ai')
+  } catch {
+    ai.value = null
+  }
+}
+
 onMounted(() => {
   toBottom()
   loadLogFiles()
+  loadAi()
 })
 </script>
 
@@ -91,12 +105,27 @@ onMounted(() => {
       <!-- Line by line so errors can be painted red (#108). -->
       <div ref="logPane" class="rsm-log rsm-console rounded-bottom p-2">
         <template v-if="shown.length">
-          <div v-for="l in shown" :key="l.i" :class="{ 'log-error': l.error }">{{ l.text || ' ' }}</div>
+          <!-- The text right after the tag: the pane keeps whitespace, so a line
+               break here would indent every line. -->
+          <div
+            v-for="l in shown"
+            :key="l.i"
+            :class="{ 'log-error': l.error, 'rsm-log-line': l.error && ai?.available }"
+          >{{ l.text || ' ' }}<button
+              v-if="l.error && ai?.available"
+              type="button"
+              class="rsm-ask-ai"
+              title="Ask the AI service what this error means"
+              @click="asking = l.text"
+            >✨ Ask AI</button>
+          </div>
         </template>
         <div v-else-if="errorsOnly && logLines.length" class="log-muted">// no errors in this window</div>
         <div v-else class="log-muted">// waiting for log output…</div>
       </div>
     </div>
+
+    <AskAiDialog v-if="asking" :server-id="id" :line="asking" :ai="ai" @close="asking = ''" />
 
     <!-- Log & crash files -->
     <div class="card">
@@ -136,5 +165,33 @@ onMounted(() => {
 .rsm-console {
   height: 62vh;
   min-height: 18rem;
+}
+
+/* A small button at the end of an error line; quiet until the line is hovered,
+   always there on a touch screen. */
+.rsm-ask-ai {
+  margin-left: 0.75rem;
+  padding: 0 0.4rem;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  border: 1px solid currentColor;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: inherit;
+  opacity: 0.55;
+  white-space: nowrap;
+  /* not part of the log text when lines are copied */
+  user-select: none;
+}
+
+.rsm-log-line:hover .rsm-ask-ai,
+.rsm-ask-ai:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .rsm-ask-ai {
+    opacity: 1;
+  }
 }
 </style>

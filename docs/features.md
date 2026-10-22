@@ -26,6 +26,9 @@ Key template capabilities include:
 - Drag mods into a load order, or ask an AI for one: paste the prompt into any free web
   assistant, or answer it in one click with a local Ollama on your own GPU or any
   OpenAI-compatible service.
+- With that AI service set up and answering, ask it what an error line in a server's
+  Console means (**Ask AI**). It gets the lines before the error and the template's mod
+  names, with IP addresses and player ids removed, and the dialog shows exactly what was sent.
 - Lock mod versions or follow current releases.
 - Import an existing server `config.json` or export a generated configuration.
 - Create reusable mod lists and apply them to server templates.

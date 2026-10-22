@@ -1784,6 +1784,33 @@ def list_views() -> list[dict]:
         return views
 
 
+def log_context(instance_id: int, tail: int = 5000) -> dict:
+    """The server's recent log lines and its template's scenario and mod names,
+    for explaining an error line (#254). Every run the container kept counts:
+    the Console shows the previous run's tail too."""
+    with Session(get_engine()) as session:
+        inst = session.get(Instance, instance_id)
+        if not inst:
+            raise InstanceError("Server not found")
+        target = stages.run_target(session, inst)
+        config_json = target.content.config_json if target else "{}"
+        scenario = target.content.scenario_name if target else ""
+    container = docker_service.find_instance_container(instance_id)
+    if container is None:
+        raise InstanceError("This server has no container, so there is no log to read.")
+    try:
+        raw = container.logs(tail=tail).decode("utf-8", errors="replace")
+    except DockerException as exc:
+        raise InstanceError("Could not read the server's log.") from exc
+    try:
+        cfg = json.loads(config_json or "{}")
+    except ValueError:
+        cfg = {}
+    names = [m.get("name") or m.get("modId") for m in mod_versions.config_mods(cfg)]
+    return {"lines": raw.splitlines(), "scenario": scenario,
+            "mods": [n for n in names if n]}
+
+
 def _template_switch_view(inst: Instance, template_names: dict[int, str] | None) -> dict:
     """Switched to another template since it last started? Then the mods, saves
     and logs on disk came from the old one, and Start in the GUI offers to clear
