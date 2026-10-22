@@ -34,7 +34,7 @@ COPY --from=frontend /build/dist /app/static
 
 # The version this image is, for the Server Supervisor, which reads it from each
 # stack's manager container (#204). CI keeps it equal to backend/config.py.
-LABEL reforger-manager.version="0.82.2"
+LABEL reforger-manager.version="0.83.0"
 
 ENV STATIC_DIR=/app/static \
     DATA_DIR=/data \

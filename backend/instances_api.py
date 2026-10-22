@@ -3,6 +3,7 @@ import asyncio
 import logging
 import tempfile
 from pathlib import Path
+from typing import Literal
 
 from fastapi import (
     APIRouter,
@@ -51,6 +52,12 @@ class RestartSchedule(BaseModel):
 class ModUpdates(BaseModel):
     # Update the template's mods on the scheduled restart (#246)
     enabled: bool
+
+
+class Redownload(BaseModel):
+    # "template": the template's mods and their dependencies; "all": every
+    # downloaded mod, leftovers of earlier templates too (#246)
+    scope: Literal["template", "all"] = "template"
 
 
 class UpdatePorts(BaseModel):
@@ -277,10 +284,14 @@ async def force_update_mods(instance_id: int, _user: str = Depends(auth.require_
 
 
 @router.post("/{instance_id}/mods/redownload")
-async def redownload_mods(instance_id: int, _user: str = Depends(auth.require_session)):
-    """Delete the template's mods and start, so they download and bake afresh."""
+async def redownload_mods(
+    instance_id: int, body: Redownload | None = None,
+    _user: str = Depends(auth.require_session),
+):
+    """Delete mods and start, so they download and bake afresh."""
+    scope = body.scope if body else "template"
     try:
-        result = await asyncio.to_thread(instance_service.redownload_mods, instance_id)
+        result = await asyncio.to_thread(instance_service.redownload_mods, instance_id, scope)
     except InstanceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     view = await asyncio.to_thread(_view, instance_id)
