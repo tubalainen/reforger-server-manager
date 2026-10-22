@@ -162,13 +162,14 @@ const faq = [
   },
   {
     q: 'Does the order of the mods matter?',
-    a: `The list on the Mods step is written to config.json in exactly the order you see, so
-       you control it: drag a row, use its ↑ ↓, or pick Sort › Dependencies first (or the yellow
-       Fix order button) to put every mod after the mods it requires — the one rule that
-       clearly matters. We could not find an official Bohemia statement that the engine
-       honours the array order beyond that — it may well resolve the order itself — so treat
-       any other ordering as something that can help and cannot hurt, not as a fix for a
-       broken server.`,
+    a: `The list on the Mods step is written to config.json in exactly the order you see:
+       drag a row, use its ↑ ↓, or pick Sort › Dependencies first (or the yellow Fix order
+       button) to put every mod after the mods it requires. What the engine then does with
+       that order is shown on each server's Settings tab, under Mods › Load order the engine
+       used: read from the server's own log at its last start. In the logs checked so far
+       the engine mounted the list in reverse and moved each mod ahead of the mods it
+       depends on by itself — so it appears to settle dependency order on its own, and the
+       order you choose decides only between mods that do not depend on each other.`,
   },
   {
     q: 'What is the difference between Stable and Experimental?',
