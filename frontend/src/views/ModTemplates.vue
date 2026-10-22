@@ -147,16 +147,18 @@ onMounted(load)
             :key="mt.id"
             class="list-group-item d-flex justify-content-between align-items-center gap-2 flex-wrap"
           >
-            <div class="me-2">
+            <!-- Takes the free space and wraps its text inside it, so a long
+                 description no longer pushes the buttons below the row. -->
+            <div class="rsm-row-text">
               <div class="fw-semibold">
                 {{ mt.name }}
                 <StageBadge v-if="isLocked(mt)" stage="prod" :version="mt.prod_version" class="ms-1" />
-                <span class="badge text-bg-secondary ms-1">{{ mt.mod_count }} mods</span>
+                <span class="badge text-bg-secondary ms-1">{{ mt.mod_count }} mod{{ mt.mod_count === 1 ? '' : 's' }}</span>
                 <span
                   v-if="mt.locked_count"
-                  class="badge text-bg-light border text-secondary ms-1"
+                  class="badge border text-secondary-emphasis ms-1"
                   :title="`${mt.locked_count} mod(s) locked to a specific version`"
-                >🔒 {{ mt.locked_count }}</span>
+                >🔒 {{ mt.locked_count }} locked</span>
               </div>
               <div class="small text-secondary">
                 {{ mt.description || 'No description' }}
@@ -165,7 +167,7 @@ onMounted(load)
                 </span>
               </div>
             </div>
-            <div class="d-flex gap-1">
+            <div class="d-flex gap-1 flex-shrink-0">
               <button
                 class="btn btn-sm btn-outline-primary"
                 :title="isLocked(mt) ? 'Prod mod lists are locked: open it read-only' : ''"
@@ -218,3 +220,12 @@ onMounted(load)
     />
   </div>
 </template>
+
+<style scoped>
+/* The name and description take the free space and wrap inside it; below about
+   20rem (a phone) the buttons move under the text instead of squeezing it. */
+.rsm-row-text {
+  flex: 1 1 20rem;
+  min-width: 0;
+}
+</style>
