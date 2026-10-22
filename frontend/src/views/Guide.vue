@@ -124,8 +124,9 @@ const faq = [
     a: `The server downloads and "bakes" its addons once and then reuses that copy. On the
        server's Settings tab, under Mods, use Redownload and bake: it stops the server, deletes
        the template's mods and starts it so they download and bake from scratch (give it a few
-       minutes). Maintenance, below it, clears every downloaded mod, including those of
-       templates the server used before, and old logs too. Clearing the saved game — which resets
+       minutes). Choose Delete all mods in its dialog to also remove the mods of templates the
+       server used before, which frees their disk space. Maintenance, below it, clears old logs
+       too. Clearing the saved game — which resets
        the world, so take a backup first and only do that when you want a clean slate — is on
        the Saves tab. Changing a
        template's launch parameters no longer needs any of this: the server rebuilds its

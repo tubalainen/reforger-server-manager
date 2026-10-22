@@ -24,6 +24,23 @@ const error = ref('')
 const notice = ref('')
 const busy = ref('')
 const confirming = ref('') // '' | 'update' | 'redownload'
+// What Redownload and bake deletes: 'template' (its mods and their dependencies)
+// or 'all' (every downloaded mod, older templates' leftovers too). Each opening of
+// the dialog starts at the narrower choice.
+const redownloadScope = ref('template')
+watch(confirming, (now) => {
+  if (now === 'redownload') redownloadScope.value = 'template'
+})
+// What remains after the template's own mods: the leftovers of earlier templates.
+const leftovers = computed(() => {
+  const all = info.value?.redownload_all
+  const own = info.value?.redownload
+  if (!all || !own) return null
+  return {
+    folders: Math.max(0, all.folders - own.folders),
+    size_bytes: Math.max(0, all.size_bytes - own.size_bytes),
+  }
+})
 const checkedAt = ref('')
 
 async function load() {
@@ -59,13 +76,18 @@ async function run(kind) {
   error.value = ''
   notice.value = ''
   try {
-    const path = kind === 'update' ? 'update' : 'redownload'
-    const res = await api(`/api/instances/${props.inst.id}/mods/${path}`, { method: 'POST' })
+    const res =
+      kind === 'update'
+        ? await api(`/api/instances/${props.inst.id}/mods/update`, { method: 'POST' })
+        : await api(`/api/instances/${props.inst.id}/mods/redownload`, {
+            method: 'POST',
+            body: { scope: redownloadScope.value },
+          })
     notice.value =
       kind === 'update'
         ? 'Started with the newest mod versions. The server downloads what changed before it comes online.'
         : `Deleted ${res.removed_mods} mod folder(s) (${formatBytes(res.size_bytes)}). ` +
-          'The server is downloading and baking them again — expect a long start.'
+          'The server is downloading and baking its template\'s mods again — expect a long start.'
     emit('update', res)
     await load()
   } catch (e) {
@@ -177,7 +199,8 @@ const STATE_CLASS = {
       <small class="d-block text-secondary mt-2">
         <strong>Force update</strong> restarts the server with the newest version of each mod
         and downloads only what changed. <strong>Redownload and bake</strong> deletes this
-        template's mods and downloads them all again: use it when a download is broken.
+        template's mods, or every downloaded mod, and downloads the template's again: use it
+        when a download is broken or old templates' mods take up space.
       </small>
     </div>
 
@@ -206,16 +229,52 @@ const STATE_CLASS = {
             <template v-else>
               <h2 class="h6">Redownload and bake the mods of "{{ inst.name }}"?</h2>
               <p class="small mb-2">
-                <template v-if="running">The server stops. </template>Its template's mods and what
-                they depend on are deleted<template v-if="info?.redownload">
-                  ({{ info.redownload.folders }} folder(s), {{ formatBytes(info.redownload.size_bytes) }})</template>,
-                then it starts and downloads them all again. The first start takes a long time.
+                <template v-if="running">The server stops, </template><template v-else>The </template>
+                chosen mods are deleted, then the server starts and downloads its template's mods
+                again. The first start takes a long time.
               </p>
+              <div class="form-check mb-2">
+                <input
+                  id="redownload-template"
+                  v-model="redownloadScope"
+                  class="form-check-input"
+                  type="radio"
+                  value="template"
+                />
+                <label class="form-check-label small" for="redownload-template">
+                  <strong>Redownload this template's mods</strong>
+                  <template v-if="info?.redownload">
+                    — {{ info.redownload.folders }} folder(s), {{ formatBytes(info.redownload.size_bytes) }}
+                  </template>
+                  <span class="d-block text-secondary">
+                    The template's mods and what they depend on. Mods from templates this server
+                    used before stay on disk.
+                  </span>
+                </label>
+              </div>
+              <div class="form-check mb-2">
+                <input
+                  id="redownload-all"
+                  v-model="redownloadScope"
+                  class="form-check-input"
+                  type="radio"
+                  value="all"
+                />
+                <label class="form-check-label small" for="redownload-all">
+                  <strong>Delete all mods, then redownload</strong>
+                  <template v-if="info?.redownload_all">
+                    — {{ info.redownload_all.folders }} folder(s), {{ formatBytes(info.redownload_all.size_bytes) }}
+                  </template>
+                  <span class="d-block text-secondary">
+                    Every mod this server has downloaded<template v-if="leftovers?.folders">,
+                      including {{ leftovers.folders }} folder(s) ({{ formatBytes(leftovers.size_bytes) }})
+                      left over from templates it used before</template>. Only the template's
+                    mods come back.
+                  </span>
+                </label>
+              </div>
               <p v-if="running" class="small mb-2">{{ playersLine }}</p>
-              <p class="small text-secondary mb-0">
-                Mods from templates this server used before are left alone; clear those under
-                Maintenance. Saved games are not touched.
-              </p>
+              <p class="small text-secondary mb-0">Saved games are not touched.</p>
             </template>
           </div>
           <div class="modal-footer">
@@ -228,7 +287,7 @@ const STATE_CLASS = {
               {{ running ? 'Restart and update' : 'Start and update' }}
             </button>
             <button v-else class="btn btn-danger" @click="run('redownload')">
-              Delete and redownload
+              {{ redownloadScope === 'all' ? 'Delete all mods and redownload' : 'Delete and redownload' }}
             </button>
           </div>
         </div>

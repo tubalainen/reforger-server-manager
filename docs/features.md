@@ -60,7 +60,7 @@ A server's own page keeps every server listed down the left and splits into five
 - Start, stop, restart, and delete a server.
 - Follow live logs and copy useful diagnostic output.
 - Watch a starting server download its mods: a progress bar on the Overview and Console tabs shows how much is on disk out of the total the Workshop gives for the template's mods and their dependencies, with the download speed. When the download stops growing, it says the server is loading the world.
-- Control when mods change: every start keeps the mod versions already downloaded, and with **Update mods on the daily restart** the scheduled restart moves them to the newest Workshop release. Under Settings › Mods each of the template's mods shows the version on the server against the Workshop's, with **Force update** (restart now with the newest versions) and **Redownload and bake** (delete the template's mods and download them again).
+- Control when mods change: every start keeps the mod versions already downloaded, and with **Update mods on the daily restart** the scheduled restart moves them to the newest Workshop release. Under Settings › Mods each of the template's mods shows the version on the server against the Workshop's, with **Force update** (restart now with the newest versions) and **Redownload and bake** (delete the template's mods, or every downloaded mod including older templates' leftovers, and download the template's mods again).
 - View player count, process state, resource use, and server metadata.
 - See who is on: each player's name, time online, platform, IP address (shown on
   request) and identity, Steam and BattlEye ids, with server admins marked.

@@ -184,6 +184,21 @@ def test_mod_updates_toggle(logged_in):  # #246
     assert logged_in.put("/api/instances/999/mod-updates", json={"enabled": True}).status_code == 409
 
 
+def test_redownload_takes_a_scope(logged_in, monkeypatch):  # #246
+    from services import instance_service
+    asked = []
+    monkeypatch.setattr(instance_service, "redownload_mods",
+                        lambda iid, scope="template": asked.append(scope) or {"scope": scope})
+    tid = _template(logged_in)
+    iid = logged_in.post("/api/instances", json={"name": "redl", "template_id": tid}).json()["id"]
+    assert logged_in.post(f"/api/instances/{iid}/mods/redownload").status_code == 200
+    assert logged_in.post(f"/api/instances/{iid}/mods/redownload",
+                          json={"scope": "all"}).status_code == 200
+    assert logged_in.post(f"/api/instances/{iid}/mods/redownload",
+                          json={"scope": "everything"}).status_code == 422
+    assert asked == ["template", "all"]
+
+
 def test_schedule_rejects_bad_time(logged_in):
     tid = _template(logged_in)
     iid = logged_in.post("/api/instances", json={"name": "schbad", "template_id": tid}).json()["id"]

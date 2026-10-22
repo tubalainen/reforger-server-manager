@@ -1922,10 +1922,22 @@ def mod_status(instance_id: int) -> dict:
     report = mod_versions.status(cfg, mod_versions.addon_roots(_instance_dir(inst)))
     folders = _template_mod_folders(inst, cfg)
     size, _files = _dir_usage(folders)
+    everything = _target_paths(instance_id, DATA_MODS)
+    all_size, _files = _dir_usage(everything)
     return {**report, "auto_update": inst.mod_auto_update,
             "scheduled": bool(schedule_times(inst)),
-            # what Redownload and bake would delete
-            "redownload": {"folders": len(folders), "size_bytes": size}}
+            # what each choice of Redownload and bake would delete
+            "redownload": {"folders": len(folders), "size_bytes": size},
+            "redownload_all": {"folders": _mod_folder_count(inst), "size_bytes": all_size}}
+
+
+def _mod_folder_count(inst: Instance) -> int:
+    dirs = mod_versions.mod_dirs(mod_versions.addon_roots(_instance_dir(inst)))
+    return sum(len(fs) for fs in dirs.values())
+
+
+REDOWNLOAD_TEMPLATE = "template"
+REDOWNLOAD_ALL = "all"
 
 
 def force_update_mods(instance_id: int) -> None:
@@ -1939,21 +1951,33 @@ def force_update_mods(instance_id: int) -> None:
         start_instance(instance_id, update_mods=True)
 
 
-def redownload_mods(instance_id: int) -> dict:
-    """Stop, delete the template's mods (and what they depend on), start fresh."""
+def redownload_mods(instance_id: int, scope: str = REDOWNLOAD_TEMPLATE) -> dict:
+    """Stop, delete mods, start fresh so they download and bake again.
+
+    `scope` "template": the template's mods and what they depend on. "all":
+    every downloaded mod, the leftovers of earlier templates too, which
+    Maintenance can only clear on a stopped server.
+    """
+    if scope not in (REDOWNLOAD_TEMPLATE, REDOWNLOAD_ALL):
+        raise InstanceError(f"Unknown redownload scope '{scope}'")
     if not docker_service.ping():
         raise InstanceError("Docker daemon is not reachable")
     inst, cfg = _rendered_template_config(instance_id)
     idir = _instance_dir(inst)
-    folders = _template_mod_folders(inst, cfg)
-    size, files = _dir_usage(folders)
+    if scope == REDOWNLOAD_ALL:
+        victims = _target_paths(instance_id, DATA_MODS)
+        count = _mod_folder_count(inst)
+    else:
+        victims = _template_mod_folders(inst, cfg)
+        count = len(victims)
+    size, files = _dir_usage(victims)
     if container_status(instance_id) == "running":
         stop_instance(instance_id)
-    _remove_in_container(instance_id, idir, folders)
-    logger.info("Deleted %d mod folder(s) of instance %s for a fresh download",
-                len(folders), inst.name)
+    _remove_in_container(instance_id, idir, victims)
+    logger.info("Deleted %d mod folder(s) of instance %s (%s) for a fresh download",
+                count, inst.name, "every mod" if scope == REDOWNLOAD_ALL else "its template's")
     start_instance(instance_id, update_mods=True)
-    return {"removed_mods": len(folders), "size_bytes": size, "files": files}
+    return {"removed_mods": count, "size_bytes": size, "files": files, "scope": scope}
 
 
 def _due_scheduled_restart(

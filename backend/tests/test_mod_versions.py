@@ -285,6 +285,27 @@ def test_redownload_deletes_only_the_templates_mods_and_their_dependencies(insta
     assert out["removed_mods"] == 3 and out["size_bytes"] > 0
 
 
+def test_redownload_everything_deletes_every_mod_leftovers_too(instance_dir, monkeypatch):
+    _add_instance()
+    _with_template(monkeypatch)
+    removed, started = [], []
+    monkeypatch.setattr(instance_service.docker_service, "ping", lambda: True)
+    monkeypatch.setattr(instance_service, "container_status", lambda _id: "exited")
+    monkeypatch.setattr(instance_service, "start_instance",
+                        lambda i, update_mods=False: started.append(update_mods))
+    monkeypatch.setattr(instance_service, "_remove_in_container",
+                        lambda _id, root, victims: removed.extend(
+                            p.relative_to(root).as_posix() for p in victims))
+
+    out = instance_service.redownload_mods(1, instance_service.REDOWNLOAD_ALL)
+
+    assert removed == ["workshop"]  # the whole addons dir, the old template's mod with it
+    assert out["removed_mods"] == 4 and out["scope"] == "all"
+    assert started == [True]
+    with pytest.raises(instance_service.InstanceError, match="Unknown"):
+        instance_service.redownload_mods(1, "../etc")
+
+
 def test_mod_status_reports_the_setting_and_the_schedule(instance_dir, monkeypatch):
     _add_instance(mod_auto_update=True, restart_schedule_json='{"times": ["04:00"]}')
     _with_template(monkeypatch)
@@ -296,6 +317,9 @@ def test_mod_status_reports_the_setting_and_the_schedule(instance_dir, monkeypat
     assert out["updates_available"] == 1
     # A, B and A's dependency, not the leftover from an older template
     assert out["redownload"]["folders"] == 3 and out["redownload"]["size_bytes"] > 300
+    # every mod: the leftover from an older template too
+    assert out["redownload_all"]["folders"] == 4
+    assert out["redownload_all"]["size_bytes"] > out["redownload"]["size_bytes"]
 
 
 def test_set_mod_auto_update_is_stored_and_shown(monkeypatch):
