@@ -57,6 +57,29 @@ def test_installed_versions_come_from_server_data(tmp_path):
     assert mod_versions.installed_versions([root]) == {A: "1.0.12", B: "2.3"}
 
 
+def test_a_byte_order_mark_does_not_hide_the_version(tmp_path):
+    folder = _mod_dir(tmp_path, "Alpha", A, None)
+    (folder / "ServerData.json").write_bytes(
+        "﻿".encode() + json.dumps({"id": A, "revision": {"version": "1.0.12"}}).encode()
+    )
+    assert mod_versions.installed_versions([tmp_path]) == {A: "1.0.12"}
+
+
+def test_a_broken_server_data_falls_back_to_its_text_then_the_manifest_names(tmp_path):
+    text = _mod_dir(tmp_path, "Alpha", A, None)
+    (text / "ServerData.json").write_text('{"id": "x", "revision": {"version": "2.1", }, }')
+    manifest = _mod_dir(tmp_path, "Beta", B, None)
+    (manifest / "data.pak_1.0.12_manifest.json").write_text("{}")
+    assert mod_versions.installed_versions([tmp_path]) == {A: "2.1", B: "1.0.12"}
+
+
+def test_a_downloaded_mod_without_a_readable_version_says_so(tmp_path, monkeypatch):
+    _mod_dir(tmp_path, "Alpha", A, None)  # folder, but nothing names a version
+    monkeypatch.setattr(mod_versions, "latest_versions", lambda ids: {A: "1.0"})
+    out = mod_versions.status(_cfg({"modId": A}, {"modId": B}), [tmp_path])
+    assert [m["state"] for m in out["mods"]] == ["unreadable", "missing"]
+
+
 def test_installed_versions_survive_a_missing_addons_dir(tmp_path):
     assert mod_versions.installed_versions([tmp_path / "nope"]) == {}
 
@@ -132,9 +155,27 @@ def test_status_names_the_state_of_each_mod(tmp_path, monkeypatch):
     out = mod_versions.status(cfg, [root])
 
     states = {m["modId"]: m["state"] for m in out["mods"]}
-    assert states == {A: "behind", B: "current", DEP: "unknown", LOCKED: "locked", OLD: "missing"}
+    assert states == {A: "behind", B: "current", DEP: "unknown", LOCKED: "missing", OLD: "missing"}
     assert out["updates_available"] == 1
+    assert out["all_locked"] is False
     assert out["mods"][0]["name"] == "Alpha"
+
+
+def test_status_says_when_every_mod_is_locked(tmp_path, monkeypatch):
+    root = tmp_path / "addons"
+    _mod_dir(root, "L", LOCKED, "1")
+    monkeypatch.setattr(mod_versions, "latest_versions", lambda ids: {})
+    out = mod_versions.status(_cfg({"modId": LOCKED, "version": "1"}), [root])
+    assert out["mods"][0]["state"] == "locked" and out["mods"][0]["installed"] == "1"
+    assert out["all_locked"] is True
+
+
+def test_mods_directly_in_the_workshop_folder_are_found(tmp_path):
+    # Not the layout seen on a real host (workshop/addons/...), but one the
+    # addons dir setting allows; a version must not go missing because of it.
+    idir = tmp_path / "instances" / "1"
+    _mod_dir(idir / "workshop", "A", A, "1.0")
+    assert mod_versions.installed_versions(mod_versions.addon_roots(idir)) == {A: "1.0"}
 
 
 # --------------------------------------------------------------------------- #

@@ -5,6 +5,7 @@ const STATE_LABELS = {
   current: 'Up to date',
   locked: 'Locked',
   missing: 'Not downloaded',
+  unreadable: 'Downloaded, version unknown',
   unknown: 'Workshop did not answer',
 }
 
@@ -23,6 +24,7 @@ export function modsSummary({ mods = [] }) {
     [count('behind'), 'with an update'],
     [count('locked'), 'locked'],
     [count('missing'), 'not downloaded yet'],
+    [count('unreadable'), 'downloaded with no readable version'],
     [count('unknown'), 'not found on the Workshop'],
   ]
     .filter(([n]) => n)

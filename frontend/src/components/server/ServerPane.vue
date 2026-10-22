@@ -155,16 +155,26 @@ function onDeleted() {
   router.push({ name: 'instances' })
 }
 
-// On a phone the tab row scrolls sideways; keep the open tab in view.
+// On a phone the tab row scrolls sideways; keep the open tab in view. Only the row
+// scrolls: scrollIntoView would also scroll the PAGE back up to the tabs, which
+// yanked a long Settings tab to the top on every poll (#246 follow-up).
 const tabsEl = ref(null)
 function revealActiveTab() {
   nextTick(() => {
-    tabsEl.value?.querySelector('.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    const row = tabsEl.value
+    const tab = row?.querySelector('.active')
+    if (!tab) return
+    const r = row.getBoundingClientRect()
+    const t = tab.getBoundingClientRect()
+    if (t.left < r.left) row.scrollLeft -= r.left - t.left
+    else if (t.right > r.right) row.scrollLeft += t.right - r.right
   })
 }
 watch(() => props.tab, revealActiveTab)
 // The counts on Console and Players arrive after the first paint and widen the row.
-watch(() => [errorCount.value > 0, stats.value?.players != null], revealActiveTab)
+// A string, not an array: a fresh array never equals the last one, so the watcher
+// fired on every poll and every log line.
+watch(() => `${errorCount.value > 0}|${stats.value?.players != null}`, revealActiveTab)
 
 function tabBadge(key) {
   if (key === 'console' && errorCount.value) return { text: errorCount.value, cls: 'text-bg-danger' }
@@ -339,6 +349,7 @@ onUnmounted(() => {
         :connect="connect"
         :address-detected="!!stats?.public_address_detected"
         :players="stats?.players ?? null"
+        :server-state="stats?.server_state || ''"
         @update="(v) => { inst = v; emit('changed') }"
         @changed="loadInstance(); emit('changed')"
         @delete="deleting = true"

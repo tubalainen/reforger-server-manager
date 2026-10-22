@@ -39,15 +39,24 @@ _MOD_DIR_RE = re.compile(r"(?:^|_)([0-9A-F]{16})$", re.IGNORECASE)
 # addon.gproj: `Dependencies { "58D0FB3206B6F859" ... }`
 _GPROJ_DEPS_RE = re.compile(r"Dependencies\s*\{([^}]*)\}", re.IGNORECASE)
 _HEX_ID_RE = re.compile(r"[0-9A-F]{16}", re.IGNORECASE)
+# Fallbacks when ServerData.json does not parse as JSON: its "revision" block
+# read as text, then the version the server put in its manifest file names
+# ("data.pak_1.0.12_manifest.json", seen on a real host).
+_TEXT_VERSION_RE = re.compile(r'"revision"\s*:\s*\{[^{}]*?"version"\s*:\s*"([^"]+)"', re.S)
+_MANIFEST_VERSION_RE = re.compile(r"^data\.pak_(.+)_manifest\.json$")
+# Mod folders already reported as unreadable, so each is logged once.
+_reported_unreadable: set[str] = set()
 
 # Workshop pages fetched at once when looking up the latest releases.
 _LOOKUP_WORKERS = 8
 
 
 def addon_roots(instance_dir: Path) -> list[Path]:
-    """Where a server keeps its downloaded mods: the Workshop folder's addons dir,
-    plus the copy some builds keep inside the profile."""
-    return [instance_dir / "workshop" / "addons", instance_dir / "profile" / "addons"]
+    """Where a server keeps its downloaded mods: the Workshop folder's addons dir
+    (seen on a real host), the Workshop folder itself and the profile's addons
+    dir (where other builds have put them)."""
+    return [instance_dir / "workshop" / "addons", instance_dir / "workshop",
+            instance_dir / "profile" / "addons"]
 
 
 def mod_dirs(roots: list[Path]) -> dict[str, list[Path]]:
@@ -66,13 +75,35 @@ def mod_dirs(roots: list[Path]) -> dict[str, list[Path]]:
 
 
 def _server_data_version(folder: Path) -> str | None:
+    """The version a mod folder holds, or None if nothing in it says.
+
+    utf-8-sig: a file written with a byte-order mark is still JSON to the
+    server, but json.loads refuses it, which left every version unread.
+    """
     try:
-        data = json.loads((folder / "ServerData.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
+        text = (folder / "ServerData.json").read_bytes().decode("utf-8-sig", errors="replace")
+    except OSError:
+        text = ""
+    try:
+        data = json.loads(text) if text else None
+    except ValueError:
+        data = None
     revision = data.get("revision") if isinstance(data, dict) else None
     version = revision.get("version") if isinstance(revision, dict) else None
-    return version if isinstance(version, str) and version else None
+    if isinstance(version, str) and version:
+        return version
+    m = _TEXT_VERSION_RE.search(text)
+    if m:
+        return m.group(1)
+    try:
+        names = [p.name for p in folder.iterdir()]
+    except OSError:
+        return None
+    for name in names:
+        m = _MANIFEST_VERSION_RE.match(name)
+        if m:
+            return m.group(1)
+    return None
 
 
 def installed_versions(roots: list[Path]) -> dict[str, str]:
@@ -84,6 +115,10 @@ def installed_versions(roots: list[Path]) -> dict[str, str]:
             if version:
                 out[mid] = version
                 break
+        else:
+            if str(folders[0]) not in _reported_unreadable:
+                _reported_unreadable.add(str(folders[0]))
+                logger.warning("No version readable in mod folder %s", folders[0])
     return out
 
 
@@ -210,10 +245,13 @@ def summarise(report: dict) -> str:
 def status(cfg: dict, roots: list[Path], names: dict[str, str] | None = None) -> dict:
     """The template's mods with the version on disk and the Workshop's latest.
 
-    `state` per mod: locked (the template fixes a version), current, behind,
-    missing (not downloaded yet), unknown (the Workshop gave no answer).
+    `state` per mod: missing (not downloaded yet), unreadable (downloaded, but
+    no version could be read from its folder), locked (the template fixes a
+    version), current, behind, unknown (the Workshop gave no answer). A locked
+    mod that is not on disk is "missing": the lock is still in `locked`.
     """
     installed = installed_versions(roots)
+    on_disk = set(mod_dirs(roots))
     entries = []
     for m in config_mods(cfg):
         mid = normalize_asset_id(str(m.get("modId") or ""))
@@ -225,10 +263,10 @@ def status(cfg: dict, roots: list[Path], names: dict[str, str] | None = None) ->
     for e in entries:
         e["installed"] = installed.get(e["modId"])
         e["latest"] = latest.get(e["modId"])
-        if e["locked"]:
+        if not e["installed"]:
+            e["state"] = "unreadable" if e["modId"] in on_disk else "missing"
+        elif e["locked"]:
             e["state"] = "locked"
-        elif not e["installed"]:
-            e["state"] = "missing"
         elif not e["latest"]:
             e["state"] = "unknown"
         elif e["installed"] != e["latest"]:
@@ -236,4 +274,6 @@ def status(cfg: dict, roots: list[Path], names: dict[str, str] | None = None) ->
             behind += 1
         else:
             e["state"] = "current"
-    return {"mods": entries, "updates_available": behind}
+    return {"mods": entries, "updates_available": behind,
+            # Nothing for an update to move: every mod is locked in the template.
+            "all_locked": bool(entries) and all(e["locked"] for e in entries)}

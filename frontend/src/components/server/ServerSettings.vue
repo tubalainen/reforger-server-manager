@@ -28,10 +28,13 @@ const props = defineProps({
   addressDetected: { type: Boolean, default: false },
   // players online now, for the mod-update confirmations (#246)
   players: { type: Number, default: null },
+  serverState: { type: String, default: '' },
 })
 const emit = defineEmits(['update', 'changed', 'delete'])
 
 const running = computed(() => props.inst.status === 'running')
+// the Mods card re-reads the disk after Maintenance clears it (#246)
+const modsCard = ref(null)
 const fmtBytes = formatBytes
 
 // --- The form ------------------------------------------------------------------
@@ -477,8 +480,10 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
 
     <!-- Acts at once, so outside the form -->
     <ServerMods
+      ref="modsCard"
       :inst="inst"
       :players="players"
+      :server-state="serverState"
       @update="(v) => emit('update', v)"
     />
 
@@ -488,7 +493,7 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
       :targets="['mods', 'logs']"
       :server-name="inst.name"
       title="Maintenance"
-      @changed="emit('changed')"
+      @changed="modsCard?.load(); emit('changed')"
     />
 
     <div class="card border-danger-subtle">
