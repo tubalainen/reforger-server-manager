@@ -4,6 +4,7 @@ import {
   adoptEditedMods,
   applyModTemplate,
   clearScenarioMods,
+  dependencyOrder,
   dependencyViolations,
   extractModId,
   extractModIds,
@@ -21,7 +22,6 @@ import {
   sortModsByAdded,
   sortModsByName,
   stillRequiredWithoutExplicit,
-  topoOrder,
   workshopUrl,
 } from '../mods'
 
@@ -194,8 +194,8 @@ describe('loading a stored list (#197)', () => {
   it('normalizing a saved list keeps its order, dependencies above picks and all', () => {
     // The wizard used to re-sort here (picks first, dependencies after), which
     // silently undid "Fix order", a drag or an AI order on the next open.
-    const saved = topoOrder(graph())
-    expect(saved.map((m) => m.modId)).toEqual(['C', 'B', 'D', 'A']) // deps above picks
+    const saved = dependencyOrder(graph())
+    expect(saved.map((m) => m.modId)).toEqual(['C', 'B', 'A', 'D']) // deps above picks
     expect(normalizeMods(saved).map((m) => m.modId)).toEqual(saved.map((m) => m.modId))
     expect(dependencyViolations(normalizeMods(saved))).toEqual([])
   })
@@ -327,7 +327,7 @@ describe('moveMod / reorderMods', () => {
   })
 })
 
-describe('dependencyViolations / topoOrder', () => {
+describe('dependencyViolations / dependencyOrder', () => {
   // A needs B, B needs C, D needs C.
   const chain = () => [
     mod('A', { explicit: true, dependencies: ['B'] }),
@@ -348,29 +348,78 @@ describe('dependencyViolations / topoOrder', () => {
     expect(dependencyViolations([mod('A', { dependencies: ['GONE'] })])).toEqual([])
   })
 
-  it('topoOrder puts every mod after what it requires', () => {
-    const sorted = topoOrder(chain())
+  it('puts every mod after what it requires', () => {
+    const sorted = dependencyOrder(chain())
     expect(dependencyViolations(sorted)).toEqual([])
-    expect(sorted.map((m) => m.modId)).toEqual(['C', 'B', 'D', 'A'])
+    expect(sorted.map((m) => m.modId)).toEqual(['C', 'B', 'A', 'D'])
   })
 
-  it('topoOrder leaves an order that is already correct exactly as it is', () => {
-    const already = topoOrder(chain())
-    expect(topoOrder(already).map((m) => m.modId)).toEqual(already.map((m) => m.modId))
+  // The shape of a big scenario (IslaMalvinasPVE: 86 mods): the scenario's mod
+  // lists every mod it uses, in whatever order its author typed them.
+  const scenario = () => [
+    mod('S', {
+      name: 'Islands PVE',
+      explicit: true,
+      from_scenario: true,
+      dependencies: ['RIFLE', 'WCS', 'HELI', 'CORE', 'SPACE', 'FRSA', 'FRS', 'MAP'],
+    }),
+    mod('RIFLE', { name: 'ARMA-RY M14', dependencies: ['CORE'] }),
+    mod('WCS', { name: 'WCS_Armaments' }),
+    mod('HELI', { name: 'H-47 Chinook', dependencies: ['WCS', 'SPACE'] }),
+    mod('CORE', { name: 'ARMA-RY CORE' }),
+    mod('SPACE', { name: 'WCS_SpaceCore', dependencies: ['WCS'] }),
+    mod('FRSA', { name: 'FRS_A_Heavy', dependencies: ['FRS'] }),
+    mod('FRS', { name: 'FRS_Core' }),
+    mod('MAP', { name: 'Islands terrain', provides_scenarios: true }),
+  ]
+
+  it("ignores the incoming order: the author's shuffle never decides anything", () => {
+    const once = dependencyOrder(scenario()).map((m) => m.modId)
+    const reversed = dependencyOrder([...scenario()].reverse()).map((m) => m.modId)
+    const rotated = dependencyOrder([...scenario().slice(4), ...scenario().slice(0, 4)])
+    expect(reversed).toEqual(once)
+    expect(rotated.map((m) => m.modId)).toEqual(once)
   })
 
-  it('topoOrder is stable: unrelated mods keep their relative order', () => {
-    const mods = [mod('X'), mod('Y'), mod('Z')]
-    expect(topoOrder(mods).map((m) => m.modId)).toEqual(['X', 'Y', 'Z'])
+  it('lists frameworks first (most-required first), then the rest by name, scenario last', () => {
+    expect(dependencyOrder(scenario()).map((m) => m.name)).toEqual([
+      'WCS_Armaments', // needed by H-47 and WCS_SpaceCore
+      'ARMA-RY CORE',
+      'FRS_Core',
+      'WCS_SpaceCore', // needed by H-47 only, so after the bigger frameworks
+      'ARMA-RY M14', // ...and from here on nothing else needs them: A–Z,
+      'FRS_A_Heavy', // so a family sits together
+      'H-47 Chinook',
+      'Islands terrain', // publishing a scenario of its own doesn't send it last
+      'Islands PVE', // the server's own scenario
+    ])
+    expect(dependencyViolations(dependencyOrder(scenario()))).toEqual([])
   })
 
-  it('topoOrder returns the whole list even when the graph has a cycle', () => {
+  it('sorts mods that are already correctly placed too', () => {
+    // Valid as it stands, but not ordered: B and A swap to name order.
+    const valid = [mod('Z', { name: 'core' }), mod('B', { name: 'bravo' }), mod('A', { name: 'alpha' })]
+    expect(dependencyViolations(valid)).toEqual([])
+    expect(dependencyOrder(valid).map((m) => m.name)).toEqual(['alpha', 'bravo', 'core'])
+  })
+
+  it('keeps the scenario last even when it lists none of its mods', () => {
+    const mods = [mod('S', { name: 'aaa', from_scenario: true }), mod('X', { name: 'zzz' })]
+    expect(dependencyOrder(mods).map((m) => m.modId)).toEqual(['X', 'S'])
+  })
+
+  it('returns the whole list even when the graph has a cycle', () => {
     const cyclic = [
       mod('A', { dependencies: ['B'] }),
       mod('B', { dependencies: ['A'] }),
       mod('C'),
     ]
-    expect(topoOrder(cyclic).map((m) => m.modId).sort()).toEqual(['A', 'B', 'C'])
+    expect(dependencyOrder(cyclic).map((m) => m.modId).sort()).toEqual(['A', 'B', 'C'])
+  })
+
+  it('copes with a mod that names itself or a mod that is not in the list', () => {
+    const odd = [mod('A', { dependencies: ['A', 'GONE'] }), mod('B', { dependencies: ['A'] })]
+    expect(dependencyOrder(odd).map((m) => m.modId)).toEqual(['A', 'B'])
   })
 })
 

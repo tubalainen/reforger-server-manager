@@ -30,11 +30,11 @@ import {
   orderedMods,
   sortModsByAdded,
   sortModsByName,
+  dependencyOrder,
   dependencyViolations,
   moveMod,
   movedMods,
   reorderMods,
-  topoOrder,
 } from '../mods'
 import {
   ADMIN_LIMIT,
@@ -951,15 +951,33 @@ function sortByAdded() {
   modNotice.value = 'Mods sorted in the order they were added.'
 }
 
-// Deterministic and offline: every mod after what it requires, everything else
-// left where it is (#164).
+// Deterministic and offline: every mod after what it requires, frameworks first,
+// the rest by name — whatever order the list arrived in (#164, dependencyOrder).
+// That can rearrange a hand-made order, so the notice carries an Undo for as
+// long as nothing else has changed the list.
+const orderUndo = ref(null)
+
 function sortByDependencies() {
   const before = spec.mods
-  spec.mods = topoOrder(spec.mods)
+  spec.mods = dependencyOrder(spec.mods)
   const moved = movedMods(before, spec.mods).length
   modNotice.value = moved
-    ? `Moved ${moved} mod(s) so each one is listed after what it requires.`
-    : 'Every mod was already listed after what it requires — nothing moved.'
+    ? `Sorted ${moved} mod(s): frameworks first, every mod after what it requires, the rest by name.`
+    : 'The mods were already in this order — nothing moved.'
+  orderUndo.value = moved ? { before, after: spec.mods, notice: modNotice.value } : null
+}
+
+// Nothing edits spec.mods in place (every change assigns a new array), so the
+// same array means the list is still the one the sort produced.
+const canUndoOrder = computed(
+  () => !!orderUndo.value && orderUndo.value.after === spec.mods && orderUndo.value.notice === modNotice.value,
+)
+
+function undoOrder() {
+  if (!canUndoOrder.value) return
+  spec.mods = orderUndo.value.before
+  orderUndo.value = null
+  modNotice.value = 'Order put back as it was.'
 }
 
 function moveOne(id, dir) {
@@ -1770,7 +1788,10 @@ onBeforeUnmount(() => {
             <span class="spinner-border spinner-border-sm me-1"></span>Adding mod…
           </div>
           <div v-if="modAdd.error" class="alert alert-info py-2 small mb-2">{{ modAdd.error }}</div>
-          <div v-if="modNotice" class="alert alert-secondary py-2 small mb-2">{{ modNotice }}</div>
+          <div v-if="modNotice" class="alert alert-secondary py-2 small mb-2">
+            {{ modNotice }}
+            <button v-if="canUndoOrder" type="button" class="btn btn-link btn-sm p-0 ms-1 align-baseline" @click="undoOrder">Undo</button>
+          </div>
 
           <!-- Enabled mods: a heading and two menus, instead of seven buttons (#189) -->
           <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-3 mb-2">
@@ -1792,7 +1813,7 @@ onBeforeUnmount(() => {
                   <button
                     class="dropdown-item"
                     :disabled="spec.mods.length < 2"
-                    title="Reorder so every mod is listed after the mods it requires, leaving everything else where it is"
+                    title="Reorder the whole list: every mod after the mods it requires, frameworks first, the rest by name"
                     @click="sortByDependencies"
                   >Dependencies first</button>
                 </li>

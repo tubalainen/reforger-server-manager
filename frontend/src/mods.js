@@ -259,30 +259,53 @@ export function dependencyViolations(mods) {
   return out
 }
 
-// Stable topological order: every mod after the mods it requires, and otherwise
-// as close to the current order as that allows. A dependency cycle cannot be
-// resolved, so the mods in it keep their current relative order rather than
-// being dropped — the list must always come back whole.
-export function topoOrder(mods) {
-  const index = new Map(mods.map((m, i) => [m.modId, i]))
-  const remaining = new Set(mods.map((m) => m.modId))
+// "Fix order": every mod after the mods it requires, and every other choice made
+// from the dependency graph alone. The list's current order is NOT a tie-break —
+// a scenario arrives in whatever order its author listed 80-odd mods, and a
+// "keep it close to that" sort kept that randomness and split mod families
+// apart (a framework at #9, the core built on it at #48). So the same mods
+// always come back in the same order:
+//   1. the scenario's own mod last;
+//   2. mods that others build on first, the most-required first (frameworks
+//      and cores ahead of what uses them);
+//   3. then by name, so families ("ARMA-RY …", "FRS_…") end up side by side.
+// A dependency cycle cannot be satisfied: the best-ranked mod still left goes
+// first and the list always comes back whole.
+export function dependencyOrder(mods) {
+  const byId = new Map(mods.map((m) => [m.modId, m]))
+  const depsOf = (m) => m.dependencies.filter((d) => d !== m.modId && byId.has(d))
+
+  // How many mods in the list need each mod, directly or through others. The
+  // scenario's mod doesn't count: it typically lists every mod it uses, which
+  // would make everything "required" once.
+  const requiredBy = new Map(mods.map((m) => [m.modId, new Set()]))
+  for (const m of mods) {
+    if (m.from_scenario) continue
+    const stack = depsOf(m)
+    while (stack.length) {
+      const id = stack.pop()
+      const users = requiredBy.get(id)
+      if (users.has(m.modId)) continue
+      users.add(m.modId)
+      stack.push(...depsOf(byId.get(id)))
+    }
+  }
+  const label = (m) => m.name || m.modId
+  const rank = (a, b) =>
+    (a.from_scenario - b.from_scenario) ||
+    (requiredBy.get(b.modId).size - requiredBy.get(a.modId).size) ||
+    label(a).localeCompare(label(b), undefined, { sensitivity: 'base', numeric: true }) ||
+    a.modId.localeCompare(b.modId)
+
   const placed = new Set()
   const out = []
-  while (remaining.size) {
-    // Ready = everything whose dependencies are already placed, taken in the
-    // list's current order so an unforced choice never shuffles anything.
-    const ready = mods.filter(
-      (m) =>
-        remaining.has(m.modId) &&
-        m.dependencies.every((d) => !index.has(d) || placed.has(d)),
-    )
-    // Nothing ready means a cycle: break it on the earliest mod still left.
-    const batch = ready.length ? ready : [mods.find((m) => remaining.has(m.modId))]
-    for (const m of batch) {
-      out.push(m)
-      placed.add(m.modId)
-      remaining.delete(m.modId)
-    }
+  while (out.length < mods.length) {
+    const left = mods.filter((m) => !placed.has(m.modId))
+    const ready = left.filter((m) => depsOf(m).every((d) => placed.has(d)))
+    // Nothing ready means a cycle: break it on the best-ranked mod left.
+    const next = (ready.length ? ready : left).sort(rank)[0]
+    placed.add(next.modId)
+    out.push(next)
   }
   return out
 }

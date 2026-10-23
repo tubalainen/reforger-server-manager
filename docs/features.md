@@ -23,7 +23,7 @@ Key template capabilities include:
   every server shares, re-rollable in the wizard; the template is named after it until
   you type a template name of your own.
 - Search the Workshop, fetch metadata, resolve dependencies, and preserve dependency order.
-- Drag mods into a load order, and let **Fix order** list every mod after the mods it requires.
+- Drag mods into a load order, and let **Fix order** sort the whole list from the dependencies: frameworks first, every mod after the mods it requires, the rest by name, the scenario last (with Undo).
 - See the order the engine actually loaded a server's mods in at its last start, read from its own log, next to the order of its `config.json` (Settings › Mods › Load order the engine used).
 - With an AI service set up and answering (a local Ollama on your own GPU or any
   OpenAI-compatible service), ask it what an error in a server's Console or log files
