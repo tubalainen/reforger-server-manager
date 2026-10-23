@@ -518,7 +518,8 @@ const faq = [
             to <code>config.json</code> — and you can drag any row to change it. The
             <em>Sort</em> menu orders them by name, by when you added them, or by their
             dependencies (<em>Dependencies first</em>, also offered as <em>Fix order</em>
-            whenever a mod is listed too early): every mod after what it requires,
+            above the list whenever it isn't in that order — in yellow when a mod is listed
+            too early, in grey when it is only unsorted): every mod after what it requires,
             frameworks first, the rest by name, the scenario last — whatever order the
             list was in before. <em>From a mod list…</em>, beside the search box, adds every
             mod of a saved mod list at once (see <a href="#mod-templates">Mod lists</a>). The

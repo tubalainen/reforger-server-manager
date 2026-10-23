@@ -672,6 +672,15 @@ const depOrderWarnings = computed(() => dependencyViolations(spec.mods))
 // dependencies is one mod to move, not two (#197).
 const depOrderModCount = computed(() => new Set(depOrderWarnings.value.map((v) => v.mod)).size)
 
+// A list can break no dependency and still not be in Fix order's order — the
+// author's shuffle, or an older Fix order that kept it (v0.87.0 and before).
+// Fix order is offered then too, quietly: nothing is wrong, it is only tidier.
+const depOrderUnsorted = computed(() => {
+  if (spec.mods.length < 2 || depOrderWarnings.value.length) return false
+  const sorted = dependencyOrder(spec.mods)
+  return sorted.some((m, i) => m.modId !== spec.mods[i].modId)
+})
+
 // Is `m` required (transitively) by the mod backing the selected scenario?
 function requiredByScenario(m) {
   return requiredBy(spec.mods, m.modId).some((r) => r.from_scenario)
@@ -1882,6 +1891,16 @@ onBeforeUnmount(() => {
               {{ depOrderModCount }} mod(s) are listed before something they require.
             </span>
             <button class="btn btn-sm btn-warning py-0" @click="sortByDependencies">Fix order</button>
+          </div>
+          <div
+            v-else-if="depOrderUnsorted"
+            class="alert alert-secondary d-flex flex-wrap align-items-center gap-2 py-1 px-2 small mb-2"
+          >
+            <span class="me-auto">
+              Every mod is after what it requires, but the list isn't sorted: frameworks
+              first, the rest by name, the scenario last.
+            </span>
+            <button class="btn btn-sm btn-outline-secondary py-0" @click="sortByDependencies">Fix order</button>
           </div>
           <ul v-if="spec.mods.length" class="list-group mb-2">
             <li
