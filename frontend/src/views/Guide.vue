@@ -164,7 +164,10 @@ const faq = [
     q: 'Does the order of the mods matter?',
     a: `The list on the Mods step is written to config.json in exactly the order you see:
        drag a row, use its ↑ ↓, or pick Sort › Dependencies first (or the yellow Fix order
-       button) to put every mod after the mods it requires. What the engine then does with
+       button). That sort rebuilds the whole list from the dependencies alone, never from
+       the order a scenario's author listed the mods in: every mod after the mods it
+       requires, the frameworks other mods build on first, the rest by name, and the
+       scenario last. Undo, in the note it leaves, puts the previous order back. What the engine then does with
        that order is shown on each server's Settings tab, under Mods › Load order the engine
        used: read from the server's own log at its last start. In the logs checked so far
        the engine mounted the list in reverse and moved each mod ahead of the mods it
@@ -513,10 +516,11 @@ const faq = [
             again when nothing needs them. Mods follow the latest Workshop release unless
             you lock a version. The list is in load order — the order the mods are written
             to <code>config.json</code> — and you can drag any row to change it. The
-            <em>Sort</em> menu orders them by name, by when you added them, puts every mod
-            after what it requires (<em>Dependencies first</em>, also offered as
-            <em>Fix order</em> whenever a mod is listed too early), or asks an AI for an
-            order (see below). <em>From a mod list…</em>, beside the search box, adds every
+            <em>Sort</em> menu orders them by name, by when you added them, or by their
+            dependencies (<em>Dependencies first</em>, also offered as <em>Fix order</em>
+            whenever a mod is listed too early): every mod after what it requires,
+            frameworks first, the rest by name, the scenario last — whatever order the
+            list was in before. <em>From a mod list…</em>, beside the search box, adds every
             mod of a saved mod list at once (see <a href="#mod-templates">Mod lists</a>). The
             <em>⋯</em> menu unlocks every version and exports/imports the list as JSON to
             share between templates or friends. Badges show each mod's role:
