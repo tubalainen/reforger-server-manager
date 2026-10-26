@@ -1,0 +1,235 @@
+name: Security scan
+
+# Known vulnerabilities (CVEs, GitHub advisories) in everything this project
+# ships or runs, and unsafe patterns in its own GitHub Actions workflows.
+#
+# A new advisory turns up with no change on our side, so this runs every day
+# rather than only on pushes. A scheduled run that finds something opens (or
+# updates) one issue labelled `security-scan`, and closes it again on the first
+# clean run. Pull requests that touch dependencies or workflows get the same
+# checks, without the issue.
+#
+# Every action here is pinned to a commit (the comment names its version): a
+# security check is the last place to run whatever a moved tag points at.
+on:
+  schedule:
+    - cron: "17 5 * * *"  # daily, 05:17 UTC
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - "backend/requirements*.txt"
+      - "frontend/package.json"
+      - "frontend/package-lock.json"
+      - "Dockerfile"
+
+permissions:
+  contents: read
+
+jobs:
+  python-packages:
+    name: Python packages (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      # The requirements are compatible-release pins (~=), so pip-audit resolves
+      # them the way an image build would today, not as the last release did.
+      - name: Audit the backend's requirements
+        run: |
+          pip install --quiet pip-audit==2.10.1
+          set +e
+          pip-audit -r backend/requirements.txt -r backend/requirements-dev.txt \
+            --desc --format markdown --output pip-audit.md
+          rc=$?
+          set -e
+          # A clean audit writes no output file at all.
+          {
+            echo "### Python packages"
+            if [ "$rc" = 0 ]; then echo "No known vulnerabilities."; else cat pip-audit.md; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$rc" != 0 ]; then cat pip-audit.md; fi
+          exit "$rc"
+
+  npm-packages:
+    name: Frontend packages (npm audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      # Reads package-lock.json, so nothing is installed. Dev packages count too:
+      # they run in CI and on every developer's machine with the repo's code.
+      - name: Audit the frontend's packages (fails on high or critical)
+        working-directory: frontend
+        run: |
+          set +e
+          npm audit --audit-level=high > npm-audit.txt
+          rc=$?
+          set -e
+          {
+            echo "### Frontend packages"
+            echo '```'
+            cat npm-audit.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat npm-audit.txt
+          exit "$rc"
+
+  workflows:
+    name: GitHub Actions workflows (zizmor)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      # With a token zizmor also runs its online audits: actions with a known
+      # advisory, commits that are not on the action's repository, and pins whose
+      # version comment does not match the commit.
+      - name: Audit the workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pip install --quiet zizmor==1.31.1
+          set +e
+          zizmor --min-severity low --format plain --color never --no-progress \
+            .github/workflows > zizmor.txt 2>&1
+          rc=$?
+          set -e
+          {
+            echo "### GitHub Actions workflows"
+            echo '```'
+            cat zizmor.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat zizmor.txt
+          exit "$rc"
+
+  container-images:
+    name: Image - ${{ matrix.name }} (grype)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Ours: fails on a high or critical CVE that has a fix. The build shows
+          # what a release cut today would ship; the published image is what
+          # users run, and falls behind as its base image gets fixes.
+          - name: manager, built from this commit
+            image: build
+            gate: true
+          - name: manager, published latest
+            image: registry:ghcr.io/tubalainen/reforger-server-manager:latest
+            gate: true
+          # Third-party images the stack runs: reported, never failed — the fix
+          # is upstream's, or a pin in the user's .env.
+          - name: Caddy
+            image: registry:docker.io/library/caddy:2-alpine
+            gate: false
+          - name: SteamCMD
+            image: registry:docker.io/steamcmd/steamcmd:latest
+            gate: false
+          - name: Arma Reforger server
+            image: registry:ghcr.io/acemod/arma-reforger:latest
+            gate: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: matrix.image == 'build'
+        with:
+          persist-credentials: false
+
+      - name: Build the manager image
+        if: matrix.image == 'build'
+        run: docker build -t rsm-scan:local .
+
+      - uses: anchore/scan-action/download-grype@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        id: grype
+        with:
+          grype-version: v0.121.0
+
+      - name: Scan
+        env:
+          GRYPE: ${{ steps.grype.outputs.cmd }}
+          IMAGE: ${{ matrix.image }}
+          NAME: ${{ matrix.name }}
+          GATE: ${{ matrix.gate }}
+        run: |
+          if [ "$IMAGE" = build ]; then IMAGE=docker:rsm-scan:local; fi
+          # Only what has a fix: an unfixed Debian or Alpine CVE is nothing
+          # anyone here can act on, and would bury the ones we can.
+          args="--only-fixed -o table"
+          if [ "$GATE" = true ]; then args="$args --fail-on high"; fi
+          set +e
+          # shellcheck disable=SC2086  # $args is a list of flags
+          "$GRYPE" "$IMAGE" $args > grype.txt
+          rc=$?
+          set -e
+          {
+            echo "### $NAME"
+            echo "\`$IMAGE\` — vulnerabilities with a fix available"
+            echo '```'
+            cat grype.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat grype.txt
+          exit "$rc"
+
+  report:
+    needs: [python-packages, npm-packages, workflows, container-images]
+    if: always() && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open, update or close the security-scan issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULTS: ${{ toJSON(needs) }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -eu
+          repo="$GITHUB_REPOSITORY"
+          failed=$(echo "$RESULTS" | jq -r 'to_entries[] | select(.value.result != "success") | "- `\(.key)`: \(.value.result)"')
+          gh label create security-scan --repo "$repo" --color B60205 \
+            --description "Opened by the daily security scan" --force
+          issue=$(gh issue list --repo "$repo" --label security-scan --state open \
+            --json number --jq '.[0].number // empty')
+
+          if [ -z "$failed" ]; then
+            if [ -n "$issue" ]; then
+              gh issue close "$issue" --repo "$repo" --comment "The scan in $RUN_URL found nothing: closing."
+            fi
+            echo "Nothing found."
+            exit 0
+          fi
+
+          body=$(printf 'The daily security scan found problems in:\n\n%s\n\nDetails, per check, in the run summary: %s\n\nThis issue is updated by each scan and closed by the first clean one.\n' "$failed" "$RUN_URL")
+          if [ -z "$issue" ]; then
+            gh issue create --repo "$repo" --title "Security scan found problems" \
+              --label security-scan --body "$body"
+            exit 0
+          fi
+          # The same checks failing again only refreshes the run link; a change
+          # in which ones fail is worth a comment, and with it a notification.
+          before=$(gh issue view "$issue" --repo "$repo" --json body --jq .body | grep '^- `' || true)
+          gh issue edit "$issue" --repo "$repo" --body "$body"
+          if [ "$before" != "$failed" ]; then
+            gh issue comment "$issue" --repo "$repo" --body "$(printf 'What fails has changed:\n\n%s\n\n%s\n' "$failed" "$RUN_URL")"
+          fi
