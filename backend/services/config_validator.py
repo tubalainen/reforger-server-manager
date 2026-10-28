@@ -56,6 +56,7 @@ FIELD_PATHS = {
     "hive_id": "game.gameProperties.persistence.hiveId",
     "lobby_player_synchronise": "operating.lobbyPlayerSynchronise",
     "disable_navmesh_streaming": "operating.disableNavmeshStreaming",
+    "navmesh_streaming_names": "operating.disableNavmeshStreaming",
     "disable_server_shutdown": "operating.disableServerShutdown",
     "disable_crash_reporter": "operating.disableCrashReporter",
     "disable_ai": "operating.disableAI",
@@ -66,6 +67,8 @@ FIELD_PATHS = {
     "rcon_password": "rcon.password",
     "rcon_permission": "rcon.permission",
     "rcon_max_clients": "rcon.maxClients",
+    "rcon_blacklist": "rcon.blacklist",
+    "rcon_whitelist": "rcon.whitelist",
 }
 
 _UNKNOWN_KEY_MESSAGE = (

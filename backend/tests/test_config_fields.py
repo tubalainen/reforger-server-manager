@@ -3,7 +3,7 @@ from services.config_validator import FIELD_PATHS
 from services.template_service import TemplateSpec
 
 # Settings that reach config.json but are edited somewhere other than the field
-# catalog: their own wizard steps or cards, or (supported_platforms) not yet.
+# catalog: their own wizard steps or cards, or derived from another setting.
 _ELSEWHERE = {
     "scenario_id",          # Scenario step
     "mods",                 # Mods step
@@ -14,7 +14,7 @@ _ELSEWHERE = {
     "player_whitelist",
     "player_ban_list",
     "mission_header",       # Mission header card
-    "supported_platforms",  # no control yet
+    "supported_platforms",  # follows cross_platform (model validator)
 }
 
 

@@ -40,7 +40,23 @@ export function elsewhereMatches(catalog, query) {
 // an empty default are the same thing.
 export function isChanged(field, value) {
   if (field.kind === 'text') return (value ?? '') !== (field.default ?? '')
+  if (field.kind === 'list') return JSON.stringify(value || []) !== JSON.stringify(field.default || [])
   return value !== field.default
+}
+
+// A list setting is edited one entry per line: trimmed, blanks dropped, each
+// entry once — the same cleaning the backend applies on save.
+export function linesToList(text) {
+  const out = []
+  for (const line of (text || '').split('\n')) {
+    const entry = line.trim()
+    if (entry && !out.includes(entry)) out.push(entry)
+  }
+  return out
+}
+
+export function listToLines(list) {
+  return Array.isArray(list) ? list.join('\n') : ''
 }
 
 // How many Advanced settings differ from their default, for the card's header.

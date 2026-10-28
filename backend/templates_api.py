@@ -52,32 +52,48 @@ def _client_id(request: Request) -> str:
     return request.headers.get("X-Client-Id", "").strip()
 
 
-def _drop_mission_header(extras: dict) -> dict:
-    """Take the mission header out of a stored extras patch (#162).
+# Keys the wizard models now but once could only be hand-edited, so a template
+# may still carry them in its stored extras: the mission header (#162), and the
+# RCON command lists and named navmeshes (v0.90.0).
+_NOW_MODELLED = (
+    ("game", "gameProperties", "missionHeader"),
+    ("rcon", "blacklist"),
+    ("rcon", "whitelist"),
+    ("operating", "disableNavmeshStreaming"),
+)
 
-    Anyone who set a mission header before the wizard modelled it has it sitting
-    in extras_json, and to_config applies extras *last* — so that stale copy
-    would win over whatever the new UI writes, for ever: you'd edit a value,
+
+def _drop_path(node: dict, path: tuple) -> dict:
+    """`node` without the key at `path`, emptied parents pruned."""
+    head, *rest = path
+    if head not in node:
+        return node
+    out = {k: v for k, v in node.items() if k != head}
+    if rest:
+        child = node[head]
+        if not isinstance(child, dict):
+            return node
+        child = _drop_path(child, tuple(rest))
+        if child:
+            out[head] = child
+    return out
+
+
+def _drop_now_modelled(extras: dict) -> dict:
+    """Take keys the wizard now models out of a stored extras patch.
+
+    Anyone who set one of them by hand before the wizard modelled it has it
+    sitting in extras_json, and to_config applies extras *last* — so that stale
+    copy would win over whatever the new UI writes, for ever: you'd edit a value,
     save, and nothing would change. The rendered config_json already carries the
     same values (extras were merged in when it was written), so spec_from_config
-    has already read them into mission_header; all that's left is to stop the
-    patch re-applying them. Emptied parents are pruned so the overlay doesn't
-    keep hollow objects around.
+    has already read them into the spec; all that's left is to stop the patch
+    re-applying them. Emptied parents are pruned so the overlay doesn't keep
+    hollow objects around.
     """
-    game = extras.get("game")
-    if not isinstance(game, dict):
-        return extras
-    props = game.get("gameProperties")
-    if not isinstance(props, dict) or "missionHeader" not in props:
-        return extras
-    props = {k: v for k, v in props.items() if k != "missionHeader"}
-    game = {k: v for k, v in game.items() if k != "gameProperties"}
-    if props:
-        game["gameProperties"] = props
-    out = {k: v for k, v in extras.items() if k != "game"}
-    if game:
-        out["game"] = game
-    return out
+    for path in _NOW_MODELLED:
+        extras = _drop_path(extras, path)
+    return extras
 
 
 def _out(t: Template, session: Session) -> dict:
@@ -95,7 +111,7 @@ def _out(t: Template, session: Session) -> dict:
     # The hand-edited overlay (#29). Stored rather than re-derived from
     # config_json so the user's intent survives even if to_config's defaults move.
     try:
-        spec["extras"] = _drop_mission_header(json.loads(t.extras_json or "{}"))
+        spec["extras"] = _drop_now_modelled(json.loads(t.extras_json or "{}"))
     except (ValueError, TypeError):
         spec["extras"] = {}
     return {

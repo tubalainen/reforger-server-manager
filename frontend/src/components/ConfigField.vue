@@ -1,7 +1,7 @@
 <script setup>
-import { computed, useId } from 'vue'
+import { computed, ref, useId, watch } from 'vue'
 import HelpTip from './HelpTip.vue'
-import { isChanged } from '../configFields'
+import { isChanged, linesToList, listToLines } from '../configFields'
 
 // One setting from the field catalog (configFields.js): its control, the
 // config.json key it writes, a "?" with what it does, and — once it differs from
@@ -10,12 +10,34 @@ const props = defineProps({
   field: { type: Object, required: true },
   disabled: { type: Boolean, default: false },
 })
-const value = defineModel({ type: [Boolean, Number, String], default: null })
+const value = defineModel({ type: [Boolean, Number, String, Array], default: null })
 const id = `cfg-${useId()}`
 const changed = computed(() => isChanged(props.field, value.value))
 
 function reset() {
-  value.value = props.field.default
+  const fallback = props.field.default
+  value.value = Array.isArray(fallback) ? [...fallback] : fallback
+}
+const defaultText = computed(() => {
+  const fallback = props.field.default
+  if (Array.isArray(fallback)) return fallback.length ? fallback.join(', ') : 'empty'
+  return String(fallback)
+})
+
+// A list is edited as one entry per line. The text is kept as typed — a blank
+// line you're about to fill in must not vanish under the cursor — and only the
+// cleaned list goes into the spec. A change from outside (reset, Edit JSON)
+// rewrites the text.
+const isList = props.field.kind === 'list'
+const lines = ref(isList ? listToLines(value.value) : '')
+watch(value, (list) => {
+  if (isList && JSON.stringify(linesToList(lines.value)) !== JSON.stringify(list || [])) {
+    lines.value = listToLines(list)
+  }
+})
+function onLines(event) {
+  lines.value = event.target.value
+  value.value = linesToList(lines.value)
 }
 
 // "1–128", "≥ 50", "-1–1000 s" — the range the input accepts, from the model.
@@ -48,6 +70,9 @@ const range = computed(() => {
       </select>
       <input v-else-if="field.kind === 'int'" :id="id" v-model.number="value" type="number"
         class="form-control form-control-sm" :min="field.min" :max="field.max" :disabled="disabled" />
+      <textarea v-else-if="field.kind === 'list'" :id="id" :value="lines" rows="3"
+        class="form-control form-control-sm font-monospace" placeholder="One per line" spellcheck="false"
+        :disabled="disabled" @input="onLines"></textarea>
       <input v-else :id="id" v-model="value" class="form-control form-control-sm" :disabled="disabled" />
     </template>
     <div class="rsm-config-key small" :class="{ 'ps-4': field.kind === 'bool' }">
@@ -55,7 +80,7 @@ const range = computed(() => {
       <template v-if="changed">
         <span class="text-warning-emphasis ms-2" title="Changed from the default">● changed</span>
         <button type="button" class="btn btn-link btn-sm p-0 ms-1 align-baseline" :disabled="disabled"
-          :title="`Back to the default: ${field.default}`" @click="reset">reset</button>
+          :title="`Back to the default: ${defaultText}`" @click="reset">reset</button>
       </template>
     </div>
   </div>
