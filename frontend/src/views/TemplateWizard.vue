@@ -1274,6 +1274,17 @@ async function applyRawEdit() {
     extrasPaths.value = res.warnings.map((w) => w.path)
     rawMode.value = false
     refreshPreview()
+    // Apply saves an existing template too: the edit used to live only in the
+    // wizard until Next → Save, and leaving the page lost it. A Dev template
+    // still asks what changed first (#223). A new one has no row to save into
+    // yet — it is created on the Save step, so say so instead.
+    if (editing.value) {
+      if (!readOnly.value) await requestSave('stay')
+    } else {
+      appliedFlash.value = true
+      clearTimeout(savedFlashTimer)
+      savedFlashTimer = setTimeout(() => (appliedFlash.value = false), 6000)
+    }
   } catch (e) {
     rawErrors.value = [{ path: '', message: e.message }]
   } finally {
@@ -1329,6 +1340,7 @@ async function importConfigFile(event) {
 
 // ---- Save ------------------------------------------------------------------
 const savedFlash = ref(false)
+const appliedFlash = ref(false) // a new template's JSON was applied, not yet saved
 let savedFlashTimer = null
 
 async function persistTemplate(comment = '') {
@@ -2890,6 +2902,9 @@ onBeforeUnmount(() => {
             </button>
             <span class="rsm-bar-status me-auto small text-secondary">
               <span v-if="savedFlash" class="text-success">✓ Saved</span>
+              <span v-else-if="appliedFlash" class="text-warning-emphasis">
+                JSON applied. Save the template on the last step to keep it.
+              </span>
               <span v-else class="rsm-bar-step">Step {{ step }} of {{ steps.length }} · {{ steps[step - 1] }}</span>
             </span>
             <button
