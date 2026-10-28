@@ -839,6 +839,17 @@ async function hydrateVersionHistories() {
   hydratingVersions.value = false
 }
 
+// ---- Per-mod "required" ------------------------------------------------------
+// `m.required` = null follows the template's "Mods required by default"
+// (config.json leaves the key out); true / false is this mod's own.
+function requiredTitle(m) {
+  const required = m.required ?? spec.mods_required_by_default
+  const why = m.required == null ? ' (the template default, under Advanced settings)' : ''
+  return required
+    ? `Required${why}: the server won't start if this mod can't be downloaded.`
+    : `Optional${why}: if this mod can't be downloaded, the server drops it with a warning in the log and starts anyway.`
+}
+
 // ---- Per-mod version lock (issue #60) ---------------------------------------
 // `m.version` = null means "follow the Workshop's latest release" (config.json
 // omits the version). The picker lists the published history; a locked version
@@ -1985,8 +1996,18 @@ onBeforeUnmount(() => {
                 <small class="text-secondary d-block"><ModIdLink :mod-id="m.modId" :name="m.name" /></small>
               </div>
               <select
-                v-model="m.version"
+                v-model="m.required"
                 class="form-select form-select-sm w-auto ms-auto me-2 flex-shrink-0"
+                :aria-label="`Is ${m.name || m.modId} required`"
+                :title="requiredTitle(m)"
+              >
+                <option :value="null">{{ spec.mods_required_by_default ? 'Required' : 'Optional' }} (default)</option>
+                <option :value="true">Required</option>
+                <option :value="false">Optional</option>
+              </select>
+              <select
+                v-model="m.version"
+                class="form-select form-select-sm w-auto me-2 flex-shrink-0"
                 :title="m.version ? 'Locked to v' + m.version : 'Follows the latest Workshop release'"
               >
                 <option :value="null">latest</option>

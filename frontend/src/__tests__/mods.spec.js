@@ -25,6 +25,15 @@ import {
   workshopUrl,
 } from '../mods'
 
+describe('normalizeMod required', () => {
+  it('keeps a true/false and reads anything else as "follow the default"', () => {
+    expect(normalizeMod({ modId: 'A', required: false }).required).toBe(false)
+    expect(normalizeMod({ modId: 'A', required: true }).required).toBe(true)
+    expect(normalizeMod({ modId: 'A' }).required).toBe(null)
+    expect(normalizeMod({ modId: 'A', required: 'no' }).required).toBe(null)
+  })
+})
+
 describe('extractModId', () => {
   it('pulls a 16-hex id out of a bare id, "{id}-slug" or a full URL', () => {
     expect(extractModId('59D64ADD6FC59CBF')).toBe('59D64ADD6FC59CBF')
@@ -562,6 +571,14 @@ describe('adoptEditedMods (a hand-edited config.json, #171)', () => {
   it('takes a version locked by hand', () => {
     const out = adoptEditedMods(current(), [{ modId: 'A', version: '2.0' }])
     expect(out[0].version).toBe('2.0')
+  })
+
+  it('takes a "required" typed by hand, and clears one deleted by hand', () => {
+    const set = adoptEditedMods(current(), [{ modId: 'A', required: false }])
+    expect(set[0].required).toBe(false)
+    const withFlag = set.map((m) => ({ ...m }))
+    const cleared = adoptEditedMods(withFlag, [{ modId: 'A' }])
+    expect(cleared[0].required).toBe(null) // back to the template default
   })
 
   it('survives a config with no mods at all', () => {

@@ -53,10 +53,12 @@ def _client_id(request: Request) -> str:
 
 
 # Keys the wizard models now but once could only be hand-edited, so a template
-# may still carry them in its stored extras: the mission header (#162), and the
-# RCON command lists and named navmeshes (v0.90.0).
+# may still carry them in its stored extras: the mission header (#162), the
+# RCON command lists and named navmeshes (v0.90.0), and the mod list, which
+# landed there whole when a mod got a hand-typed "required" (v0.91.0).
 _NOW_MODELLED = (
     ("game", "gameProperties", "missionHeader"),
+    ("game", "mods"),
     ("rcon", "blacklist"),
     ("rcon", "whitelist"),
     ("operating", "disableNavmeshStreaming"),
@@ -105,8 +107,16 @@ def _out(t: Template, session: Session) -> dict:
     # when present; older templates fall back to the flat mods[] from config (#55).
     if t.mods_json:
         try:
+            flat = {m.get("modId"): m for m in spec["mods"] if isinstance(m, dict)}
             spec["mods"] = json.loads(t.mods_json)
-        except (ValueError, TypeError):
+            # A list saved before "required" was modelled carries none; a
+            # hand-typed one is in the rendered config, so take it from there.
+            # (Otherwise the two always agree: the config is rendered from it.)
+            for mod in spec["mods"]:
+                typed = flat.get(mod.get("modId"), {}).get("required")
+                if mod.get("required") is None and isinstance(typed, bool):
+                    mod["required"] = typed
+        except (ValueError, TypeError, AttributeError):
             pass
     # The hand-edited overlay (#29). Stored rather than re-derived from
     # config_json so the user's intent survives even if to_config's defaults move.
@@ -137,9 +147,9 @@ def _mods_json(spec: TemplateSpec) -> str:
 
 
 def _same_mod_ids(wizard_mods, config_mods) -> bool:
-    """Do these two mod lists name the same mods at the same versions?
+    """Do these two mod lists name the same mods, with the same settings?
 
-    config.json holds a flat mods[] (modId/name/version); the wizard's list also
+    config.json holds a flat mods[] (modId/name/version/required); the wizard's list also
     carries the dependency graph (#55). When a raw edit didn't touch the mods,
     taking the flat list back would silently discard that graph — so compare, and
     keep the enriched list when nothing about the mods actually changed (#29).
@@ -147,7 +157,10 @@ def _same_mod_ids(wizard_mods, config_mods) -> bool:
     def key(mods):
         if not isinstance(mods, list):
             return None
-        return [(m.get("modId"), m.get("version")) for m in mods if isinstance(m, dict)]
+        return [
+            (m.get("modId"), m.get("name"), m.get("version"), m.get("required"))
+            for m in mods if isinstance(m, dict)
+        ]
 
     wizard, config = key(wizard_mods), key(config_mods)
     return wizard is not None and wizard == config
@@ -739,7 +752,12 @@ async def reconcile_config(
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=f"Can't apply this config: {exc}") from exc
 
-    merged["extras"] = _custom_keys_only(template_service.diff_patch(baseline, config))
+    # game.mods is the wizard's: a mod setting that still differs here (a key on
+    # a mod that the model doesn't know) must not become an override that
+    # replaces the whole list on every save, so the Mods step stops counting.
+    merged["extras"] = _drop_path(
+        _custom_keys_only(template_service.diff_patch(baseline, config)), ("game", "mods")
+    )
     return {"spec": merged, "warnings": result["warnings"]}
 
 

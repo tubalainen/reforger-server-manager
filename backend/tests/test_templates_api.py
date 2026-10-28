@@ -436,6 +436,46 @@ def test_reconcile_splits_known_keys_into_the_spec_and_the_rest_into_extras(logg
     assert [w["path"] for w in r.json()["warnings"]] == ["game.gameProperties.customKey"]
 
 
+def test_reconcile_takes_a_hand_typed_required_into_the_mod_not_extras(logged_in):
+    # It used to land in extras as the WHOLE mods list, which then replaced the
+    # Mods step's list on every save: later mod changes never reached the server.
+    spec = _spec()
+    cfg = logged_in.post("/api/templates/preview", json=spec).json()
+    cfg["game"]["mods"][0]["required"] = False
+
+    out = logged_in.post("/api/templates/reconcile", json={"spec": spec, "config": cfg}).json()
+    assert out["spec"]["extras"] == {}
+    assert out["spec"]["mods"][0]["required"] is False
+
+
+def test_reconcile_never_turns_the_mod_list_into_an_override(logged_in):
+    # A per-mod key the model doesn't know can't freeze the list either.
+    spec = _spec()
+    cfg = logged_in.post("/api/templates/preview", json=spec).json()
+    cfg["game"]["mods"][0]["somethingNew"] = 1
+    out = logged_in.post("/api/templates/reconcile", json={"spec": spec, "config": cfg}).json()
+    assert "mods" not in out["spec"]["extras"].get("game", {})
+
+
+def test_a_frozen_mod_list_is_released_on_load(logged_in):
+    # A template saved while a hand-typed "required" had frozen the list: the
+    # Mods step's list (mods_json) wins again, keeping the hand-typed flag.
+    frozen = [{"modId": "591AF5BDA9F7CE8B", "name": "RHS", "version": "1.0", "required": False}]
+    body = _spec() | {"extras": {"game": {"mods": frozen}}}
+    tid = logged_in.post("/api/templates", json=body).json()["id"]
+
+    spec = logged_in.get(f"/api/templates/{tid}").json()["spec"]
+    assert spec["extras"] == {}
+    assert spec["mods"][0]["required"] is False
+
+    spec["name"] = "API Server"
+    spec["mods"].append({"modId": "5965550F24A0C152", "name": "Added later"})
+    assert logged_in.put(f"/api/templates/{tid}", json=spec).status_code == 200
+    mods = _config_of(logged_in, tid)["game"]["mods"]
+    assert [m["modId"] for m in mods] == ["591AF5BDA9F7CE8B", "5965550F24A0C152"]
+    assert mods[0]["required"] is False
+
+
 def test_reconcile_keeps_db_only_fields_from_the_incoming_spec(logged_in):
     # name/description/scenario_name/launch aren't in config.json; a raw edit
     # must not wipe them.
