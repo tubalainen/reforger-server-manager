@@ -5,6 +5,8 @@ import {
   elsewhereMatches,
   isChanged,
   limitsFor,
+  linesToList,
+  listToLines,
   matchesField,
 } from '../configFields'
 
@@ -93,6 +95,26 @@ describe('isChanged / changedCount', () => {
     const spec = { battleye: false, server_min_grass_distance: 50, von_can_transmit_cross_faction: true }
     expect(changedCount(catalog, spec)).toBe(1)
     expect(changedCount(null, spec)).toBe(0)
+  })
+})
+
+describe('list settings', () => {
+  const list = { name: 'rcon_whitelist', kind: 'list', default: [] }
+
+  it('reads one entry per line: trimmed, blanks dropped, each once', () => {
+    expect(linesToList(' #kick \n\n#players\n#kick\n')).toEqual(['#kick', '#players'])
+    expect(linesToList('')).toEqual([])
+    expect(listToLines(['#kick', '#players'])).toBe('#kick\n#players')
+    expect(listToLines(undefined)).toBe('')
+    // not a list at all: nothing to show rather than a throw
+    expect(listToLines(120)).toBe('')
+    expect(listToLines(true)).toBe('')
+  })
+
+  it('is changed when it holds anything', () => {
+    expect(isChanged(list, [])).toBe(false)
+    expect(isChanged(list, undefined)).toBe(false)
+    expect(isChanged(list, ['#kick'])).toBe(true)
   })
 })
 

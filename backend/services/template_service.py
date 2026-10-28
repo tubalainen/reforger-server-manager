@@ -8,9 +8,11 @@ config.json schema: https://community.bistudio.com/wiki/Arma_Reforger:Server_Con
 """
 import json
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 DEFAULT_SUPPORTED_PLATFORMS = ["PLATFORM_PC", "PLATFORM_XBL", "PLATFORM_PSN"]
+# What crossPlatform: false means (Server Config wiki): PC players only.
+PC_ONLY_PLATFORMS = ["PLATFORM_PC"]
 
 # Ceiling on the mission header override block (#162). Big enough for a modded
 # header (ACE's settings tree is a few KB), small enough that a mispaste can't
@@ -291,6 +293,9 @@ class TemplateSpec(BaseModel):
     # operating (advanced)
     lobby_player_synchronise: bool = True
     disable_navmesh_streaming: bool = False
+    # Only these navmeshes (engine 1.2.0+: the key is a list of names). Empty =
+    # every navmesh, the same [] the switch has always written.
+    navmesh_streaming_names: list[str] = []
     disable_server_shutdown: bool = False
     disable_crash_reporter: bool = False
     disable_ai: bool = False
@@ -322,6 +327,10 @@ class TemplateSpec(BaseModel):
     rcon_password: str = ""
     rcon_permission: str = Field(default="admin", pattern="^(admin|monitor)$")
     rcon_max_clients: int = Field(default=16, ge=1, le=16)
+    # RCON command lists (Server Config wiki): blacklist = commands that may not
+    # run; whitelist, when it holds anything, = the only commands that may.
+    rcon_blacklist: list[str] = []
+    rcon_whitelist: list[str] = []
 
     # Config keys the GUI doesn't model — scenario-specific gameProperties, or
     # anything Bohemia adds faster than this wizard does — held as an RFC 7386
@@ -355,6 +364,34 @@ class TemplateSpec(BaseModel):
     @classmethod
     def _clean_players(cls, value: list) -> list:
         return _dedupe_players(value)
+
+    @field_validator("navmesh_streaming_names", "rcon_blacklist", "rcon_whitelist")
+    @classmethod
+    def _clean_names(cls, value: list[str]) -> list[str]:
+        """Trim, drop blanks and de-duplicate a list of names or commands."""
+        out: list[str] = []
+        for entry in value:
+            name = str(entry or "").strip()
+            if name and name not in out:
+                out.append(name)
+        return out
+
+    @model_validator(mode="after")
+    def _platforms_follow_cross_platform(self):
+        """Keep supportedPlatforms in line with the Cross-platform switch.
+
+        The wiki gives two valid pairs: crossPlatform true with all three
+        platforms, or false with PC only. supportedPlatforms used to be written as
+        all three whatever the switch said, and with crossPlatform false the engine
+        goes by supportedPlatforms, so unticking Cross-platform changed nothing.
+        A list someone typed into the JSON by hand (anything but the all-three
+        default) is kept while the switch is off.
+        """
+        if self.cross_platform:
+            self.supported_platforms = list(DEFAULT_SUPPORTED_PLATFORMS)
+        elif set(self.supported_platforms) == set(DEFAULT_SUPPORTED_PLATFORMS):
+            self.supported_platforms = list(PC_ONLY_PLATFORMS)
+        return self
 
     @field_validator("mission_header")
     @classmethod
@@ -448,7 +485,7 @@ class TemplateSpec(BaseModel):
         # disableNavmeshStreaming is a string ARRAY (not a bool): an empty
         # array disables streaming for all navmeshes; omit it when off (#28).
         if self.disable_navmesh_streaming:
-            config["operating"]["disableNavmeshStreaming"] = []
+            config["operating"]["disableNavmeshStreaming"] = list(self.navmesh_streaming_names)
         if self.persistence_enabled:
             # Every documented persistence key is written (#156) — the block used
             # to carry only autoSaveInterval/hiveId, so save retention and the two
@@ -481,8 +518,8 @@ class TemplateSpec(BaseModel):
                 "port": 19999,
                 "password": self.rcon_password,
                 "permission": self.rcon_permission,
-                "blacklist": [],
-                "whitelist": [],
+                "blacklist": list(self.rcon_blacklist),
+                "whitelist": list(self.rcon_whitelist),
                 "maxClients": self.rcon_max_clients,
             }
         # The user's own keys win over the rendered defaults. Applying last means
@@ -534,6 +571,13 @@ def _players_from_config(raw, reason: bool = False) -> list[dict]:
             player["reason"] = str(entry.get("reason") or "").strip()
         out.append(player)
     return out
+
+
+def _names(raw) -> list[str]:
+    """A list of names/commands back out of a config; anything else reads as []."""
+    if not isinstance(raw, list):
+        return []
+    return [str(entry) for entry in raw if isinstance(entry, (str, int, float))]
 
 
 def _mission_header_from(props: dict, clamp: bool) -> dict:
@@ -605,8 +649,10 @@ def spec_from_config(config_json: str, clamp: bool = True) -> dict:
         "von_disable_direct_speech_ui": props.get("VONDisableDirectSpeechUI", False),
         "von_can_transmit_cross_faction": props.get("VONCanTransmitCrossFaction", False),
         "lobby_player_synchronise": operating.get("lobbyPlayerSynchronise", True),
-        # array present (even empty) = navmesh streaming disabled
+        # array present (even empty) = navmesh streaming disabled; a pre-1.2.0
+        # config may still carry the old `true`, which names no navmesh
         "disable_navmesh_streaming": "disableNavmeshStreaming" in operating,
+        "navmesh_streaming_names": _names(operating.get("disableNavmeshStreaming")),
         "disable_server_shutdown": operating.get("disableServerShutdown", False),
         "disable_crash_reporter": operating.get("disableCrashReporter", False),
         "disable_ai": operating.get("disableAI", False),
@@ -624,4 +670,6 @@ def spec_from_config(config_json: str, clamp: bool = True) -> dict:
         "rcon_password": rcon.get("password", ""),
         "rcon_permission": rcon.get("permission", "admin"),
         "rcon_max_clients": rcon.get("maxClients", 16),
+        "rcon_blacklist": _names(rcon.get("blacklist")),
+        "rcon_whitelist": _names(rcon.get("whitelist")),
     }

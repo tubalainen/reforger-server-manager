@@ -41,11 +41,12 @@ _FIELDS = [
     ("visible", "game", "Public (server browser)",
      "Lists the server in the in-game server browser.", {"card": "server"}),
     ("cross_platform", "game", "Cross-platform",
-     "Lets console players join as well as PC players.", {"card": "server"}),
+     "On: PC, Xbox and PlayStation players can join. Off: PC players only. The "
+     "manager writes supportedPlatforms to match.", {"card": "server"}),
     ("server_max_view_distance", "game_properties", "Server view distance",
      "The furthest a player can set their view distance, in metres.", {"card": "server"}),
     ("network_view_distance", "game_properties", "Network view distance",
-     "How far away the server sends players what is happening, in metres.",
+     "How far the server streams what is happening around each player, in metres.",
      {"card": "server"}),
     ("battleye", "game_properties", "BattlEye",
      "The BattlEye anti-cheat. Keep it on for a public server.", {"card": "server"}),
@@ -60,36 +61,45 @@ _FIELDS = [
      "Players see grass at least this far away, in metres, whatever their own "
      "settings say.", {"unit": "m"}),
     ("fast_validation", "game_properties", "Fast validation",
-     "Checks the data players send in a quicker way. Keep it on for a public server.", {}),
+     "Checks a joining player's map matches the server's while sending only the "
+     "minimum. Always keep it on for a public server; turn it off only to find where "
+     "a mismatch starts while developing on one machine.", {}),
 
     ("von_disable_ui", "von", "Disable VON UI",
      "Hides the on-screen voice (VON) indicators.", {}),
     ("von_disable_direct_speech_ui", "von", "Disable direct-speech UI",
      "Hides the indicator for direct speech, the voice nearby players hear.", {}),
     ("von_can_transmit_cross_faction", "von", "Cross-faction VON",
-     "Lets players talk on, and listen to, other factions' radio channels.", {}),
+     "Lets players transmit on other factions' radios. Off, they can only listen.", {}),
 
     ("mods_required_by_default", "game", "Mods required by default",
-     "Every mod in the list is required to join, unless the mod's own entry says "
-     "otherwise.", {}),
+     "Sets the \"required\" flag for every mod in the list at once.", {}),
 
     ("player_save_time", "operating", "Player save interval",
-     "How often each player's character is saved.", {"unit": "s"}),
-    ("ai_limit", "operating", "AI limit",
-     "The most AI characters alive at once. -1 means no limit: the scenario decides.", {}),
-    ("slot_reservation_timeout", "operating", "Slot reservation timeout",
-     "How long a disconnected player's slot is kept free for them to rejoin.",
+     "How often players are saved. A save can still be asked for in between.",
      {"unit": "s"}),
+    ("ai_limit", "operating", "AI limit",
+     "The most AI the server lets anything spawn. -1 (any negative number) means "
+     "no limit.", {}),
+    ("slot_reservation_timeout", "operating", "Slot reservation timeout",
+     "How long a kicked player's slot stays reserved for them. The lowest value, 5, "
+     "turns it off: the same as a normal disconnect.", {"unit": "s"}),
     ("lobby_player_synchronise", "operating", "Lobby player sync",
-     "Sends the player list to players who are still in the lobby.", {}),
-    ("disable_navmesh_streaming", "operating", "Disable navmesh streaming",
-     "Loads the AI navigation meshes whole at start instead of streaming them in. "
-     "Uses more memory.", {}),
+     "Sends the list of players on the server to Bohemia with each heartbeat, so "
+     "the server browser shows the real player count.", {}),
     ("disable_server_shutdown", "operating", "Disable auto-shutdown",
-     "Stops the server shutting itself down on its own.", {}),
+     "Keeps the server running if it loses its connection to Bohemia's backend. "
+     "Other problems, such as a broken config, still shut it down.", {}),
     ("disable_crash_reporter", "operating", "Disable crash reporter",
-     "Doesn't send crash reports to Bohemia.", {}),
-    ("disable_ai", "operating", "Disable AI", "Turns AI off completely.", {}),
+     "Turns off the server's automatic crash reports.", {}),
+    ("disable_ai", "operating", "Disable AI",
+     "Stops the AI world from starting at all: no AI on the server.", {}),
+    ("disable_navmesh_streaming", "operating", "Disable navmesh streaming",
+     "Loads AI navmeshes whole into memory instead of streaming them in: slightly "
+     "better performance and AI reactions, at up to hundreds of MB more memory.", {}),
+    ("navmesh_streaming_names", "operating", "Only these navmeshes",
+     "Navmesh names, one per line (for example Soldiers or BTRlike). Leave it empty "
+     "for every navmesh.", {"requires": "disable_navmesh_streaming"}),
 
     ("join_queue_max_size", "join_queue", "Join queue max size",
      "How many players can wait in line while the server is full. 0 turns the "
@@ -119,10 +129,16 @@ _FIELDS = [
      "admin may run every RCON command; monitor may only read.",
      {"requires": "rcon_password", "options": ["admin", "monitor"]}),
     ("rcon_max_clients", "rcon", "Max clients",
-     "How many RCON tools can be connected at once.", {"requires": "rcon_password"}),
+     "How many RCON tools can be connected at once. A tool that quits stays "
+     "counted for about 30 seconds.", {"requires": "rcon_password"}),
+    ("rcon_blacklist", "rcon", "Blocked commands",
+     "RCON commands that may not be run, one per line.", {"requires": "rcon_password"}),
+    ("rcon_whitelist", "rcon", "Allowed commands",
+     "When this lists any command, RCON may run only these, one per line. Leave it "
+     "empty to allow every command.", {"requires": "rcon_password"}),
 ]
 
-_KINDS = {"boolean": "bool", "integer": "int", "string": "text"}
+_KINDS = {"boolean": "bool", "integer": "int", "string": "text", "array": "list"}
 
 
 def catalog() -> dict:

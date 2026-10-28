@@ -176,6 +176,7 @@ const spec = reactive({
   von_can_transmit_cross_faction: false,
   lobby_player_synchronise: true,
   disable_navmesh_streaming: false,
+  navmesh_streaming_names: [],
   disable_server_shutdown: false,
   disable_crash_reporter: false,
   disable_ai: false,
@@ -192,6 +193,8 @@ const spec = reactive({
   rcon_password: '',
   rcon_permission: 'admin',
   rcon_max_clients: 16,
+  rcon_blacklist: [],
+  rcon_whitelist: [],
   // Mission header overrides (#162). Declared here so a NEW template carries the
   // field too; on edit it arrives with the loaded spec.
   mission_header: {},
@@ -250,6 +253,11 @@ const shownGroups = computed(() => advancedGroups(fieldCatalog.value, settingsFi
 const elsewhere = computed(() => elsewhereMatches(fieldCatalog.value, settingsFilter.value))
 // Switches other settings depend on ("Configure persistence") get a row of their own.
 const gateFields = computed(() => new Set((fieldCatalog.value?.fields || []).map((f) => f.requires)))
+function fieldColumn(f) {
+  if (gateFields.value.has(f.name)) return 'col-12'
+  if (f.kind === 'bool' || f.kind === 'list') return 'col-sm-6'
+  return 'col-sm-6 col-md-4'
+}
 const advancedChanged = computed(() => changedCount(fieldCatalog.value, spec))
 const advancedSummary = computed(() =>
   advancedChanged.value ? `${advancedChanged.value} changed from default` : '',
@@ -2257,6 +2265,10 @@ onBeforeUnmount(() => {
                   <div class="form-check">
                     <input id="cross" v-model="spec.cross_platform" class="form-check-input" type="checkbox" />
                     <label for="cross" class="form-check-label">Cross-platform</label>
+                    <HelpTip label="About Cross-platform">
+                      On: PC, Xbox and PlayStation players can join. Off: PC players only.
+                      The manager writes <code>supportedPlatforms</code> to match.
+                    </HelpTip>
                   </div>
                   <div class="form-check">
                     <input id="be" v-model="spec.battleye" class="form-check-input" type="checkbox" />
@@ -2297,7 +2309,7 @@ onBeforeUnmount(() => {
                 </p>
                 <div class="row g-3">
                   <div v-for="f in group.fields" :key="f.name"
-                    :class="gateFields.has(f.name) ? 'col-12' : f.kind === 'bool' ? 'col-sm-6' : 'col-sm-6 col-md-4'">
+                    :class="fieldColumn(f)">
                     <ConfigField v-model="spec[f.name]" :field="f"
                       :disabled="!!f.requires && !spec[f.requires]" />
                   </div>

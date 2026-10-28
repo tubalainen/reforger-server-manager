@@ -720,6 +720,33 @@ def test_lifting_the_header_leaves_no_hollow_extras(logged_in):
     assert logged_in.get(f"/api/templates/{tid}").json()["spec"]["extras"] == {}
 
 
+def test_hand_edited_rcon_and_navmesh_lists_move_out_of_extras(logged_in):
+    # Before v0.90.0 these could only be typed into the JSON, so they sit in
+    # extras — which would beat the new controls for ever if left there.
+    extras = {
+        "rcon": {"whitelist": ["#kick"]},
+        "operating": {"disableNavmeshStreaming": ["Soldiers"]},
+        "game": {"gameProperties": {"customKey": "keep-me"}},
+    }
+    body = _spec() | {"rcon_password": "secret", "disable_navmesh_streaming": True,
+                      "extras": extras}
+    tid = logged_in.post("/api/templates", json=body).json()["id"]
+
+    spec = logged_in.get(f"/api/templates/{tid}").json()["spec"]
+    assert spec["rcon_whitelist"] == ["#kick"]
+    assert spec["navmesh_streaming_names"] == ["Soldiers"]
+    assert spec["extras"] == {"game": {"gameProperties": {"customKey": "keep-me"}}}
+
+    spec["name"] = "API Server"
+    spec["rcon_whitelist"] = ["#players"]
+    spec["navmesh_streaming_names"] = []
+    assert logged_in.put(f"/api/templates/{tid}", json=spec).status_code == 200
+    cfg = _config_of(logged_in, tid)
+    assert cfg["rcon"]["whitelist"] == ["#players"]
+    assert cfg["operating"]["disableNavmeshStreaming"] == []
+    assert cfg["game"]["gameProperties"]["customKey"] == "keep-me"
+
+
 def test_mission_header_typed_by_hand_lands_in_the_spec_not_extras(logged_in):
     # The raw JSON editor and the wizard's own section must agree about who owns
     # the block, or a hand-edit would come back as a "custom key".

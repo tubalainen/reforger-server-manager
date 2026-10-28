@@ -116,6 +116,63 @@ def test_rcon_includes_blacklist_whitelist_arrays():
     assert cfg["rcon"]["blacklist"] == [] and cfg["rcon"]["whitelist"] == []
 
 
+def test_navmesh_streaming_names_only_the_listed_navmeshes():
+    # Engine 1.2.0+: an empty list disables streaming for every navmesh, a
+    # filled one only for those named (Server Config wiki).
+    cfg = _spec(disable_navmesh_streaming=True,
+                navmesh_streaming_names=[" Soldiers ", "BTRlike", "", "Soldiers"]).to_config()
+    assert cfg["operating"]["disableNavmeshStreaming"] == ["Soldiers", "BTRlike"]
+    back = spec_from_config(json.dumps(cfg))
+    assert back["disable_navmesh_streaming"] is True
+    assert back["navmesh_streaming_names"] == ["Soldiers", "BTRlike"]
+    # names without the switch write nothing
+    off = _spec(navmesh_streaming_names=["Soldiers"]).to_config()
+    assert "disableNavmeshStreaming" not in off["operating"]
+
+
+def test_navmesh_streaming_pre_1_2_bool_reads_as_every_navmesh():
+    back = spec_from_config(json.dumps({"game": {}, "operating": {"disableNavmeshStreaming": True}}))
+    assert back["disable_navmesh_streaming"] is True
+    assert back["navmesh_streaming_names"] == []
+
+
+def test_rcon_command_lists_render_and_roundtrip():
+    cfg = _spec(rcon_password="secret", rcon_blacklist=["#shutdown", " #shutdown ", ""],
+                rcon_whitelist=["#kick", "#players"]).to_config()
+    assert cfg["rcon"]["blacklist"] == ["#shutdown"]
+    assert cfg["rcon"]["whitelist"] == ["#kick", "#players"]
+    back = spec_from_config(json.dumps(cfg))
+    assert back["rcon_blacklist"] == ["#shutdown"]
+    assert back["rcon_whitelist"] == ["#kick", "#players"]
+
+
+def test_supported_platforms_follow_cross_platform():
+    # The wiki's two valid pairs: crossPlatform true = all three platforms,
+    # false = PC only. All three used to be written either way, so with the
+    # switch off the engine still let consoles in.
+    on = _spec(cross_platform=True).to_config()["game"]
+    assert on["crossPlatform"] is True
+    assert on["supportedPlatforms"] == ["PLATFORM_PC", "PLATFORM_XBL", "PLATFORM_PSN"]
+    off = _spec(cross_platform=False).to_config()["game"]
+    assert off["crossPlatform"] is False
+    assert off["supportedPlatforms"] == ["PLATFORM_PC"]
+    # switching back on restores all three
+    assert _spec(cross_platform=True, supported_platforms=["PLATFORM_PC"]).supported_platforms == [
+        "PLATFORM_PC", "PLATFORM_XBL", "PLATFORM_PSN"]
+
+
+def test_hand_picked_platforms_kept_while_cross_platform_is_off():
+    spec = _spec(cross_platform=False, supported_platforms=["PLATFORM_PC", "PLATFORM_XBL"])
+    assert spec.to_config()["game"]["supportedPlatforms"] == ["PLATFORM_PC", "PLATFORM_XBL"]
+
+
+def test_defaults_render_the_same_rcon_and_operating_blocks():
+    # Nobody who doesn't use the new lists sees a different config.json.
+    cfg = _spec(rcon_password="x").to_config()
+    assert cfg["rcon"]["blacklist"] == [] and cfg["rcon"]["whitelist"] == []
+    assert "disableNavmeshStreaming" not in cfg["operating"]
+
+
 def test_advanced_options_render_and_roundtrip():
     cfg = _spec(
         disable_third_person=True, fast_validation=False, ai_limit=64,
