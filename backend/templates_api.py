@@ -14,6 +14,7 @@ from mod_templates_api import ModTemplateSpec
 from models import Instance, ModTemplate, Template, TemplateCategory, get_engine
 from services import (
     change_log,
+    config_fields,
     config_validator,
     edit_locks,
     instance_service,
@@ -194,6 +195,12 @@ async def list_templates(request: Request, _user: str = Depends(auth.require_ses
              **template_service.persistence_summary(t.config_json)}
             for t in rows
         ]
+
+
+@router.get("/fields")
+async def config_fields_catalog(_user: str = Depends(auth.require_session)):
+    """The settings the wizard shows, with their keys, help and limits."""
+    return config_fields.catalog()
 
 
 @router.post("/locks/clear")

@@ -25,7 +25,7 @@ from services.template_service import TemplateSpec, spec_from_config
 # Spec field -> the config.json path it renders to, so an error reads in the
 # user's terms ("game.gameProperties.serverMinGrassDistance") and not the
 # model's ("server_min_grass_distance"). Only fields that reach config.json.
-_FIELD_PATHS = {
+FIELD_PATHS = {
     "scenario_id": "game.scenarioId",
     "game_name": "game.name",
     "password": "game.password",
@@ -55,6 +55,7 @@ _FIELD_PATHS = {
     "keep_session_save": "game.gameProperties.persistence.keepSessionSave",
     "hive_id": "game.gameProperties.persistence.hiveId",
     "lobby_player_synchronise": "operating.lobbyPlayerSynchronise",
+    "disable_navmesh_streaming": "operating.disableNavmeshStreaming",
     "disable_server_shutdown": "operating.disableServerShutdown",
     "disable_crash_reporter": "operating.disableCrashReporter",
     "disable_ai": "operating.disableAI",
@@ -172,7 +173,7 @@ def _model_errors(cfg: dict) -> list[dict]:
         errors = []
         for err in exc.errors():
             field = err["loc"][0] if err["loc"] else ""
-            path = _FIELD_PATHS.get(field, str(field))
+            path = FIELD_PATHS.get(field, str(field))
             # Index/attribute tail for list fields, e.g. mods -> game.mods[0].modId
             for part in err["loc"][1:]:
                 path += f"[{part}]" if isinstance(part, int) else f".{part}"
