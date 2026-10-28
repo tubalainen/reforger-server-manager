@@ -73,7 +73,9 @@ _FIELDS = [
      "Lets players transmit on other factions' radios. Off, they can only listen.", {}),
 
     ("mods_required_by_default", "game", "Mods required by default",
-     "Sets the \"required\" flag for every mod in the list at once.", {}),
+     "On: the server won't start if a mod can't be downloaded. Off: it drops that "
+     "mod with a warning in the log and starts anyway. A mod set to Required or "
+     "Optional on the Mods step overrides this.", {}),
 
     ("player_save_time", "operating", "Player save interval",
      "How often players are saved. A save can still be asked for in between.",

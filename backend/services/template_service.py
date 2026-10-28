@@ -66,8 +66,13 @@ class ModEntry(BaseModel):
     # A user-locked version (#60). None = follow the Workshop's latest release:
     # to_config then omits "version" so the server auto-updates the mod.
     version: str | None = None
+    # Per-mod "required" (Server Config wiki): False = the server drops the mod
+    # with a warning and starts anyway if it can't be downloaded; True = it
+    # won't start without it. None = follow modsRequiredByDefault, and the key
+    # is left out of config.json, as it always was.
+    required: bool | None = None
     # Dependency metadata for the mod manager (#55). These never reach the
-    # server's config.json (to_config strips mods to modId/name/version); they
+    # server's config.json (to_config strips mods to modId/name/version/required); they
     # are persisted separately in Template.mods_json for editing.
     explicit: bool = True          # user/scenario chose it directly (a "root")
     from_scenario: bool = False    # pulled in by the currently selected scenario
@@ -422,7 +427,7 @@ class TemplateSpec(BaseModel):
         """
         mods = [
             {k: v for k, v in {
-                "modId": m.modId, "name": m.name, "version": m.version
+                "modId": m.modId, "name": m.name, "version": m.version, "required": m.required
             }.items() if v is not None}
             for m in self.mods
         ]

@@ -48,6 +48,9 @@ export function normalizeMod(m) {
     modId: m.modId,
     name: m.name ?? null,
     version: m.version ?? null,
+    // true / false = this mod's own "required"; null = follow the template's
+    // "Mods required by default"
+    required: typeof m.required === 'boolean' ? m.required : null,
     versions: Array.isArray(m.versions) ? m.versions.filter(Boolean) : [],
     explicit: m.explicit ?? true,
     from_scenario: m.from_scenario ?? false,
@@ -183,8 +186,14 @@ export function adoptEditedMods(current, edited) {
       const prev = known.get(m.modId)
       if (!prev) return { ...m, added_order: nextOrder++ }
       // An omitted `version` means "follow the Workshop's latest release", so a
-      // lock deleted by hand must clear the wizard's, not inherit it back.
-      return { ...prev, ...m, version: m.version ?? null }
+      // lock deleted by hand must clear the wizard's, not inherit it back. The
+      // same goes for `required`: omitted = follow the template's default.
+      return {
+        ...prev,
+        ...m,
+        version: m.version ?? null,
+        required: typeof m.required === 'boolean' ? m.required : null,
+      }
     }),
   )
 }

@@ -173,6 +173,21 @@ def test_defaults_render_the_same_rcon_and_operating_blocks():
     assert "disableNavmeshStreaming" not in cfg["operating"]
 
 
+def test_mod_required_written_only_when_set():
+    cfg = _spec(mods=[
+        {"modId": "A", "name": "Opt", "required": False},
+        {"modId": "B", "name": "Must", "required": True},
+        {"modId": "C", "name": "Default"},
+    ]).to_config()
+    assert cfg["game"]["mods"] == [
+        {"modId": "A", "name": "Opt", "required": False},
+        {"modId": "B", "name": "Must", "required": True},
+        {"modId": "C", "name": "Default"},
+    ]
+    back = spec_from_config(json.dumps(cfg))
+    assert TemplateSpec(**{**back, "name": "_"}).to_config()["game"]["mods"] == cfg["game"]["mods"]
+
+
 def test_advanced_options_render_and_roundtrip():
     cfg = _spec(
         disable_third_person=True, fast_validation=False, ai_limit=64,
