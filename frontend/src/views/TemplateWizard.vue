@@ -6,6 +6,8 @@ import { formatBytes } from '../format'
 import { guessCategory } from '../categoryGuess'
 import { randomServerName } from '../serverName'
 import CollapsibleCard from '../components/CollapsibleCard.vue'
+import ConfigField from '../components/ConfigField.vue'
+import { advancedGroups, changedCount, elsewhereMatches, limitsFor } from '../configFields'
 import HelpTip from '../components/HelpTip.vue'
 import MenuButton from '../components/MenuButton.vue'
 import ModIdLink from '../components/ModIdLink.vue'
@@ -231,6 +233,28 @@ const spec = reactive({
 })
 
 const showAdvanced = ref(false)
+
+// ---- Advanced settings, from the backend's field catalog -------------------
+const fieldCatalog = ref(null)
+const catalogError = ref('')
+const settingsFilter = ref('')
+async function loadFieldCatalog() {
+  catalogError.value = ''
+  try {
+    fieldCatalog.value = await api('/api/templates/fields')
+  } catch (e) {
+    catalogError.value = e.message
+  }
+}
+const shownGroups = computed(() => advancedGroups(fieldCatalog.value, settingsFilter.value))
+const elsewhere = computed(() => elsewhereMatches(fieldCatalog.value, settingsFilter.value))
+// Switches other settings depend on ("Configure persistence") get a row of their own.
+const gateFields = computed(() => new Set((fieldCatalog.value?.fields || []).map((f) => f.requires)))
+const advancedChanged = computed(() => changedCount(fieldCatalog.value, spec))
+const advancedSummary = computed(() =>
+  advancedChanged.value ? `${advancedChanged.value} changed from default` : '',
+)
+
 const showLaunch = ref(false)
 const showAccess = ref(false)
 const showMissionHeader = ref(false)
@@ -1468,6 +1492,7 @@ function pickCategory() {
 
 onMounted(async () => {
   loadCategories() // not awaited: the picker fills in when it lands
+  loadFieldCatalog() // likewise: Advanced settings shows "Loading…" until then
   if (editing.value) {
     try {
       // Load first: a Prod template is read-only and takes no edit lock (#223).
@@ -2212,11 +2237,13 @@ onBeforeUnmount(() => {
                 </div>
                 <div class="col-md-4">
                   <label class="form-label">Server view distance</label>
-                  <input v-model.number="spec.server_max_view_distance" type="number" class="form-control" />
+                  <input v-model.number="spec.server_max_view_distance" type="number" class="form-control"
+                    v-bind="limitsFor(fieldCatalog, 'server_max_view_distance')" />
                 </div>
                 <div class="col-md-4">
                   <label class="form-label">Network view distance</label>
-                  <input v-model.number="spec.network_view_distance" type="number" class="form-control" />
+                  <input v-model.number="spec.network_view_distance" type="number" class="form-control"
+                    v-bind="limitsFor(fieldCatalog, 'network_view_distance')" />
                 </div>
                 <div class="col-12">
                   <label class="form-label">RCON password <small class="text-secondary">(optional)</small></label>
@@ -2245,154 +2272,51 @@ onBeforeUnmount(() => {
           </div>
           </fieldset>
 
-          <!-- Each card locks its own body, so a read-only one still folds open (#223) -->
-          <CollapsibleCard v-model="showAdvanced" title="Advanced settings" class="mt-3" :disabled="readOnly">
-            <div class="row g-3">
-              <div class="col-md-4">
-                <label class="form-label">Min grass distance <small class="text-secondary">(≥ 50)</small></label>
-                <input v-model.number="spec.server_min_grass_distance" type="number" min="50" max="150" class="form-control" />
-              </div>
-              <div class="col-md-4">
-                <label class="form-label">Player save interval (s)</label>
-                <input v-model.number="spec.player_save_time" type="number" min="0" class="form-control" />
-              </div>
-              <div class="col-md-4">
-                <label class="form-label">AI limit <small class="text-secondary">(-1 = unlimited)</small></label>
-                <input v-model.number="spec.ai_limit" type="number" min="-1" class="form-control" />
-              </div>
-              <div class="col-md-4">
-                <label class="form-label">Slot reservation timeout (s)</label>
-                <input v-model.number="spec.slot_reservation_timeout" type="number" min="5" max="300" class="form-control" />
-              </div>
-              <div class="col-md-4">
-                <label class="form-label">Join queue max size <small class="text-secondary">(0 = off)</small></label>
-                <input v-model.number="spec.join_queue_max_size" type="number" min="0" max="50" class="form-control" />
-              </div>
-              <div class="col-12">
-                <div class="fw-semibold small text-secondary mb-1">VON (voice)</div>
-                <div class="d-flex gap-4 flex-wrap">
-                  <div class="form-check">
-                    <input id="von1" v-model="spec.von_disable_ui" class="form-check-input" type="checkbox" />
-                    <label for="von1" class="form-check-label">Disable VON UI</label>
-                  </div>
-                  <div class="form-check">
-                    <input id="von2" v-model="spec.von_disable_direct_speech_ui" class="form-check-input" type="checkbox" />
-                    <label for="von2" class="form-check-label">Disable direct-speech UI</label>
-                  </div>
-                  <div class="form-check">
-                    <input id="von3" v-model="spec.von_can_transmit_cross_faction" class="form-check-input" type="checkbox" />
-                    <label for="von3" class="form-check-label">Cross-faction VON</label>
-                  </div>
-                </div>
-              </div>
-              <div class="col-12">
-                <div class="fw-semibold small text-secondary mb-1">Operating</div>
-                <div class="d-flex gap-4 flex-wrap">
-                  <div class="form-check">
-                    <input id="op1" v-model="spec.fast_validation" class="form-check-input" type="checkbox" />
-                    <label for="op1" class="form-check-label">Fast validation</label>
-                  </div>
-                  <div class="form-check">
-                    <input id="op2" v-model="spec.lobby_player_synchronise" class="form-check-input" type="checkbox" />
-                    <label for="op2" class="form-check-label">Lobby player sync</label>
-                  </div>
-                  <div class="form-check">
-                    <input id="op3" v-model="spec.disable_navmesh_streaming" class="form-check-input" type="checkbox" />
-                    <label for="op3" class="form-check-label">Disable navmesh streaming</label>
-                  </div>
-                  <div class="form-check">
-                    <input id="op4" v-model="spec.disable_server_shutdown" class="form-check-input" type="checkbox" />
-                    <label for="op4" class="form-check-label">Disable auto-shutdown</label>
-                  </div>
-                  <div class="form-check">
-                    <input id="op5" v-model="spec.disable_crash_reporter" class="form-check-input" type="checkbox" />
-                    <label for="op5" class="form-check-label">Disable crash reporter</label>
-                  </div>
-                  <div class="form-check">
-                    <input id="op6" v-model="spec.disable_ai" class="form-check-input" type="checkbox" />
-                    <label for="op6" class="form-check-label">Disable AI</label>
-                  </div>
-                  <div class="form-check">
-                    <input id="op7" v-model="spec.mods_required_by_default" class="form-check-input" type="checkbox" />
-                    <label for="op7" class="form-check-label">Mods required by default</label>
-                  </div>
-                </div>
-              </div>
-
-              <div class="col-12">
-                <div class="fw-semibold small text-secondary mb-1">Persistence (save games)</div>
-                <div class="form-check mb-2">
-                  <input id="persist" v-model="spec.persistence_enabled" class="form-check-input" type="checkbox" />
-                  <label for="persist" class="form-check-label">Configure persistence</label>
-                </div>
-                <p class="text-secondary small mb-2">
-                  Leave it clear to let the engine decide how the mission saves.
-                  <HelpTip label="What configuring persistence does">
-                    The server saves the mission on its own by default. Tick the box to write a
-                    <code>persistence</code> block and set these values yourself; leave it clear to let
-                    the engine decide. Unticking does not switch saving off — to stop a scenario saving
-                    at all, add <code>"missionHeader": &#123; "m_eSaveTypes": 0 &#125;</code> under
-                    <code>game.gameProperties</code> with Edit JSON.
-                  </HelpTip>
-                </p>
-                <!-- Three equal columns, top-aligned. Do NOT add align-items-end
-                     here: the help texts are different heights, so bottom-aligning
-                     the columns lifts the taller one's label and input off the row. -->
-                <div class="row g-2">
-                  <div class="col-6 col-md-4">
-                    <label class="form-label small">Auto-save interval (min)</label>
-                    <input v-model.number="spec.auto_save_interval" type="number" min="0" max="60"
-                      class="form-control" :disabled="!spec.persistence_enabled" />
-                    <div class="form-text">0 turns automatic saves off.</div>
-                  </div>
-                  <div class="col-6 col-md-4">
-                    <label class="form-label small">Save points kept</label>
-                    <input v-model.number="spec.save_retention" type="number" min="1" max="128"
-                      class="form-control" :disabled="!spec.persistence_enabled" />
-                    <div class="form-text">1–128 per mission.</div>
-                  </div>
-                  <div class="col-6 col-md-4">
-                    <label class="form-label small">Hive ID</label>
-                    <input v-model.number="spec.hive_id" type="number" min="0" max="16383"
-                      class="form-control" :disabled="!spec.persistence_enabled" />
-                    <div class="form-text">Separates saves when servers share a database.</div>
-                  </div>
-                </div>
-                <div class="d-flex gap-4 flex-wrap mt-2">
-                  <div class="form-check">
-                    <input id="persist-load" v-model="spec.load_session_save" class="form-check-input"
-                      type="checkbox" :disabled="!spec.persistence_enabled" />
-                    <label for="persist-load" class="form-check-label small">
-                      Load the latest save on startup
-                    </label>
-                  </div>
-                  <div class="form-check">
-                    <input id="persist-keep" v-model="spec.keep_session_save" class="form-check-input"
-                      type="checkbox" :disabled="!spec.persistence_enabled" />
-                    <label for="persist-keep" class="form-check-label small">
-                      Keep save points after the mission ends
-                    </label>
-                  </div>
-                </div>
-              </div>
-
-              <div class="col-12">
-                <div class="fw-semibold small text-secondary mb-1">RCON <small>(only used when a password is set on the previous screen)</small></div>
-                <div class="row g-2">
-                  <div class="col-6 col-md-4">
-                    <label class="form-label small">Permission</label>
-                    <select v-model="spec.rcon_permission" class="form-select">
-                      <option value="admin">admin</option>
-                      <option value="monitor">monitor</option>
-                    </select>
-                  </div>
-                  <div class="col-6 col-md-4">
-                    <label class="form-label small">Max clients</label>
-                    <input v-model.number="spec.rcon_max_clients" type="number" min="1" max="16" class="form-control" />
-                  </div>
-                </div>
-              </div>
+          <!-- Each card locks its own body, so a read-only one still folds open (#223).
+               Built from the backend's field catalog: every setting shows the
+               config.json key it writes, so a key seen in the preview can be found. -->
+          <CollapsibleCard v-model="showAdvanced" title="Advanced settings" class="mt-3" :disabled="readOnly"
+            :summary="advancedSummary" :summary-class="advancedChanged ? 'text-warning-emphasis' : 'text-secondary'">
+            <input v-model="settingsFilter" type="search" class="form-control form-control-sm mb-3"
+              placeholder="Find a setting by name or config key, e.g. VONCanTransmitCrossFaction"
+              aria-label="Find a setting" />
+            <div v-if="catalogError" class="alert alert-danger py-2 small">
+              Could not load the settings list: {{ catalogError }}
+              <button type="button" class="btn btn-link btn-sm p-0 ms-1 align-baseline" @click="loadFieldCatalog">
+                Try again
+              </button>
             </div>
+            <div v-else-if="!fieldCatalog" class="text-secondary small">Loading settings…</div>
+            <template v-else>
+              <section v-for="group in shownGroups" :key="group.id" class="mb-3">
+                <div class="fw-semibold small text-secondary mb-2">
+                  {{ group.title }} <code class="rsm-group-path ms-1">{{ group.path }}</code>
+                </div>
+                <p v-if="group.id === 'rcon'" class="text-secondary small mb-2">
+                  Used only when an RCON password is set on the Server card above.
+                </p>
+                <div class="row g-3">
+                  <div v-for="f in group.fields" :key="f.name"
+                    :class="gateFields.has(f.name) ? 'col-12' : f.kind === 'bool' ? 'col-sm-6' : 'col-sm-6 col-md-4'">
+                    <ConfigField v-model="spec[f.name]" :field="f"
+                      :disabled="!!f.requires && !spec[f.requires]" />
+                  </div>
+                </div>
+              </section>
+              <div v-if="elsewhere.length" class="small mb-3">
+                <div class="fw-semibold text-secondary mb-1">On the Server card above</div>
+                <ul class="mb-0 ps-3">
+                  <li v-for="f in elsewhere" :key="f.name">
+                    {{ f.label }} <code class="rsm-group-path ms-1">{{ f.key }}</code>
+                  </li>
+                </ul>
+              </div>
+              <p v-if="settingsFilter.trim() && !shownGroups.length && !elsewhere.length"
+                class="text-secondary small mb-0">
+                No setting matches "{{ settingsFilter.trim() }}". A key the GUI doesn't manage can
+                still be added by hand with Edit JSON, and it is kept on every save.
+              </p>
+            </template>
           </CollapsibleCard>
 
           <CollapsibleCard v-model="showLaunch" title="Engine launch parameters" class="mt-3" :disabled="readOnly">
@@ -3153,6 +3077,13 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* Where an Advanced settings group's keys sit in config.json, beside its title. */
+.rsm-group-path {
+  font-size: 0.75rem;
+  font-weight: normal;
+  color: var(--bs-secondary-color);
+}
+
 /* A mod row keeps to what you read: its move buttons appear when you point at the
    row or tab into it. A screen without hover (a phone, a tablet) always shows them. */
 @media (hover: hover) {
