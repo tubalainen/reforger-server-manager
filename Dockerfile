@@ -19,9 +19,13 @@ FROM python:3.12-slim
 
 # Unprivileged runtime user; the entrypoint starts as root for first-run
 # setup (chown /data, docker-socket group) and drops to 'app' via gosu.
+# apt-get upgrade: Debian's security fixes reach the image the day it is built,
+# not whenever python:3.12-slim is next rebuilt (zlib1g CVE-2026-76844 and
+# CVE-2026-85091 were fixed in Debian while the base image still had the old one).
 RUN useradd --uid 1000 --create-home app \
     && mkdir -p /data && chown app:app /data \
     && apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends gosu \
     && rm -rf /var/lib/apt/lists/*
 
@@ -34,7 +38,7 @@ COPY --from=frontend /build/dist /app/static
 
 # The version this image is, for the Server Supervisor, which reads it from each
 # stack's manager container (#204). CI keeps it equal to backend/config.py.
-LABEL reforger-manager.version="0.91.0"
+LABEL reforger-manager.version="0.91.1"
 
 ENV STATIC_DIR=/app/static \
     DATA_DIR=/data \
