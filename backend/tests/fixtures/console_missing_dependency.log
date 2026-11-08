@@ -1,0 +1,304 @@
+---------------------------------------------
+Log /home/profile/logs/logs_2026-11-08_03-30-12/console.log started at 2026-11-08 03:30:12 (2026-11-08 03:30:12 UTC)
+
+03:30:12.771 ENGINE       : FileSystem: Adding relative directory '/home/profile/logs/logs_2026-11-08_03-30-12' to filesystem under name logs
+03:30:12.771 ENGINE       : FileSystem: Adding relative directory '/home/profile/profile' to filesystem under name profile
+03:30:12.771 ENGINE       : FileSystem: Current working directory: '/reforger/'
+03:30:12.772 ENGINE       : Initializing engine, version 193322
+03:30:12.772 ENGINE       : CLI Params: -config /reforger/Configs/server.json -backendlog -nothrow -maxFPS 30 -profile /home/profile -addonDownloadDir /reforger/workshop -addonsDir /reforger/workshop -logStats 10000 
+03:30:12.772 ENGINE       : Addon dirs:
+03:30:12.772  ENGINE       : dir: '/reforger/workshop'
+03:30:12.772  ENGINE       : dir: './addons'
+03:30:12.772  ENGINE       : dir: '/home/profile/addons'
+03:30:12.772 ENGINE       : Available addons:
+03:30:12.772  ENGINE       : gproj: './addons/core/core.gproj' guid: '5614BBCCBB55ED1C' (packed)
+03:30:12.772  ENGINE       : gproj: './addons/rally/RallyDLC.gproj' guid: '6566A2D70498DA6B' (packed)
+03:30:12.772  ENGINE       : gproj: './addons/data/ArmaReforger.gproj' guid: '58D0FB3206B6F859' (packed)
+03:30:12.846 ENGINE       : FileSystem: Adding package './addons/data/' (pak count: 6) to filesystem under name ArmaReforger
+03:30:12.846 ENGINE       : FileSystem: Adding package './addons/core/' (pak count: 1) to filesystem under name core
+03:30:12.846 RESOURCES    : ResourceDB: loading cache (id=0 name=ArmaReforger path=./addons/data/resourceDatabase.rdb)
+03:30:12.942 RESOURCES    : ResourceDB: loading cache (id=1 name=core path=./addons/core/resourceDatabase.rdb)
+03:30:12.943 RESOURCES    : ResourceDB: loading cache (id=2 name=profile path=/home/profile/profile/resourceDatabase.rdb)
+03:30:12.943 RESOURCES    : ResourceDB: loading cache (id=3 name=logs path=/home/profile/logs/logs_2026-11-08_03-30-12/resourceDatabase.rdb)
+03:30:13.050 ENGINE       : GameProject load
+03:30:13.050  ENGINE       : Loaded addons:
+03:30:13.050   ENGINE       : gproj: './addons/core/core.gproj' guid: '5614BBCCBB55ED1C'
+03:30:13.050   ENGINE       : gproj: './addons/data/ArmaReforger.gproj' guid: '58D0FB3206B6F859'
+03:30:13.051 ENGINE       : Loading custom engine user config '$profile:.save/settings/ReforgerEngineSettings.conf'
+03:30:13.051 INIT         : GameProject engine user settings load @"$profile:.save/settings/ReforgerEngineSettings.conf"
+03:30:13.051  ENGINE       : Engine user settings config loaded
+03:30:13.051 PROFILING    : Settings changed took: 0.001000 ms
+03:30:13.051 RENDER       : Basic screen setup:
+03:30:13.051 RENDER       :   Back buffer width x height: 0x0
+03:30:13.051 RENDER       :   Back buffer format	       : TEXFMT_UNKNOWN (0)
+03:30:13.051 RENDER       :   MSAA                      : none
+03:30:13.051 RENDER       : GPU_DUMMY (0xFFFF) (Enfusion dummy render) with 1 GPU detected, VRAM 128MB (fast 128MB), shared 128MB, driver version Unknown version
+03:30:13.051 RENDER       : Detected output devices:
+03:30:13.051 RENDER       :  * 1 device/s connected to Dummy:
+03:30:13.051 RENDER       :    Dummy output (Dummy device for our dummy render.), 1920x1080 (offset 0x0), 60Hz
+03:30:13.051 RENDER       :   Concurrent frames limit 2
+03:30:13.051 ENGINE       : Job system settings: coreCount=16, shortJobContextCount=16, shortJobThreadCount=15, longJobThreadCount=7
+03:30:13.061 PROFILING    : Settings changed took: 0.011000 ms
+03:30:13.063 ENGINE       : Initializing inputs.
+03:30:13.068 NETWORK      : Initializing networking.
+03:30:13.068 NETWORK      : Using new GameRplScheduler.
+03:30:13.069  SCRIPT       : SCRIPT       : Initializing scripts
+03:30:13.069   SCRIPT       : SCRIPT       : ScriptProjectManager init
+03:30:13.069  PROFILING    : ScriptProjectManager init took: 0.006000 ms
+03:30:13.082 PROFILING    : Initializing scripts took: 12.960000 ms
+03:30:13.082 ENGINE       : Enfusion engine successfully created.
+03:30:13.083 GUI          : Using default language (en_us)
+03:30:13.083 GUI          : Loading 'en_us' localization file.
+03:30:13.083  INIT         : INIT         : Loading StringTable
+03:30:13.102 PROFILING    : Loading StringTable took: 18.715000 ms
+03:30:13.102  SCRIPT       : SCRIPT       : Compiling GameLib scripts
+03:30:13.128  SCRIPT       : Module: GameLib; loaded 512x files; 664x classes; used 701K of static memory; defines: "PLATFORM_LINUX,ENF_ENABLE_RPLCOMPONENT_IN_GAMECODE"; CRC32: a2fafa86
+03:30:13.128 PROFILING    : Compiling GameLib scripts took: 26.005000 ms
+03:30:13.128  SCRIPT       : SCRIPT       : Compiling Game scripts
+03:30:13.773 SCRIPT       : Compiling Game scripts
+03:30:13.773  SCRIPT    (W): @"scripts/Game/Editor/Components/EditableEntity/SCR_EditableEntityComponent.c,787": 'GetPlayerPlatformKind' is obsolete
+03:30:13.773  SCRIPT    (W): @"scripts/Game/Editor/Components/EditableEntity/SCR_EditableEntityComponent.c,788": 'GetPlayerPlatformId' is obsolete
+03:30:13.973  SCRIPT    (W): @"scripts/Game/Workshop/SCR_AddonManager.c,876": 'GetRefCount' is obsolete: Will be removed
+03:30:13.995  SCRIPT    (W): @"scripts/Game/Campaign/SCR_PlayerProfileManagerComponent.c,142": 'PlayerData' is obsolete
+03:30:14.063  SCRIPT    (W): @"scripts/Game/Components/Magazines/SCR_MagazineComponent.c,134": Variable 'prefabPath' is not used
+03:30:14.075  SCRIPT    (W): @"scripts/Game/UI/Backend/CareerBackend.c,159": 'GetDSSession' is obsolete
+03:30:14.075  SCRIPT    (W): @"scripts/Game/UI/Backend/CareerBackend.c,162": 'RoomID' is obsolete
+03:30:14.076  SCRIPT    (W): @"scripts/Game/UI/Backend/CareerBackend.c,197": 'GetDSSession' is obsolete
+03:30:14.076  SCRIPT    (W): @"scripts/Game/UI/Backend/CareerBackend.c,201": 'RoomID' is obsolete
+03:30:14.150  SCRIPT    (W): @"scripts/Game/DataCollection/SCR_DataCollectorComponent.c,481": 'GetStorage' is obsolete
+03:30:14.150  SCRIPT    (W): @"scripts/Game/DataCollection/SCR_DataCollectorComponent.c,483": 'GetOnlineWritePrivilege' is obsolete
+03:30:14.151  SCRIPT    (W): @"scripts/Game/Utilities/SCR_PlayerIdentityUtils.c,20": 'GetPlayerIdentityId' is obsolete
+03:30:14.184  SCRIPT    (W): @"scripts/Game/UI/Menu/MainMenuUI.c,643": 'GetNotifyCount' is obsolete: Will be substitued by Notification Api.
+03:30:14.184  SCRIPT    (W): @"scripts/Game/UI/Menu/MainMenuUI.c,645": 'GetNotifyItem' is obsolete: Will be substitued by Notification Api.
+03:30:14.233  SCRIPT    (W): @"scripts/Game/DataCollection/PlayerData/SCR_PlayerData.c,210": 'PlayerData' is obsolete
+03:30:14.324  SCRIPT       : Module: Game; loaded 5722x files; 11092x classes; used 25791K of static memory; defines: "PLATFORM_LINUX,ENF_ENABLE_RPLCOMPONENT_IN_GAMECODE,ENABLE_BASE_DESTRUCTION,BUDGET_OPTIMIZATION_CHECKS,DEBUG,RESPAWN_TIMER_COMPONENT_DEBUG,DEBUG_CONFIGURABLE_DIALOGS,DISABLE_WEAPON_SWITCHING,SCRIPTED_AIM_MODIFIER_DEBUG"; CRC32: 040d6aee
+03:30:14.343 PROFILING    : Compiling Game scripts took: 1215.118000 ms
+03:30:14.343 INIT         : Creating game instance(ArmaReforgerScripted), version 1.9.0.37 built 2026-10-27 15:39:59 UTC.
+03:30:14.361 BACKEND      : Loading dedicated server config.
+03:30:14.361  BACKEND      : Server config loaded.
+03:30:14.361  BACKEND      : JSON Schema Validation:
+03:30:14.361   BACKEND      : JSON is Valid
+03:30:14.371 ENGINE       : Game successfully created.
+03:30:14.470 PLATFORM     : Save data from container 'settings' have been loaded
+03:30:14.569 PLATFORM     : Save data from container 'sessions' have been loaded
+03:30:14.569 PLATFORM     : GameProject user settings load from profile @"ReforgerGameSettings.conf"
+03:30:14.569  ENGINE       : Game user settings config loaded
+03:30:14.569 NETWORK      : Starting dedicated server using command line args.
+03:30:15.168 RESOURCES    : GetResourceObject @"{904C0051711396ED}Missions/RallyAirport.conf"
+03:30:15.168  DEFAULT      : Config load @"{904C0051711396ED}Missions/RallyAirport.conf"
+03:30:15.168   RESOURCES (E): Wrong GUID/name for resource @"{F54981E40A49B531}worlds/Rally_Arland_AirportRun.ent" in property "World"
+03:30:15.168   RESOURCES (E): Wrong GUID/name for resource @"{6A58ADD30913F600}Configs/Systems/RallySystems.conf" in property "SystemsConfig"
+03:30:15.168 RESOURCES    : GetResourceObject @"{0E0E4D2C2DA6CD7C}Missions/RallyLighthouse.conf"
+03:30:15.168  DEFAULT      : Config load @"{0E0E4D2C2DA6CD7C}Missions/RallyLighthouse.conf"
+03:30:15.168   RESOURCES (E): Wrong GUID/name for resource @"{DD52D70DCA9A5E82}worlds/Rally_Arland_ArlandLighthouse.ent" in property "World"
+03:30:15.168   RESOURCES (E): Wrong GUID/name for resource @"{6A58ADD30913F600}Configs/Systems/RallySystems.conf" in property "SystemsConfig"
+03:30:15.169 RESOURCES    : GetResourceObject @"{B2C3D4E5F6071829}Missions/RallyCainCoastToCoast.conf"
+03:30:15.169  DEFAULT      : Config load @"{B2C3D4E5F6071829}Missions/RallyCainCoastToCoast.conf"
+03:30:15.169   RESOURCES (E): Wrong GUID/name for resource @"{1A128D63484B1F5A}worlds/Rally_Cain_CoastToCoast.ent" in property "World"
+03:30:15.169   RESOURCES (E): Wrong GUID/name for resource @"{6A58ADD30913F600}Configs/Systems/RallySystems.conf" in property "SystemsConfig"
+03:30:15.169 RESOURCES    : GetResourceObject @"{4EF2F4E9F7A9C03C}Missions/RallyCainMineralyDescent.conf"
+03:30:15.169  DEFAULT      : Config load @"{4EF2F4E9F7A9C03C}Missions/RallyCainMineralyDescent.conf"
+03:30:15.169   RESOURCES (E): Wrong GUID/name for resource @"{8D7E7DB9E63DE59C}worlds/Rally_Cain_MineralyDescent.ent" in property "World"
+03:30:15.169   RESOURCES (E): Wrong GUID/name for resource @"{6A58ADD30913F600}Configs/Systems/RallySystems.conf" in property "SystemsConfig"
+03:30:15.169 RESOURCES    : GetResourceObject @"{ABE206E6DDE54856}Missions/RallyMontford.conf"
+03:30:15.169  DEFAULT      : Config load @"{ABE206E6DDE54856}Missions/RallyMontford.conf"
+03:30:15.169   RESOURCES (E): Wrong GUID/name for resource @"{DC896591E44FBC92}worlds/Rally_Everon_Montfront.ent" in property "World"
+03:30:15.169   RESOURCES (E): Wrong GUID/name for resource @"{6A58ADD30913F600}Configs/Systems/RallySystems.conf" in property "SystemsConfig"
+03:30:15.169 RESOURCES    : GetResourceObject @"{E2E68042222F8D5D}Missions/RallyNorthernForest.conf"
+03:30:15.169  DEFAULT      : Config load @"{E2E68042222F8D5D}Missions/RallyNorthernForest.conf"
+03:30:15.169   RESOURCES (E): Wrong GUID/name for resource @"{75033D4FB2FE793E}worlds/Rally_Everon_NorthernForest.ent" in property "World"
+03:30:15.169   RESOURCES (E): Wrong GUID/name for resource @"{6A58ADD30913F600}Configs/Systems/RallySystems.conf" in property "SystemsConfig"
+03:30:16.557 BACKEND      : Required addons are ready to use.
+03:30:16.887 ENGINE       : Game destroyed.
+03:30:16.993 ENGINE       : Addon dirs:
+03:30:16.993  ENGINE       : dir: '/reforger/workshop'
+03:30:16.993  ENGINE       : dir: './addons'
+03:30:16.993  ENGINE       : dir: '/home/profile/addons'
+03:30:16.993  ENGINE       : dir: '/reforger/workshop/addons/'
+03:30:16.993 ENGINE       : Available addons:
+03:30:16.993  ENGINE       : gproj: './addons/core/core.gproj' guid: '5614BBCCBB55ED1C' (packed)
+03:30:16.993  ENGINE       : gproj: './addons/rally/RallyDLC.gproj' guid: '6566A2D70498DA6B' (packed)
+03:30:16.993  ENGINE       : gproj: './addons/data/ArmaReforger.gproj' guid: '58D0FB3206B6F859' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/MK46AMPMK48-FIXED_694633B6F415DF18/addon.gproj' guid: '694633B6F415DF18' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/RHS-ContentPack02_BADC0DEDABBEDA5E/addon.gproj' guid: 'BADC0DEDABBEDA5E' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/ACECore_60C4CE4888FF4621/addon.gproj' guid: '60C4CE4888FF4621' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/NGSW-GRSVests_66DE13C126AC707A/addon.gproj' guid: '66DE13C126AC707A' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/BRLBetterPatrolSystemXCRX_6A6665419A84D1E8/addon.gproj' guid: '6A6665419A84D1E8' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/MK46-MK48_6190E1D2CF0A921D/addon.gproj' guid: '6190E1D2CF0A921D' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/ScrtSharedContent_66AD0B6D6E7A6A97/addon.gproj' guid: '66AD0B6D6E7A6A97' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/RHS-StatusQuo_595F2BF2F44836FB/addon.gproj' guid: '595F2BF2F44836FB' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/RHS-ContentPack01_1337C0DE5DABBEEF/addon.gproj' guid: '1337C0DE5DABBEEF' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/DynamicLoot_66B2F0B008DC590F/addon.gproj' guid: '66B2F0B008DC590F' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/WCS_Armaments_629B2BA37EFFD577/addon.gproj' guid: '629B2BA37EFFD577' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/Escapists-AutoJoinGroup_69651168C72C769E/addon.gproj' guid: '69651168C72C769E' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/WCS_Sounds_631C3C1AEE9C90BC/addon.gproj' guid: '631C3C1AEE9C90BC' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/WCS_Clothing_Assets_6602C1EC7E5A4A87/addon.gproj' guid: '6602C1EC7E5A4A87' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/CapsWeaponPack_6319242B050D1483/addon.gproj' guid: '6319242B050D1483' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/AttachmentFramework_645F08FA9E7CDEDE/addon.gproj' guid: '645F08FA9E7CDEDE' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/TacticalFlava-Clothes_DEADC0DE00000004/addon.gproj' guid: 'DEADC0DE00000004' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/LaserRangefinder_620E426C34BE0D17/addon.gproj' guid: '620E426C34BE0D17' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/EscapistsEnhanced_62E71B6F101EB30D/addon.gproj' guid: '62E71B6F101EB30D' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/DONSEscapistsFix1.9_69794468DD5E4804/addon.gproj' guid: '69794468DD5E4804' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/GRS-DevFramework_65DACC64CE785B6C/addon.gproj' guid: '65DACC64CE785B6C' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/TaskForceMattockWeapons_5B3ED33ADA805340/TFMattockWeapons.gproj' guid: '5B3ED33ADA805340' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/Escapist-DynamicLoot-Only-CIV_6A90E7C5D8455610/addon.gproj' guid: '6A90E7C5D8455610' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/M4MAAWS_61C2509A023211FE/addon.gproj' guid: '61C2509A023211FE' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/Escapists-RHS_62A112E0BF9C1E26/addon.gproj' guid: '62A112E0BF9C1E26' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/ACEMedicalCore_60C4C12DAE90727B/addon.gproj' guid: '60C4C12DAE90727B' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/ScrtCore_66AAB0873717CEF0/addon.gproj' guid: '66AAB0873717CEF0' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/ACECarrying_5DBD560C5148E1DA/addon.gproj' guid: '5DBD560C5148E1DA' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/RealismOverhaul-Sounds_631B695913C7781F/addon.gproj' guid: '631B695913C7781F' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/NoWeaponDropUnconscious_60612C225328522E/addon.gproj' guid: '60612C225328522E' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/EscapistOneRadio_6A0D09A0A9B49232/addon.gproj' guid: '6A0D09A0A9B49232' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/ACEMagazineRepack_611CB1D409001EB0/addon.gproj' guid: '611CB1D409001EB0' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/BRLCore_69F105CC69D4137E/addon.gproj' guid: '69F105CC69D4137E' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/TacticalFlava-Core_DEADC0DE00000000/addon.gproj' guid: 'DEADC0DE00000000' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/AT-4_64E37695015F8AFA/addon.gproj' guid: '64E37695015F8AFA' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/COALITIONSquadInterface_5B0D1E4380971EBD/addon.gproj' guid: '5B0D1E4380971EBD' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/Escapists-Dyn.VehiclePatrol_68EEDB2DCF745684/addon.gproj' guid: '68EEDB2DCF745684' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/GRS-ModularVestsAMPRigs_651834C8D77BF86B/addon.gproj' guid: '651834C8D77BF86B' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/WCS_Attachments_61C74A8B647617DA/addon.gproj' guid: '61C74A8B647617DA' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/WCS_SpaceCore_5E389BB9F58B79A6/addon.gproj' guid: '5E389BB9F58B79A6' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/ACEFinger_606C369BAC3F6CC3/addon.gproj' guid: '606C369BAC3F6CC3' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/UNCAGWeaponPack_67390ADF56492903/addon.gproj' guid: '67390ADF56492903' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/WCS_Weapon_Scripts_68F006D910E7546F/addon.gproj' guid: '68F006D910E7546F' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/AttachmentFramework-Core_687CD82F6E41D627/addon.gproj' guid: '687CD82F6E41D627' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/Escapists_5F16D7E4A1CBE075/addon.gproj' guid: '5F16D7E4A1CBE075' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/1.6MedkitFix_66E0440EC6B0D4B1/addon.gproj' guid: '66E0440EC6B0D4B1' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/M157_6A1F5DAE1CDCECE2/addon.gproj' guid: '6A1F5DAE1CDCECE2' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/GRS-Patches_657B064AE0E231DF/addon.gproj' guid: '657B064AE0E231DF' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/Escapists-DynamicLoot_66FC3E70881A5CD8/addon.gproj' guid: '66FC3E70881A5CD8' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/RISLaserAttachments_5ABD0CB57F7E9EB1/addon.gproj' guid: '5ABD0CB57F7E9EB1' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/EscapistsRHS_Customize_faction_6A424768653033B3/addon.gproj' guid: '6A424768653033B3' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/NGSW_62021EB6163A2698/addon.gproj' guid: '62021EB6163A2698' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/GRS-Essentials_6515672F96701110/addon.gproj' guid: '6515672F96701110' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/WCS_Scopes_62A668F513428630/addon.gproj' guid: '62A668F513428630' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/BRLBetterPatrolSystem_6A070153E6135947/addon.gproj' guid: '6A070153E6135947' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/MRAD.338_699D16D3F8654090/addon.gproj' guid: '699D16D3F8654090' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/CRXEnfusionA.I._5F268647F8A1A1F4/addon.gproj' guid: '5F268647F8A1A1F4' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/BaconSuppressors_5AB301290317994A/addon.gproj' guid: '5AB301290317994A' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/WCS_Clothing_6152CB0BD0684837/addon.gproj' guid: '6152CB0BD0684837' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/M249ScopeRails_5AF6E0F075D79473/addon.gproj' guid: '5AF6E0F075D79473' (packed)
+03:30:16.993  ENGINE       : gproj: '/reforger/workshop/addons/VoiceRangeAndEarplugs_69968A78C3D7ABFF/addon.gproj' guid: '69968A78C3D7ABFF' (packed)
+03:30:16.993 ENGINE    (E): Addon 'WCS_Scopes' dependency '615806DC6C57AF02' can't be added
+03:30:16.993 ENGINE    (E): Addon 'EscapistsWCSFORTEXCustomize' dependency '62A668F513428630' can't be added
+03:30:16.993 ENGINE    (E): Cannot initialize game project settings!
+03:30:16.993 ENGINE    (E): Cannot create game!
+03:30:16.993 ENGINE    (E): Addon loading failed {5614BBCCBB55ED1C,58D0FB3206B6F859,6566A2D70498DA6B,66AAB0873717CEF0,66AD0B6D6E7A6A97,66FC3E70881A5CD8,66E0440EC6B0D4B1,5DBD560C5148E1DA,606C369BAC3F6CC3,611CB1D409001EB0,60C4C12DAE90727B,6A6665419A84D1E8,5B0D1E4380971EBD,6A90E7C5D8455610,68EEDB2DCF745684,60612C225328522E,631B695913C7781F,69968A78C3D7ABFF,6A0D09A0A9B49232,69651168C72C769E,62E71B6F101EB30D,6A424768653033B3,5F16D7E4A1CBE075,69794468DD5E4804,687CD82F6E41D627,DEADC0DE00000000,DEADC0DE00000004,5E389BB9F58B79A6,595F2BF2F44836FB,61C74A8B647617DA,5ABD0CB57F7E9EB1,6A1F5DAE1CDCECE2,62A112E0BF9C1E26,67390ADF56492903,631C3C1AEE9C90BC,66DE13C126AC707A,5AB301290317994A,66B2F0B008DC590F,699D16D3F8654090,62A668F513428630,620E426C34BE0D17,629B2BA37EFFD577,5F268647F8A1A1F4,6152CB0BD0684837,69F105CC69D4137E,62021EB6163A2698,651834C8D77BF86B,6319242B050D1483,1337C0DE5DABBEEF,65DACC64CE785B6C,61C2509A023211FE,BADC0DEDABBEDA5E,657B064AE0E231DF,645F08FA9E7CDEDE,68F006D910E7546F,6190E1D2CF0A921D,60C4CE4888FF4621,6602C1EC7E5A4A87,6A070153E6135947,5B3ED33ADA805340,694633B6F415DF18,5AF6E0F075D79473,64E37695015F8AFA,6515672F96701110}
+03:30:16.993 ENGINE       : Game destroyed.
+03:30:16.998 ENGINE       : Addon dirs:
+03:30:16.998  ENGINE       : dir: '/reforger/workshop'
+03:30:16.998  ENGINE       : dir: './addons'
+03:30:16.998  ENGINE       : dir: '/home/profile/addons'
+03:30:16.998  ENGINE       : dir: '/reforger/workshop/addons/'
+03:30:16.998 ENGINE       : Available addons:
+03:30:16.998  ENGINE       : gproj: './addons/core/core.gproj' guid: '5614BBCCBB55ED1C' (packed)
+03:30:16.999  ENGINE       : gproj: './addons/rally/RallyDLC.gproj' guid: '6566A2D70498DA6B' (packed)
+03:30:16.999  ENGINE       : gproj: './addons/data/ArmaReforger.gproj' guid: '58D0FB3206B6F859' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/MK46AMPMK48-FIXED_694633B6F415DF18/addon.gproj' guid: '694633B6F415DF18' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/RHS-ContentPack02_BADC0DEDABBEDA5E/addon.gproj' guid: 'BADC0DEDABBEDA5E' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/ACECore_60C4CE4888FF4621/addon.gproj' guid: '60C4CE4888FF4621' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/NGSW-GRSVests_66DE13C126AC707A/addon.gproj' guid: '66DE13C126AC707A' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/BRLBetterPatrolSystemXCRX_6A6665419A84D1E8/addon.gproj' guid: '6A6665419A84D1E8' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/MK46-MK48_6190E1D2CF0A921D/addon.gproj' guid: '6190E1D2CF0A921D' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/ScrtSharedContent_66AD0B6D6E7A6A97/addon.gproj' guid: '66AD0B6D6E7A6A97' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/RHS-StatusQuo_595F2BF2F44836FB/addon.gproj' guid: '595F2BF2F44836FB' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/RHS-ContentPack01_1337C0DE5DABBEEF/addon.gproj' guid: '1337C0DE5DABBEEF' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/DynamicLoot_66B2F0B008DC590F/addon.gproj' guid: '66B2F0B008DC590F' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/WCS_Armaments_629B2BA37EFFD577/addon.gproj' guid: '629B2BA37EFFD577' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/Escapists-AutoJoinGroup_69651168C72C769E/addon.gproj' guid: '69651168C72C769E' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/WCS_Sounds_631C3C1AEE9C90BC/addon.gproj' guid: '631C3C1AEE9C90BC' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/WCS_Clothing_Assets_6602C1EC7E5A4A87/addon.gproj' guid: '6602C1EC7E5A4A87' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/CapsWeaponPack_6319242B050D1483/addon.gproj' guid: '6319242B050D1483' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/AttachmentFramework_645F08FA9E7CDEDE/addon.gproj' guid: '645F08FA9E7CDEDE' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/TacticalFlava-Clothes_DEADC0DE00000004/addon.gproj' guid: 'DEADC0DE00000004' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/LaserRangefinder_620E426C34BE0D17/addon.gproj' guid: '620E426C34BE0D17' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/EscapistsEnhanced_62E71B6F101EB30D/addon.gproj' guid: '62E71B6F101EB30D' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/DONSEscapistsFix1.9_69794468DD5E4804/addon.gproj' guid: '69794468DD5E4804' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/GRS-DevFramework_65DACC64CE785B6C/addon.gproj' guid: '65DACC64CE785B6C' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/TaskForceMattockWeapons_5B3ED33ADA805340/TFMattockWeapons.gproj' guid: '5B3ED33ADA805340' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/Escapist-DynamicLoot-Only-CIV_6A90E7C5D8455610/addon.gproj' guid: '6A90E7C5D8455610' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/M4MAAWS_61C2509A023211FE/addon.gproj' guid: '61C2509A023211FE' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/Escapists-RHS_62A112E0BF9C1E26/addon.gproj' guid: '62A112E0BF9C1E26' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/ACEMedicalCore_60C4C12DAE90727B/addon.gproj' guid: '60C4C12DAE90727B' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/ScrtCore_66AAB0873717CEF0/addon.gproj' guid: '66AAB0873717CEF0' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/ACECarrying_5DBD560C5148E1DA/addon.gproj' guid: '5DBD560C5148E1DA' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/RealismOverhaul-Sounds_631B695913C7781F/addon.gproj' guid: '631B695913C7781F' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/NoWeaponDropUnconscious_60612C225328522E/addon.gproj' guid: '60612C225328522E' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/EscapistOneRadio_6A0D09A0A9B49232/addon.gproj' guid: '6A0D09A0A9B49232' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/ACEMagazineRepack_611CB1D409001EB0/addon.gproj' guid: '611CB1D409001EB0' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/BRLCore_69F105CC69D4137E/addon.gproj' guid: '69F105CC69D4137E' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/TacticalFlava-Core_DEADC0DE00000000/addon.gproj' guid: 'DEADC0DE00000000' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/AT-4_64E37695015F8AFA/addon.gproj' guid: '64E37695015F8AFA' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/COALITIONSquadInterface_5B0D1E4380971EBD/addon.gproj' guid: '5B0D1E4380971EBD' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/Escapists-Dyn.VehiclePatrol_68EEDB2DCF745684/addon.gproj' guid: '68EEDB2DCF745684' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/GRS-ModularVestsAMPRigs_651834C8D77BF86B/addon.gproj' guid: '651834C8D77BF86B' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/WCS_Attachments_61C74A8B647617DA/addon.gproj' guid: '61C74A8B647617DA' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/WCS_SpaceCore_5E389BB9F58B79A6/addon.gproj' guid: '5E389BB9F58B79A6' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/ACEFinger_606C369BAC3F6CC3/addon.gproj' guid: '606C369BAC3F6CC3' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/UNCAGWeaponPack_67390ADF56492903/addon.gproj' guid: '67390ADF56492903' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/WCS_Weapon_Scripts_68F006D910E7546F/addon.gproj' guid: '68F006D910E7546F' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/AttachmentFramework-Core_687CD82F6E41D627/addon.gproj' guid: '687CD82F6E41D627' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/Escapists_5F16D7E4A1CBE075/addon.gproj' guid: '5F16D7E4A1CBE075' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/1.6MedkitFix_66E0440EC6B0D4B1/addon.gproj' guid: '66E0440EC6B0D4B1' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/M157_6A1F5DAE1CDCECE2/addon.gproj' guid: '6A1F5DAE1CDCECE2' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/GRS-Patches_657B064AE0E231DF/addon.gproj' guid: '657B064AE0E231DF' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/Escapists-DynamicLoot_66FC3E70881A5CD8/addon.gproj' guid: '66FC3E70881A5CD8' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/RISLaserAttachments_5ABD0CB57F7E9EB1/addon.gproj' guid: '5ABD0CB57F7E9EB1' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/EscapistsRHS_Customize_faction_6A424768653033B3/addon.gproj' guid: '6A424768653033B3' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/NGSW_62021EB6163A2698/addon.gproj' guid: '62021EB6163A2698' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/GRS-Essentials_6515672F96701110/addon.gproj' guid: '6515672F96701110' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/WCS_Scopes_62A668F513428630/addon.gproj' guid: '62A668F513428630' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/BRLBetterPatrolSystem_6A070153E6135947/addon.gproj' guid: '6A070153E6135947' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/MRAD.338_699D16D3F8654090/addon.gproj' guid: '699D16D3F8654090' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/CRXEnfusionA.I._5F268647F8A1A1F4/addon.gproj' guid: '5F268647F8A1A1F4' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/BaconSuppressors_5AB301290317994A/addon.gproj' guid: '5AB301290317994A' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/WCS_Clothing_6152CB0BD0684837/addon.gproj' guid: '6152CB0BD0684837' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/M249ScopeRails_5AF6E0F075D79473/addon.gproj' guid: '5AF6E0F075D79473' (packed)
+03:30:16.999  ENGINE       : gproj: '/reforger/workshop/addons/VoiceRangeAndEarplugs_69968A78C3D7ABFF/addon.gproj' guid: '69968A78C3D7ABFF' (packed)
+03:30:17.062 ENGINE       : FileSystem: Adding package './addons/data/' (pak count: 6) to filesystem under name ArmaReforger
+03:30:17.063 ENGINE       : FileSystem: Adding package './addons/core/' (pak count: 1) to filesystem under name core
+03:30:17.063 RESOURCES    : ResourceDB: loading cache (id=0 name=ArmaReforger path=./addons/data/resourceDatabase.rdb)
+03:30:17.149 RESOURCES    : ResourceDB: loading cache (id=1 name=core path=./addons/core/resourceDatabase.rdb)
+03:30:17.149 RESOURCES    : ResourceDB: loading cache (id=2 name=profile path=/home/profile/profile/resourceDatabase.rdb)
+03:30:17.149 RESOURCES    : ResourceDB: loading cache (id=3 name=logs path=/home/profile/logs/logs_2026-11-08_03-30-12/resourceDatabase.rdb)
+03:30:17.254 ENGINE       : GameProject load
+03:30:17.254  ENGINE       : Loaded addons:
+03:30:17.254   ENGINE       : gproj: './addons/core/core.gproj' guid: '5614BBCCBB55ED1C'
+03:30:17.254   ENGINE       : gproj: './addons/data/ArmaReforger.gproj' guid: '58D0FB3206B6F859'
+03:30:17.255 GUI          : Using default language (en_us)
+03:30:17.255 GUI          : Loading 'en_us' localization file.
+03:30:17.255  INIT         : INIT         : Loading StringTable
+03:30:17.272 PROFILING    : Loading StringTable took: 17.219000 ms
+03:30:17.273  SCRIPT       : SCRIPT       : Compiling GameLib scripts
+03:30:17.294  SCRIPT       : Module: GameLib; loaded 512x files; 664x classes; used 700K of static memory; defines: "PLATFORM_LINUX,ENF_ENABLE_RPLCOMPONENT_IN_GAMECODE"; CRC32: a2fafa86
+03:30:17.294 PROFILING    : Compiling GameLib scripts took: 21.495000 ms
+03:30:17.294  SCRIPT       : SCRIPT       : Compiling Game scripts
+03:30:17.888 SCRIPT       : Compiling Game scripts
+03:30:17.888  SCRIPT    (W): @"scripts/Game/Editor/Components/EditableEntity/SCR_EditableEntityComponent.c,787": 'GetPlayerPlatformKind' is obsolete
+03:30:17.888  SCRIPT    (W): @"scripts/Game/Editor/Components/EditableEntity/SCR_EditableEntityComponent.c,788": 'GetPlayerPlatformId' is obsolete
+03:30:18.087  SCRIPT    (W): @"scripts/Game/Workshop/SCR_AddonManager.c,876": 'GetRefCount' is obsolete: Will be removed
+03:30:18.110  SCRIPT    (W): @"scripts/Game/Campaign/SCR_PlayerProfileManagerComponent.c,142": 'PlayerData' is obsolete
+03:30:18.180  SCRIPT    (W): @"scripts/Game/Components/Magazines/SCR_MagazineComponent.c,134": Variable 'prefabPath' is not used
+03:30:18.191  SCRIPT    (W): @"scripts/Game/UI/Backend/CareerBackend.c,159": 'GetDSSession' is obsolete
+03:30:18.191  SCRIPT    (W): @"scripts/Game/UI/Backend/CareerBackend.c,162": 'RoomID' is obsolete
+03:30:18.191  SCRIPT    (W): @"scripts/Game/UI/Backend/CareerBackend.c,197": 'GetDSSession' is obsolete
+03:30:18.191  SCRIPT    (W): @"scripts/Game/UI/Backend/CareerBackend.c,201": 'RoomID' is obsolete
+03:30:18.264  SCRIPT    (W): @"scripts/Game/DataCollection/SCR_DataCollectorComponent.c,481": 'GetStorage' is obsolete
+03:30:18.264  SCRIPT    (W): @"scripts/Game/DataCollection/SCR_DataCollectorComponent.c,483": 'GetOnlineWritePrivilege' is obsolete
+03:30:18.265  SCRIPT    (W): @"scripts/Game/Utilities/SCR_PlayerIdentityUtils.c,20": 'GetPlayerIdentityId' is obsolete
+03:30:18.297  SCRIPT    (W): @"scripts/Game/UI/Menu/MainMenuUI.c,643": 'GetNotifyCount' is obsolete: Will be substitued by Notification Api.
+03:30:18.297  SCRIPT    (W): @"scripts/Game/UI/Menu/MainMenuUI.c,645": 'GetNotifyItem' is obsolete: Will be substitued by Notification Api.
+03:30:18.347  SCRIPT    (W): @"scripts/Game/DataCollection/PlayerData/SCR_PlayerData.c,210": 'PlayerData' is obsolete
+03:30:18.434  SCRIPT       : Module: Game; loaded 5722x files; 11092x classes; used 25765K of static memory; defines: "PLATFORM_LINUX,ENF_ENABLE_RPLCOMPONENT_IN_GAMECODE,ENABLE_BASE_DESTRUCTION,BUDGET_OPTIMIZATION_CHECKS,DEBUG,RESPAWN_TIMER_COMPONENT_DEBUG,DEBUG_CONFIGURABLE_DIALOGS,DISABLE_WEAPON_SWITCHING,SCRIPTED_AIM_MODIFIER_DEBUG"; CRC32: 040d6aee
+03:30:18.452 PROFILING    : Compiling Game scripts took: 1158.194000 ms
+03:30:18.452 INIT         : Creating game instance(ArmaReforgerScripted), version 1.9.0.37 built 2026-10-27 15:39:59 UTC.
+03:30:18.464 BACKEND      : Loading dedicated server config.
+03:30:18.464  BACKEND      : Server config loaded.
+03:30:18.464  BACKEND      : JSON Schema Validation:
+03:30:18.464   BACKEND      : JSON is Valid
+03:30:18.474 ENGINE       : Game successfully created.
+03:30:18.639 ENGINE    (E): Unable to initialize the game
+03:30:18.656 ENGINE       : Game destroyed.
+03:30:18.668 RESOURCES (E): ==== Resource leaks ====
+03:30:18.668 RESOURCES (E): ui/fonts/robotomono_msdf_28.edds   1

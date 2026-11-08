@@ -1,6 +1,6 @@
 <script setup>
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { api, clientId } from '../api'
 import { formatBytes } from '../format'
 import { guessCategory } from '../categoryGuess'
@@ -14,6 +14,7 @@ import ModIdLink from '../components/ModIdLink.vue'
 import SaveCommentDialog from '../components/SaveCommentDialog.vue'
 import StageBadge from '../components/StageBadge.vue'
 import { groupByStage, versionOptions } from '../stages'
+import { failingFromQuery } from '../modFailures'
 
 // CodeMirror is ~130 KB gzipped and only needed once someone clicks "Edit JSON",
 // which most users never will — so it gets its own chunk instead of riding along
@@ -62,7 +63,14 @@ import { GROUPS, defaultValueFor, describeKey, searchKeys } from '../missionHead
 
 const props = defineProps({ id: { type: [String, Number], default: null } })
 const router = useRouter()
+const route = useRoute()
 const editing = computed(() => props.id != null)
+
+// Opened from a server whose last start failed (#270): ?step=mods&failing=ID,ID
+// opens the Mods step with those mods marked, so they can be removed here, where
+// Prod's lock, the edit lock and the change log all apply as usual.
+const failingMods = new Set(failingFromQuery(route.query.failing))
+const failingInList = computed(() => spec.mods.filter((m) => failingMods.has(m.modId)))
 
 const step = ref(1)
 const steps = ['Scenario', 'Mods', 'Settings', 'Save']
@@ -121,7 +129,7 @@ async function copyToTest() {
   error.value = ''
   try {
     const created = await api(`/api/templates/${props.id}/copy`, { method: 'POST' })
-    router.push({ name: 'template-edit', params: { id: created.id } })
+    router.push({ name: 'template-edit', params: { id: created.id }, query: route.query })
   } catch (e) {
     error.value = e.message
   } finally {
@@ -1539,6 +1547,7 @@ onMounted(async () => {
       spec.category_id = t.category_id ?? null
       extrasPaths.value = t.extras_paths || []
       hydrateVersionHistories() // deliberately not awaited — fills pickers as results land
+      if (route.query.step === 'mods') step.value = 2
     } catch (e) {
       error.value = e.message
     }
@@ -1780,6 +1789,20 @@ onBeforeUnmount(() => {
             </HelpTip>
           </p>
 
+          <div v-if="failingMods.size" class="alert alert-danger py-2 small">
+            <template v-if="failingInList.length">
+              {{ failingInList.length }} mod{{ failingInList.length === 1 ? '' : 's' }} marked
+              <span class="badge text-bg-danger">failed</span> stopped a server's last start.
+              Remove {{ failingInList.length === 1 ? 'it' : 'them' }} with ✕<template v-if="isProd">
+              in a copy (Copy to Test, above)</template>, or open the Workshop page to look for a fix.
+              A mod added only because another needs it goes when that one does.
+            </template>
+            <template v-else>
+              None of the mods that stopped the server's last start are in this template's list
+              any more.
+            </template>
+          </div>
+
           <!-- A second scenario slipped in as a mod (#69): a server runs one. -->
           <div v-if="extraScenarioMods.length" class="alert alert-warning py-2 small">
             <template v-if="extraScenarioMods.length === 1">
@@ -1987,6 +2010,11 @@ onBeforeUnmount(() => {
                   :class="modBadge(m).cls"
                   :title="modBadge(m).title"
                 >{{ modBadge(m).text }}</span>
+                <span
+                  v-if="failingMods.has(m.modId)"
+                  class="badge text-bg-danger me-1"
+                  title="This mod stopped a server's last start"
+                >failed</span>
                 <span :class="m.explicit ? 'fw-semibold' : ''">{{ m.name || m.modId }}</span>
                 <small
                   v-if="!m.explicit"
