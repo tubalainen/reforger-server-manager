@@ -245,7 +245,7 @@ jobs:
           persist-credentials: false
 
       - name: Install the first stack with the installer
-        run: sudo -E RSM_BIND=local sh scripts/linux/install-local.sh
+        run: sudo env RSM_REF="$RSM_REF" RSM_ASSUME_YES="$RSM_ASSUME_YES" RSM_BIND=local sh scripts/linux/install-local.sh
 
       - name: rsm knows it, and adopts the file of older versions
         run: |
@@ -263,14 +263,14 @@ jobs:
 
       - name: A second install refuses to go over the first
         run: |
-          if sudo -E RSM_DIR=/opt/other RSM_BIND=local sh scripts/linux/install-local.sh; then
+          if sudo env RSM_REF="$RSM_REF" RSM_ASSUME_YES="$RSM_ASSUME_YES" RSM_DIR=/opt/other RSM_BIND=local sh scripts/linux/install-local.sh; then
             echo "the installer installed a second copy"; exit 1
           fi
 
       - name: rsm add-stack sets up a second team
         run: |
           set -eux
-          sudo -E rsm add-stack team2 | tee add.log
+          sudo env RSM_REF="$RSM_REF" RSM_ASSUME_YES="$RSM_ASSUME_YES" rsm add-stack team2 | tee add.log
           grep -q 'Stack .team2. is up' add.log
           sudo test -f /opt/rsm-team2/.env
           sudo grep -q '^RSM_STACK=team2$' /opt/rsm-team2/.env
@@ -312,7 +312,7 @@ jobs:
           # The published images predate the Supervisor until this is released:
           # run this commit's image, which is also what --version is for.
           docker build -t ghcr.io/tubalainen/reforger-server-manager:e2e .
-          sudo -E rsm supervisor install --version e2e | tee sup.log
+          sudo env RSM_REF="$RSM_REF" RSM_ASSUME_YES="$RSM_ASSUME_YES" rsm supervisor install --version e2e | tee sup.log
           grep -q 'The Server Supervisor is up' sup.log
           sudo test -f /opt/rsm-supervisor/.env
           test -f /etc/reforger-server-manager/supervisor.conf
@@ -362,7 +362,7 @@ jobs:
       - name: rsm remove-stack takes the second team away again
         run: |
           set -eux
-          sudo -E rsm remove-stack team2
+          sudo env RSM_REF="$RSM_REF" RSM_ASSUME_YES="$RSM_ASSUME_YES" rsm remove-stack team2
           test ! -e /etc/reforger-server-manager/stacks/team2.conf
           test ! -e /opt/rsm-team2
           ! docker ps -a --format '{{.Names}}' | grep -q '^team2-'
@@ -372,7 +372,7 @@ jobs:
       - name: rsm removes the Supervisor and leaves the stack alone
         run: |
           set -eux
-          sudo -E rsm supervisor remove
+          sudo env RSM_REF="$RSM_REF" RSM_ASSUME_YES="$RSM_ASSUME_YES" rsm supervisor remove
           test ! -e /etc/reforger-server-manager/supervisor.conf
           test ! -e /opt/rsm-supervisor
           ! docker ps -a --format '{{.Names}}' | grep -q '^rsm-supervisor'
@@ -405,7 +405,7 @@ jobs:
       - name: A VPS install on its own Caddy
         run: |
           set -eux
-          sudo -E RSM_DOMAIN=http://one.test sh scripts/linux/install-vps.sh
+          sudo env RSM_REF="$RSM_REF" RSM_ASSUME_YES="$RSM_ASSUME_YES" RSM_DOMAIN=http://one.test sh scripts/linux/install-vps.sh
           for _ in $(seq 60); do
             curl -fsS -H 'Host: one.test' http://127.0.0.1/api/health | grep -q ok && break
             sleep 2
@@ -416,7 +416,7 @@ jobs:
       - name: rsm add-stack --domain moves it behind the edge and adds a second team
         run: |
           set -eux
-          sudo -E rsm add-stack team2 --domain http://two.test | tee add.log
+          sudo env RSM_REF="$RSM_REF" RSM_ASSUME_YES="$RSM_ASSUME_YES" rsm add-stack team2 --domain http://two.test | tee add.log
           grep -q 'Stack .team2. is up' add.log
           test "$(docker inspect -f '{{.State.Running}}' rsm-edge)" = true
           # The first stack's own Caddy gave ports 80 and 443 to the edge.
@@ -473,8 +473,8 @@ jobs:
         run: |
           set -eux
           docker build -t ghcr.io/tubalainen/reforger-server-manager:e2e .
-          sudo -E rsm supervisor install --version e2e
-          sudo -E rsm edge add --supervisor http://sup.test
+          sudo env RSM_REF="$RSM_REF" RSM_ASSUME_YES="$RSM_ASSUME_YES" rsm supervisor install --version e2e
+          sudo env RSM_REF="$RSM_REF" RSM_ASSUME_YES="$RSM_ASSUME_YES" rsm edge add --supervisor http://sup.test
           for _ in $(seq 60); do
             curl -fsS -H 'Host: sup.test' http://127.0.0.1/api/health | grep -q ok && break
             sleep 2
@@ -507,7 +507,7 @@ jobs:
       - name: Removing a stack takes it off the edge
         run: |
           set -eux
-          sudo -E rsm remove-stack team2
+          sudo env RSM_REF="$RSM_REF" RSM_ASSUME_YES="$RSM_ASSUME_YES" rsm remove-stack team2
           ! docker network inspect team2-proxy >/dev/null 2>&1
           ! grep -q team2 /opt/rsm-edge/sites
           ! curl -fsS -H 'Host: two.test' http://127.0.0.1/api/health | grep -q ok
@@ -516,9 +516,9 @@ jobs:
       - name: Without the edge the last stack gets its own Caddy back
         run: |
           set -eux
-          sudo -E rsm edge remove --supervisor
+          sudo env RSM_REF="$RSM_REF" RSM_ASSUME_YES="$RSM_ASSUME_YES" rsm edge remove --supervisor
           ! docker network inspect rsm-supervisor-proxy >/dev/null 2>&1
-          sudo -E rsm edge uninstall
+          sudo env RSM_REF="$RSM_REF" RSM_ASSUME_YES="$RSM_ASSUME_YES" rsm edge uninstall
           ! docker inspect rsm-edge >/dev/null 2>&1
           test ! -e /opt/rsm-edge
           test ! -e /etc/reforger-server-manager/edge.conf
