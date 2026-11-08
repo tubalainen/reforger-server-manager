@@ -9,6 +9,7 @@ import { serverStatus } from '../../status'
 import DeleteServerDialog from '../DeleteServerDialog.vue'
 import StageBadge from '../StageBadge.vue'
 import CleanStartDialog from './CleanStartDialog.vue'
+import ModFailureAlert from './ModFailureAlert.vue'
 import ServerConsole from './ServerConsole.vue'
 import ServerOverview from './ServerOverview.vue'
 import ServerPlayers from './ServerPlayers.vue'
@@ -130,6 +131,24 @@ const errorCount = computed(() => logLines.value.filter(isErrorLine).length)
 watch(stats, (s) => {
   if (logsEnded.value && s?.status === 'running') connectLogs()
 })
+
+// --- Mods that stopped the last start (#270) -------------------------------------
+// Read from the newest console.log: looked at again whenever the server's state
+// moves, so a new attempt that fails (or comes online) shows at once.
+const modFailures = ref(null)
+async function loadModFailures() {
+  try {
+    modFailures.value = await api(`/api/instances/${props.id}/mod-failures`)
+  } catch {
+    /* nothing to say; keep the last answer */
+  }
+}
+watch(
+  () => `${inst.value?.status}|${stats.value?.server_state}`,
+  (now, before) => {
+    if (inst.value && now !== before) loadModFailures()
+  },
+)
 
 // --- Header bits -----------------------------------------------------------------
 const connect = computed(() => stats.value?.connect || '')
@@ -316,6 +335,8 @@ onUnmounted(() => {
       </header>
 
       <div v-if="error" class="alert alert-warning py-2">{{ error }}</div>
+
+      <ModFailureAlert :failures="modFailures" />
 
       <!-- The one thing it needs, with its button -->
       <div

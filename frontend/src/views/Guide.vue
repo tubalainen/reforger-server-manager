@@ -175,6 +175,17 @@ const faq = [
        order you choose decides only between mods that do not depend on each other.`,
   },
   {
+    q: 'A server will not start after a Reforger update. Which mod is it?',
+    a: `When a server's last start failed because of a mod, a red box on top of the server's
+       page names it and says why, read from the server's own console.log. For example: "WCS_Scopes
+       needs WCS_NATO and WCS_RU, which aren't installed". Mods that fail only because
+       another one did are marked knock-on: fix that one first. Remove in template opens the
+       template on the Mods step with the failing mods marked; a Prod template has to be
+       copied to Test first, as usual. The same mods carry a red badge under Settings › Mods.
+       Only a start that failed counts: a mod that logs errors on a server that still comes
+       online is not flagged, since that server is playable.`,
+  },
+  {
     q: 'What is the difference between Stable and Experimental?',
     a: `They are two separate builds of the dedicated server with separate ~10 GB
        downloads (Steam app 1874900 vs 1890870). Experimental servers only accept

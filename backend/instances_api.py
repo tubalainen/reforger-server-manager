@@ -346,6 +346,15 @@ async def load_order(instance_id: int, _user: str = Depends(auth.require_session
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@router.get("/{instance_id}/mod-failures")
+async def mod_failures(instance_id: int, _user: str = Depends(auth.require_session)):
+    """The mods that stopped the server's last start, from its console.log (#270)."""
+    try:
+        return await asyncio.to_thread(instance_service.mod_failures, instance_id)
+    except InstanceError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.get("/{instance_id}/mods")
 async def mods(instance_id: int, _user: str = Depends(auth.require_session)):
     """The template's mods: the version on disk against the Workshop's (#246)."""

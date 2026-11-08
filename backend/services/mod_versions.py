@@ -122,9 +122,26 @@ def installed_versions(roots: list[Path]) -> dict[str, str]:
     return out
 
 
-def _gproj_dependencies(folder: Path) -> list[str]:
+def _gproj_file(folder: Path) -> Path | None:
+    """A mod folder's project file: addon.gproj, or the one .gproj named after
+    the project (`TaskForceMattockWeapons_<id>/TFMattockWeapons.gproj`, seen in
+    a real host's log, #270)."""
+    plain = folder / "addon.gproj"
+    if plain.is_file():
+        return plain
     try:
-        text = (folder / "addon.gproj").read_text(encoding="utf-8", errors="replace")
+        return next((p for p in sorted(folder.glob("*.gproj")) if p.is_file()), None)
+    except OSError:
+        return None
+
+
+def gproj_dependencies(folder: Path) -> list[str]:
+    """The mod ids a mod folder's project file lists as its dependencies."""
+    path = _gproj_file(folder)
+    if path is None:
+        return []
+    try:
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return []
     block = _GPROJ_DEPS_RE.search(text)
@@ -146,7 +163,7 @@ def with_installed_dependencies(ids: list[str], roots: list[Path]) -> set[str]:
             continue
         seen.add(mid)
         for folder in dirs.get(mid, []):
-            queue.extend(d for d in _gproj_dependencies(folder) if d not in seen)
+            queue.extend(d for d in gproj_dependencies(folder) if d not in seen)
     return seen
 
 

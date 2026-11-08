@@ -36,6 +36,9 @@ from services import (
     stages,
     template_service,
 )
+from services import (
+    mod_failures as mod_failures_log,
+)
 
 # Reading a container's log, uptime and load lives in container_reading, shared
 # with the Supervisor's observer gate (#204). Re-exported like server_log below.
@@ -69,6 +72,7 @@ from services.server_log import (  # noqa: F401
     parse_server_status,
 )
 from services.template_service import LaunchParams
+from services.workshop_service import WorkshopError, workshop
 
 logger = logging.getLogger("manager.instance")
 
@@ -1344,6 +1348,80 @@ def engine_load_order(instance_id: int) -> dict:
         row["listed_name"] = names.get(row["modId"]) if row["modId"] else None
     return {"available": True, "log": log.relative_to(_profile_dir(instance_id)).as_posix(),
             "logged_at": log.stat().st_mtime, **result}
+
+
+# Workshop pages fetched to name a missing dependency nothing on disk names.
+_FAILURE_NAME_LOOKUPS = 12
+
+
+def _workshop_names(ids: list[str]) -> dict[str, str]:
+    def one(mid: str) -> tuple[str, str | None]:
+        try:
+            return mid, workshop.get_asset(mid).get("name")
+        except WorkshopError:
+            return mid, None
+
+    ids = ids[:_FAILURE_NAME_LOOKUPS]
+    if not ids:
+        return {}
+    with ThreadPoolExecutor(max_workers=min(6, len(ids))) as pool:
+        return {mid: name for mid, name in pool.map(one, ids) if name}
+
+
+def mod_failures(instance_id: int) -> dict:
+    """The mods that stopped this server's last start, from its console.log (#270).
+
+    Only a start that FAILED counts: a mod that logs errors on a server that
+    still comes online is left alone, since that server is playable.
+    """
+    with Session(get_engine()) as session:
+        inst = session.get(Instance, instance_id)
+        if not inst:
+            raise InstanceError("Server not found")
+        template_id = inst.template_id
+    log = load_order.latest_console_log(_profile_dir(instance_id))
+    if log is None:
+        return {"available": False, "failed": False}
+    try:
+        text = load_order.read_head(log)
+    except OSError:
+        return {"available": False, "failed": False}
+    parsed = mod_failures_log.parse(text)
+    out = {"available": True, "failed": parsed["failed"], "online": parsed["online"],
+           "log": log.relative_to(_profile_dir(instance_id)).as_posix(),
+           "logged_at": log.stat().st_mtime, "template_id": template_id,
+           "mods": [], "script_errors": [], "fatal": []}
+    if not parsed["failed"]:
+        return out
+    idir = Path(config.settings.data_dir) / "instances" / str(instance_id)
+    try:
+        cfg = json.loads((idir / "configs" / CONFIG_FILENAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cfg = {}
+    listed_ids = set(mod_versions.config_mod_ids(cfg))
+    names: dict[str, str] = mod_failures_log.folder_names(text)
+    listed: dict[str, str] = {}
+    for m in mod_versions.config_mods(cfg):
+        mid = str(m.get("modId") or "").upper()
+        if mid and m.get("name"):
+            names[mid] = m["name"]
+            listed.setdefault(mod_failures_log.name_key(m["name"]), mid)
+    dirs = mod_versions.mod_dirs(mod_versions.addon_roots(idir))
+    deps: dict[str, list[str]] = {}
+    for d in parsed["dependencies"]:
+        mid = d["modId"] or listed.get(mod_failures_log.name_key(d["name"]))
+        for folder in dirs.get(mid or "", []):
+            deps.setdefault(mid, []).extend(mod_versions.gproj_dependencies(folder))
+    mods = mod_failures_log.failing_mods(parsed, set(dirs), listed, deps, names)
+    unnamed = [r["modId"] for m in mods for r in m["needs"] if not r["name"]]
+    found = _workshop_names(list(dict.fromkeys(unnamed)))
+    for m in mods:
+        m["in_template"] = m["modId"] in listed_ids
+        for r in m["needs"]:
+            r["name"] = r["name"] or found.get(r["modId"])
+            r["in_template"] = r["modId"] in listed_ids
+    out.update(mods=mods, script_errors=parsed["script_errors"], fatal=parsed["fatal"])
+    return out
 
 
 def list_log_files(instance_id: int) -> list[dict]:
