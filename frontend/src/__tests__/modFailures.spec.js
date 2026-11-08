@@ -4,6 +4,8 @@ import {
   failingFromQuery,
   failureHeadline,
   failureReason,
+  pulledInByText,
+  pullingMods,
   rootCauses,
 } from '../modFailures'
 
@@ -68,5 +70,33 @@ describe('the template editor link', () => {
       '6AAAAAAAAAAAAAAA',
     ])
     expect(failingFromQuery(undefined)).toEqual([])
+  })
+})
+
+describe('a failing mod that is in no template', () => {
+  // The user's host (#270): the server fetched WCS_Scopes for a template mod.
+  const scopes = {
+    ...SCOPES,
+    in_template: false,
+    pulled_in_by: [{ modId: '6A424768653033B3', name: 'Escapists RHS Customize faction' }],
+  }
+  const faction = { ...CUSTOMIZE, modId: '6A424768653033B3', pulled_in_by: [] }
+
+  it('names the template mods that bring it in', () => {
+    expect(pulledInByText(scopes)).toBe(
+      'Not in your template: Escapists RHS Customize faction brings it in.',
+    )
+    expect(pulledInByText(faction)).toBe('')
+  })
+  it('does not mark a puller that is failing itself', () => {
+    expect(pullingMods([scopes, faction])).toEqual([])
+    expect(pullingMods([scopes]).map((p) => p.modId)).toEqual(['6A424768653033B3'])
+  })
+  it('sends the pullers to the template editor', () => {
+    expect(editTemplateRoute(3, [scopes]).query).toEqual({
+      step: 'mods',
+      failing: '62A668F513428630',
+      pulls: '6A424768653033B3',
+    })
   })
 })

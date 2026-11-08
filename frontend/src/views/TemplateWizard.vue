@@ -73,8 +73,11 @@ const failingMods = new Set(failingFromQuery(route.query.failing))
 const failingInList = computed(() => spec.mods.filter((m) => failingMods.has(m.modId)))
 // A failing mod that is only here as a dependency has no ✕: it goes when every mod
 // that requires it does. Those mods are marked too, so the way out is visible.
+// The server page also names the template mods that bring in a failing mod which
+// is not in the template at all (?pulls=, read from the server's disk).
+const pullsFailing = failingFromQuery(route.query.pulls)
 const needsFailing = computed(() => {
-  const out = new Set()
+  const out = new Set(pullsFailing.filter((id) => !failingMods.has(id)))
   for (const f of failingInList.value) {
     if (f.explicit) continue
     for (const root of requiredBy(spec.mods, f.modId)) {
@@ -1802,16 +1805,19 @@ onBeforeUnmount(() => {
           </p>
 
           <div v-if="failingMods.size" class="alert alert-danger py-2 small">
-            <template v-if="failingInList.length">
-              {{ failingInList.length }} mod{{ failingInList.length === 1 ? '' : 's' }} marked
-              <span class="badge text-bg-danger">failed</span> stopped a server's last start.
-              Remove {{ failingInList.length === 1 ? 'it' : 'them' }} with ✕<template v-if="isProd">
-              in a copy (Copy to Test, above)</template>, or open the Workshop page to look for a fix.
-              <template v-if="needsFailing.size">
-                A failed mod that is only here because others require it goes when they do:
-                {{ needsFailing.size === 1 ? 'that is' : 'those are' }} the
-                {{ needsFailing.size }} marked <span class="badge text-bg-warning">needs a failed mod</span>.
+            <template v-if="failingInList.length || needsFailing.size">
+              <template v-if="failingInList.length">
+                {{ failingInList.length }} mod{{ failingInList.length === 1 ? '' : 's' }} marked
+                <span class="badge text-bg-danger">failed</span> stopped a server's last start.
               </template>
+              <template v-if="needsFailing.size">
+                {{ needsFailing.size }} mod{{ needsFailing.size === 1 ? '' : 's' }} marked
+                <span class="badge text-bg-warning">needs a failed mod</span>
+                bring{{ needsFailing.size === 1 ? 's' : '' }} in a mod that did: removing
+                {{ needsFailing.size === 1 ? 'it' : 'them' }} removes that mod too.
+              </template>
+              Remove them with ✕<template v-if="isProd"> in a copy (Copy to Test, above)</template>,
+              or open their Workshop pages to look for a fix.
             </template>
             <template v-else>
               None of the mods that stopped the server's last start are in this template's list

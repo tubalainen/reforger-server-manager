@@ -83,6 +83,13 @@ def addon_names(text: str) -> dict[str, str]:
     return out
 
 
+def available_ids(text: str) -> set[str]:
+    """Every mod id the log lists as available, the base game's own projects
+    (ArmaReforger 58D0FB3206B6F859, core, the Rally DLC) among them: those are
+    never in the Workshop folder, yet a mod depending on them misses nothing."""
+    return {m.group(2).upper() for m in _GPROJ.finditer(text)}
+
+
 def folder_names(text: str) -> dict[str, str]:
     """Mod id -> its folder's name before the id, as the log lists it."""
     out: dict[str, str] = {}
@@ -135,12 +142,15 @@ def parse(text: str) -> dict:
 
 
 def failing_mods(parsed: dict, on_disk: set[str], listed: dict[str, str],
-                 disk_dependencies: dict[str, list[str]], names: dict[str, str]) -> list[dict]:
+                 disk_dependencies: dict[str, list[str]], names: dict[str, str],
+                 projects: dict[str, str] | None = None) -> list[dict]:
     """The mods to show as failing, each with what it needs and why that fails.
 
-    `on_disk`: mod ids with a folder. `listed`: name key -> id for the mods in
-    the config.json the server started with, to place a mod the log names but
-    has no folder for. `disk_dependencies`: id -> every dependency its .gproj
+    `on_disk`: mod ids with a folder. `projects`: name key -> id from each mod
+    folder's .gproj `ID`, which is the name the engine logs a mod under (it can
+    differ from the folder's, #270), so it is asked first. `listed`: name key ->
+    id for the mods in the config.json the server started with, the last
+    resort for a mod with no folder. `disk_dependencies`: id -> every dependency its .gproj
     lists, so a mod shows ALL its missing dependencies, not only the first the
     engine stopped at. `names`: id -> display name.
 
@@ -151,7 +161,8 @@ def failing_mods(parsed: dict, on_disk: set[str], listed: dict[str, str],
     """
     mods = []
     for d in parsed["dependencies"]:
-        mid = d["modId"] or listed.get(name_key(d["name"]))
+        key = name_key(d["name"])
+        mid = (projects or {}).get(key) or d["modId"] or listed.get(key)
         mods.append({"name": d["name"], "modId": mid, "logged": list(d["missing"])})
     failed_ids = {m["modId"] for m in mods if m["modId"]}
     out = []
@@ -174,4 +185,33 @@ def failing_mods(parsed: dict, on_disk: set[str], listed: dict[str, str],
         })
     # The causes first, the mods that only fail because of them after.
     out.sort(key=lambda m: m["knock_on"])
+    return out
+
+
+def pulled_in_by(failing: list[str], template: list[str],
+                 disk_dependencies: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Failing mod id -> the template's mods that bring it in.
+
+    A server fetches a mod's dependencies by itself, so a failing mod is often
+    in no template at all (#270: WCS_Scopes, which a template mod needs). The
+    template's mods are the ones its admin can remove, so for each failing mod
+    this lists the template mods whose dependencies, followed on disk through
+    each .gproj, reach it. A failing mod that is itself in the template is
+    left out: it can be removed as it is.
+    """
+    wanted = {f for f in failing if f not in template}
+    out: dict[str, list[str]] = {f: [] for f in wanted}
+    if not wanted:
+        return out
+    for root in template:
+        seen: set[str] = set()
+        stack = list(disk_dependencies.get(root, []))
+        while stack:
+            mid = stack.pop()
+            if mid in seen:
+                continue
+            seen.add(mid)
+            stack.extend(disk_dependencies.get(mid, []))
+        for f in wanted & seen:
+            out[f].append(root)
     return out

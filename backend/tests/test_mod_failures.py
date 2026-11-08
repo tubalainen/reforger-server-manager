@@ -12,6 +12,17 @@ FIXTURE = Path(__file__).parent / "fixtures" / "console_missing_dependency.log"
 SCOPES, NATO, RU, SOUNDS, WSCRIPTS = ("62A668F513428630", "615806DC6C57AF02", "615818DA7C0343FD",
                                       "631C3C1AEE9C90BC", "68F006D910E7546F")
 CUSTOMIZE = "6AAAAAAAAAAAAAAA"  # the log names it, but lists no folder for it
+# The user's host: folder EscapistsRHS_Customize_faction_6A42…, but its project
+# (the .gproj ID the engine logs) is EscapistsWCSFORTEXCustomize.
+FACTION = "6A424768653033B3"
+BASE = "58D0FB3206B6F859"
+
+
+def _gproj(name: str, *deps: str) -> str:
+    # The shape of Bohemia's sample mods' project files.
+    listed = " ".join(f'"{d}"' for d in deps)
+    return (f'GameProject {{\n ID "{name}"\n GUID "0000000000000000"\n'
+            f' Dependencies {{\n  {listed}\n }}\n}}\n')
 
 
 def _real_log() -> str:
@@ -112,19 +123,24 @@ def server_dir(tmp_path, monkeypatch, logged_in):
     return iid, tmp_path / "instances" / str(iid)
 
 
-def test_the_server_view_joins_log_disk_config_and_workshop(server_dir, monkeypatch):
+def test_the_server_view_on_the_users_host(server_dir, monkeypatch):
+    """As on the user's host (#270): WCS_Scopes is in no template, the server
+    fetched it for a template mod whose project name differs from its folder."""
     iid, idir = server_dir
     session = idir / "profile" / "logs" / "logs_2026-11-08_03-30-12"
     session.mkdir(parents=True)
     (session / "console.log").write_bytes("﻿".encode() + _real_log().encode())
-    scopes = idir / "workshop" / "addons" / f"WCS_Scopes_{SCOPES}"
-    scopes.mkdir(parents=True)
-    (scopes / "addon.gproj").write_text(f'Dependencies {{ "{NATO}" "{RU}" "{SOUNDS}" }}')
-    (idir / "workshop" / "addons" / f"WCS_Sounds_{SOUNDS}").mkdir()
+    addons = idir / "workshop" / "addons"
+    for folder, gproj in (
+        (f"WCS_Scopes_{SCOPES}", _gproj("WCS_Scopes", BASE, WSCRIPTS, NATO, RU)),
+        (f"WCS_Weapon_Scripts_{WSCRIPTS}", _gproj("WCS_Weapon_Scripts", BASE)),
+        (f"EscapistsRHS_Customize_faction_{FACTION}", _gproj("EscapistsWCSFORTEXCustomize", SCOPES)),
+    ):
+        (addons / folder).mkdir(parents=True)
+        (addons / folder / "addon.gproj").write_text(gproj)
     (idir / "configs").mkdir(parents=True)
     (idir / "configs" / instance_service.CONFIG_FILENAME).write_text(json.dumps({"game": {"mods": [
-        {"modId": SCOPES, "name": "WCS Scopes"},
-        {"modId": CUSTOMIZE, "name": "Escapists WCS FORTEX Customize"},
+        {"modId": FACTION, "name": "Escapists RHS Customize faction"},
     ]}}))
     asked = []
 
@@ -137,12 +153,30 @@ def test_the_server_view_joins_log_disk_config_and_workshop(server_dir, monkeypa
     out = instance_service.mod_failures(iid)
 
     assert out["failed"] is True and out["log"] == "logs/logs_2026-11-08_03-30-12/console.log"
-    first, second = out["mods"]
-    assert first["name"] == "WCS Scopes" and first["in_template"] is True
-    assert [(n["name"], n["state"], n["in_template"]) for n in first["needs"]] == [
+    scopes, faction = out["mods"]
+    assert scopes["modId"] == SCOPES and scopes["in_template"] is False
+    assert [(n["name"], n["state"], n["in_template"]) for n in scopes["needs"]] == [
         ("WCS_NATO", "not_installed", False), ("WCS_RU", "not_installed", False)]
-    assert second["modId"] == CUSTOMIZE and second["knock_on"] is True
+    assert scopes["pulled_in_by"] == [{"modId": FACTION, "name": "Escapists RHS Customize faction"}]
+    # Matched through its .gproj ID, not its folder's name.
+    assert faction["modId"] == FACTION and faction["log_name"] == "EscapistsWCSFORTEXCustomize"
+    assert faction["name"] == "Escapists RHS Customize faction"
+    assert faction["knock_on"] is True and faction["in_template"] is True
+    assert faction["pulled_in_by"] == []
     assert sorted(asked) == sorted([NATO, RU])
+
+
+def test_pulled_in_by_follows_dependencies_on_disk():
+    deps = {"T1": ["MID"], "MID": ["F"], "T2": ["OTHER"], "F": ["T1"]}  # a cycle is harmless
+    assert mod_failures.pulled_in_by(["F", "T2"], ["T1", "T2"], deps) == {"F": ["T1"]}
+
+
+def test_a_project_name_is_read_from_the_gproj(tmp_path):
+    folder = tmp_path / f"EscapistsRHS_Customize_faction_{FACTION}"
+    folder.mkdir()
+    (folder / "addon.gproj").write_text(_gproj("EscapistsWCSFORTEXCustomize", SCOPES))
+    assert mod_versions.gproj_project(folder) == ("EscapistsWCSFORTEXCustomize", [SCOPES])
+    assert mod_versions.gproj_project(tmp_path) == (None, [])
 
 
 def test_a_healthy_last_start_reports_nothing(server_dir):

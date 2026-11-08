@@ -179,7 +179,9 @@ const faq = [
     a: `When a server's last start failed because of a mod, a red box on top of the server's
        page names it and says why, read from the server's own console.log. For example: "WCS_Scopes
        needs WCS_NATO and WCS_RU, which aren't installed". Mods that fail only because
-       another one did are marked knock-on: fix that one first. Remove in template opens the
+       another one did are marked knock-on: fix that one first. A failing mod your template
+       does not list (the server fetched it as a dependency) names the template mods that
+       bring it in. Remove in template opens the
        template on the Mods step with the failing mods marked; a Prod template has to be
        copied to Test first, as usual. The same mods carry a red badge under Settings › Mods.
        Only a start that failed counts: a mod that logs errors on a server that still comes

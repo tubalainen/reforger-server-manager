@@ -135,17 +135,36 @@ def _gproj_file(folder: Path) -> Path | None:
         return None
 
 
-def gproj_dependencies(folder: Path) -> list[str]:
-    """The mod ids a mod folder's project file lists as its dependencies."""
+# `GameProject { ID "SampleMod_ModdedCar" GUID "5614E4829EAE4BB1" ...`: the
+# project's name, which is what the engine calls a mod in its log, and which can
+# differ from the folder's (#270: folder EscapistsRHS_Customize_faction_<id>,
+# project EscapistsWCSFORTEXCustomize).
+_GPROJ_NAME_RE = re.compile(r'^\s*ID\s+"([^"]+)"', re.MULTILINE)
+
+
+def _gproj_text(folder: Path) -> str:
     path = _gproj_file(folder)
     if path is None:
-        return []
+        return ""
     try:
-        text = path.read_text(encoding="utf-8-sig", errors="replace")
+        return path.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
-        return []
-    block = _GPROJ_DEPS_RE.search(text)
+        return ""
+
+
+def gproj_dependencies(folder: Path) -> list[str]:
+    """The mod ids a mod folder's project file lists as its dependencies."""
+    block = _GPROJ_DEPS_RE.search(_gproj_text(folder))
     return [i.upper() for i in _HEX_ID_RE.findall(block.group(1))] if block else []
+
+
+def gproj_project(folder: Path) -> tuple[str | None, list[str]]:
+    """A mod folder's project name (its gproj `ID`) and its dependency ids."""
+    text = _gproj_text(folder)
+    name = _GPROJ_NAME_RE.search(text)
+    block = _GPROJ_DEPS_RE.search(text)
+    deps = [i.upper() for i in _HEX_ID_RE.findall(block.group(1))] if block else []
+    return (name.group(1) if name else None), deps
 
 
 def with_installed_dependencies(ids: list[str], roots: list[Path]) -> set[str]:

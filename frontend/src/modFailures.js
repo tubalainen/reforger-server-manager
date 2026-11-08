@@ -61,17 +61,42 @@ export function failureHeadline(failures) {
   return 'The last start failed before the server came online.'
 }
 
-// The template editor, at the Mods step, with these mods marked.
+// "Not in your template: Escapists RHS Customize faction brings it in."
+export function pulledInByText(mod) {
+  const by = mod?.pulled_in_by || []
+  if (!by.length) return ''
+  const names = joinWords(by.map((p) => p.name || p.modId))
+  return `Not in your template: ${names} ${by.length === 1 ? 'brings' : 'bring'} it in.`
+}
+
+// The template mods that bring in a failing mod which is not in the template
+// itself: what there is to remove.
+export function pullingMods(mods) {
+  const failing = new Set((mods || []).map((m) => m.modId).filter(Boolean))
+  const out = new Map()
+  for (const m of mods || []) {
+    for (const p of m.pulled_in_by || []) if (!failing.has(p.modId)) out.set(p.modId, p)
+  }
+  return [...out.values()]
+}
+
+// The template editor, at the Mods step, with the failing mods marked, and the
+// template mods that bring a failing one in marked as needing it.
 export function editTemplateRoute(templateId, mods) {
   const ids = (mods || []).map((m) => m.modId).filter(Boolean)
+  const pulls = pullingMods(mods).map((p) => p.modId)
   return {
     name: 'template-edit',
     params: { id: templateId },
-    query: { step: 'mods', ...(ids.length ? { failing: ids.join(',') } : {}) },
+    query: {
+      step: 'mods',
+      ...(ids.length ? { failing: ids.join(',') } : {}),
+      ...(pulls.length ? { pulls: pulls.join(',') } : {}),
+    },
   }
 }
 
-// ?failing=A,B from the template editor's URL, as upper-case ids.
+// ?failing=A,B (or ?pulls=) from the template editor's URL, as upper-case ids.
 export function failingFromQuery(value) {
   const raw = Array.isArray(value) ? value.join(',') : value || ''
   return raw
