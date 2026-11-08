@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { api } from '../../api'
 import { formatBytes } from '../../format'
 import ModIdLink from '../ModIdLink.vue'
-import { failureReason } from '../../modFailures'
+import { failureReason, pullingMods } from '../../modFailures'
 import { loadOrderSummary, modStateLabel, modsSummary } from '../../modVersions'
 
 // The template's mods on this server: the version on disk against the Workshop's
@@ -46,12 +46,17 @@ const checkedAt = ref('')
 
 // The mods that stopped the last start (#270): marked in the table below.
 const failing = ref(new Map())
+// Template mods that bring in a failing mod which is in no template itself.
+const pulling = ref(new Set())
 async function loadFailures() {
   try {
     const f = await api(`/api/instances/${props.inst.id}/mod-failures`)
-    failing.value = new Map((f.failed ? f.mods : []).filter((m) => m.modId).map((m) => [m.modId, m]))
+    const mods = f.failed ? f.mods : []
+    failing.value = new Map(mods.filter((m) => m.modId).map((m) => [m.modId, m]))
+    pulling.value = new Set(pullingMods(mods).map((p) => p.modId))
   } catch {
     failing.value = new Map()
+    pulling.value = new Set()
   }
 }
 
@@ -199,6 +204,11 @@ const STATE_CLASS = {
                     class="badge text-bg-danger me-1"
                     :title="failureReason(failing.get(m.modId))"
                   >{{ failing.get(m.modId).knock_on ? 'Failed: needs a failed mod' : 'Stopped the last start' }}</span>
+                  <span
+                    v-else-if="pulling.has(m.modId)"
+                    class="badge text-bg-warning me-1"
+                    title="Brings in a mod that stopped the last start"
+                  >Needs a failed mod</span>
                   <span class="badge" :class="STATE_CLASS[m.state]">{{ modStateLabel(m.state, m.locked) }}</span>
                   <span v-if="m.locked && m.state !== 'locked'" class="badge text-bg-secondary ms-1">
                     Locked at {{ m.locked }}

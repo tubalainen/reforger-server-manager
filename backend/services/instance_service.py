@@ -1406,17 +1406,28 @@ def mod_failures(instance_id: int) -> dict:
         if mid and m.get("name"):
             names[mid] = m["name"]
             listed.setdefault(mod_failures_log.name_key(m["name"]), mid)
+    # Every mod folder's project file, read once: the name the engine logs the
+    # mod under, and its dependencies (to list all a mod misses, and to find
+    # the template mods that pull a failing one in).
     dirs = mod_versions.mod_dirs(mod_versions.addon_roots(idir))
     deps: dict[str, list[str]] = {}
-    for d in parsed["dependencies"]:
-        mid = d["modId"] or listed.get(mod_failures_log.name_key(d["name"]))
-        for folder in dirs.get(mid or "", []):
-            deps.setdefault(mid, []).extend(mod_versions.gproj_dependencies(folder))
-    mods = mod_failures_log.failing_mods(parsed, set(dirs), listed, deps, names)
+    projects: dict[str, str] = {}
+    for mid, folders in dirs.items():
+        project, found_deps = mod_versions.gproj_project(folders[0])
+        deps[mid] = found_deps
+        if project:
+            projects.setdefault(mod_failures_log.name_key(project), mid)
+    available = set(dirs) | mod_failures_log.available_ids(text)
+    mods = mod_failures_log.failing_mods(parsed, available, listed, deps, names, projects)
+    template = mod_versions.config_mod_ids(cfg)
+    pullers = mod_failures_log.pulled_in_by(
+        [m["modId"] for m in mods if m["modId"]], template, deps)
     unnamed = [r["modId"] for m in mods for r in m["needs"] if not r["name"]]
     found = _workshop_names(list(dict.fromkeys(unnamed)))
     for m in mods:
         m["in_template"] = m["modId"] in listed_ids
+        m["pulled_in_by"] = [{"modId": p, "name": names.get(p)}
+                             for p in pullers.get(m["modId"], [])]
         for r in m["needs"]:
             r["name"] = r["name"] or found.get(r["modId"])
             r["in_template"] = r["modId"] in listed_ids
