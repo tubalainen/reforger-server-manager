@@ -3,6 +3,8 @@
 // wizard's config preview used to show for an unnamed template (#85).
 export function errorMessage(detail, status) {
   if (typeof detail === 'string' && detail) return detail
+  // A refusal that carries data for the page to act on: { message, ... }.
+  if (detail && typeof detail.message === 'string' && detail.message) return detail.message
   if (Array.isArray(detail) && detail.length) {
     return detail
       .map((d) => {

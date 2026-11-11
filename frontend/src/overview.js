@@ -21,7 +21,8 @@ export function joinNames(names) {
  * @param updates  branches from /api/serverfiles/auto-update with update_available
  * @param autoDownload  whether the manager downloads new server files by itself
  * @returns [{ key, subject, text, action }] where action is
- *   { kind: 'restart', id } | { kind: 'update', branch } | { kind: 'server-files' } | null
+ *   { kind: 'restart', id } | { kind: 'update', branch } | { kind: 'server-files' } |
+ *   { kind: 'settings', id } | { kind: 'console', id } | null
  */
 export function attentionItems(servers = [], updates = [], autoDownload = false) {
   const items = []
@@ -34,6 +35,19 @@ export function attentionItems(servers = [], updates = [], autoDownload = false)
         subject: s.name,
         text: `Template “${s.template_name}” was edited after this server started. Players get the change after a restart.`,
         action: { kind: 'restart', id: s.id },
+      })
+    }
+  }
+
+  // It went down several times in a row without coming online, so the manager
+  // stopped bringing it back. Its log says what stopped it.
+  for (const s of servers) {
+    if (s.start_gave_up) {
+      items.push({
+        key: `start-gave-up-${s.id}`,
+        subject: s.name,
+        text: `Stopped: it went down ${s.start_gave_up.attempts} times in a row without coming online, so it is no longer restarted. Its page and Console show what stopped it. Start it again once that is fixed.`,
+        action: { kind: 'console', id: s.id },
       })
     }
   }

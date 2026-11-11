@@ -6,6 +6,7 @@ import DeleteServerDialog from '../components/DeleteServerDialog.vue'
 import CleanStartDialog from '../components/server/CleanStartDialog.vue'
 import Sparkline from '../components/Sparkline.vue'
 import StageBadge from '../components/StageBadge.vue'
+import { startServerFilesDownload } from '../jobs'
 import { groupByStage, versionOptions } from '../stages'
 import { formatBytes, formatUptime } from '../format'
 import { attentionItems, branchLabel } from '../overview'
@@ -20,7 +21,7 @@ const router = useRouter()
 
 const summary = ref(null)
 const servers = computed(() => summary.value?.servers || [])
-// New Arma server releases the daily check found (#177).
+// New Arma server releases the hourly check found (#177).
 const updates = ref([])
 const autoDownload = ref(false)
 const templates = ref([])
@@ -109,6 +110,7 @@ const ATTENTION_BUTTON = {
   update: 'Update server files',
   'server-files': 'Server files',
   settings: 'Choose a template',
+  console: 'Open Console',
 }
 
 function runAttention(item) {
@@ -118,8 +120,8 @@ function runAttention(item) {
     if (s) action(s, 'restart')
   } else if (a.kind === 'update') {
     updateNow(a.branch)
-  } else if (a.kind === 'settings') {
-    router.push({ name: 'instance-detail', params: { id: a.id, tab: 'settings' } })
+  } else if (a.kind === 'settings' || a.kind === 'console') {
+    router.push({ name: 'instance-detail', params: { id: a.id, tab: a.kind } })
   } else {
     router.push({ name: 'server-files' })
   }
@@ -130,7 +132,7 @@ function runAttention(item) {
 async function updateNow(branch) {
   error.value = ''
   try {
-    await api(`/api/serverfiles/${branch}/download`, { method: 'POST' })
+    if (!(await startServerFilesDownload(branch))) return
   } catch (e) {
     error.value = e.message
     return

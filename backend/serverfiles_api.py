@@ -107,7 +107,7 @@ class AutoUpdateSettings(BaseModel):
 
 @router.get("/auto-update")
 async def auto_update_status(_user: str = Depends(auth.require_session)):
-    """What the daily check last found, plus the toggles (#177)."""
+    """What the hourly check last found, plus the toggles (#177)."""
     return await asyncio.to_thread(auto_update.status)
 
 
@@ -122,7 +122,7 @@ async def set_auto_update(
 
 @router.post("/auto-update/check", status_code=202)
 async def run_auto_update_check(_user: str = Depends(auth.require_session)):
-    """Run the daily check now instead of waiting for it to come due."""
+    """Run the check now instead of waiting for it to come due."""
     if not await asyncio.to_thread(docker_service.ping):
         raise HTTPException(status_code=409, detail="Docker daemon is not reachable")
     auto_update.start_check()
@@ -156,9 +156,36 @@ async def check_update(branch: str, _user: str = Depends(auth.require_session)):
     return await asyncio.to_thread(steam.update_status, branch)
 
 
+class DownloadRequest(BaseModel):
+    # Download although servers are running on these files (the GUI asks first).
+    force: bool = False
+
+
 @router.post("/{branch}/download", status_code=202)
-async def start_download(branch: str, _user: str = Depends(auth.require_session)):
+async def start_download(
+    branch: str, body: DownloadRequest | None = None,
+    _user: str = Depends(auth.require_session),
+):
+    """Start the branch's SteamCMD download.
+
+    SteamCMD rewrites the folder every server of the branch has mounted, so
+    servers running on it are named first and the caller has to confirm
+    (`force`): they need a restart straight after, and can crash before it.
+    """
     _require_branch(branch)
+    if not (body and body.force) and await asyncio.to_thread(docker_service.ping):
+        running = await asyncio.to_thread(
+            instance_service.running_instance_names_for_branch, branch
+        )
+        if running:
+            raise HTTPException(status_code=409, detail={
+                "message": (
+                    f"These {branch} servers are running on the files this download "
+                    f"rewrites: {', '.join(running)}. Stop them first, or confirm the "
+                    "download and restart them as soon as it is done."
+                ),
+                "running_servers": running,
+            })
     try:
         job = await steam.start(branch)
     except RuntimeError as exc:

@@ -322,7 +322,7 @@ const faq = [
   },
   {
     q: 'How do I update the server files when the game updates?',
-    a: `The manager checks Steam once a day by itself and, when a new release is out, puts a
+    a: `The manager checks Steam every hour by itself and, when a new release is out, puts a
        prompt at the top of the Servers page and a count on System in the menu; one click
        on the prompt downloads it. You can still do it by hand under System › Server files,
        and under Automatic updates there you can let the manager download new server files on its own
@@ -786,7 +786,7 @@ const faq = [
             Steam, or delete it there.
           </li>
           <li>
-            <strong>Automatic updates:</strong> once a day the manager asks Steam whether
+            <strong>Automatic updates:</strong> every hour the manager asks Steam whether
             a newer server release exists for the branches you have installed, and says so
             at the top of the Servers page and with a count on System in the menu. Nothing
             is downloaded unless you tick

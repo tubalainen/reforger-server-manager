@@ -25,6 +25,15 @@ describe('attentionItems', () => {
     expect(item.action).toEqual({ kind: 'restart', id: 1 })
   })
 
+  it('says when a server was stopped after starts that never came online', () => {
+    const [item] = attentionItems([
+      server({ status: 'exited', start_gave_up: { attempts: 3, at: '2026-11-11T04:00:00+00:00' } }),
+    ])
+    expect(item.subject).toBe('conflict-1')
+    expect(item.text).toContain('3 times in a row')
+    expect(item.action).toEqual({ kind: 'console', id: 1 })
+  })
+
   it('ignores a stale template on a server that is not running', () => {
     // The flag only means something for a live config; a stopped server picks the
     // template up when it next starts.

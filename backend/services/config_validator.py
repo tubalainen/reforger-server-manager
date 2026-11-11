@@ -116,7 +116,7 @@ def known_paths() -> set[str]:
         scenario_id="_",
         # The blocks to_config writes conditionally; on = their keys are known.
         persistence_enabled=True,
-        rcon_password="_",
+        rcon_password="___",  # the shortest the engine takes
         disable_navmesh_streaming=True,
         # Written only when non-empty (#154) — one entry each so the paths count
         # as known and a hand-written list isn't reported as a custom key.

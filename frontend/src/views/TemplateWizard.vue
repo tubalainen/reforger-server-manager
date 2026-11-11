@@ -656,10 +656,14 @@ function chooseScenario(sc, res) {
   applyScenario(sc, res)
 }
 
-// A Workshop player count we are willing to act on (the field accepts 1–256).
+// A Workshop player count we are willing to remember as the scenario's own.
 function usablePlayerCount(n) {
   return Number.isInteger(n) && n >= 1 && n <= 256 ? n : null
 }
+
+// The engine takes at most 128 players, whatever a scenario declares.
+const MAX_PLAYERS_LIMIT = 128
+const scenarioMaxPlayers = (n) => Math.min(n, MAX_PLAYERS_LIMIT)
 
 function applyScenario(sc, res) {
   spec.scenario_id = sc.scenario_id
@@ -670,8 +674,8 @@ function applyScenario(sc, res) {
   // step keeps the field editable and offers this value back as a reset.
   spec.scenario_player_count = usablePlayerCount(sc.player_count)
   if (spec.scenario_player_count) {
-    spec.max_players = spec.scenario_player_count
-    maxPlayersNotice.value = spec.scenario_player_count
+    spec.max_players = scenarioMaxPlayers(spec.scenario_player_count)
+    maxPlayersNotice.value = spec.max_players
   }
   // Swap in this scenario's mod + full dependency tree, dropping the previous
   // scenario's mods (but keeping any also required by a user-added mod).
@@ -698,11 +702,12 @@ function removeScenario() {
 const maxPlayersNotice = ref(null)
 
 const maxPlayersOverridden = computed(
-  () => !!spec.scenario_player_count && spec.max_players !== spec.scenario_player_count,
+  () => !!spec.scenario_player_count
+    && spec.max_players !== scenarioMaxPlayers(spec.scenario_player_count),
 )
 
 function resetMaxPlayers() {
-  spec.max_players = spec.scenario_player_count
+  spec.max_players = scenarioMaxPlayers(spec.scenario_player_count)
 }
 
 // ---- Step 2: mods ----------------------------------------------------------
@@ -2299,16 +2304,18 @@ onBeforeUnmount(() => {
                 <div class="col-md-6">
                   <label class="form-label">Admin password</label>
                   <input v-model="spec.admin_password" class="form-control" placeholder="(none)" />
+                  <div class="form-text">No spaces: the server refuses a password with one.</div>
                 </div>
                 <div class="col-md-4">
                   <label class="form-label">Max players</label>
-                  <input v-model.number="spec.max_players" type="number" min="1" max="256" class="form-control" />
+                  <input v-model.number="spec.max_players" type="number" class="form-control"
+                    v-bind="limitsFor(fieldCatalog, 'max_players')" />
                   <!-- Seeded from the scenario's Workshop player count, always overridable (#65) -->
                   <small v-if="spec.scenario_player_count" class="d-block mt-1">
                     <span v-if="maxPlayersOverridden" class="text-warning-emphasis">
                       "{{ scenarioDisplayName }}" is built for
                       {{ spec.scenario_player_count }} players.
-                      <a href="#" class="ms-1" @click.prevent="resetMaxPlayers">Use {{ spec.scenario_player_count }}</a>
+                      <a href="#" class="ms-1" @click.prevent="resetMaxPlayers">Use {{ scenarioMaxPlayers(spec.scenario_player_count) }}</a>
                     </span>
                     <span v-else class="text-secondary">
                       Matches the {{ spec.scenario_player_count }} players
@@ -2332,6 +2339,7 @@ onBeforeUnmount(() => {
                 <div class="col-12">
                   <label class="form-label">RCON password <small class="text-secondary">(optional)</small></label>
                   <input v-model="spec.rcon_password" class="form-control" placeholder="(RCON disabled)" />
+                  <div class="form-text">At least 3 characters, no spaces.</div>
                 </div>
                 <div class="col-12 d-flex gap-4">
                   <div class="form-check">

@@ -35,6 +35,7 @@ from services import (
     pak_index,
     ports,
     stages,
+    start_guard,
     template_service,
 )
 from services import (
@@ -768,6 +769,9 @@ def start_instance(instance_id: int, update_mods: bool = False) -> None:
     mods_mode = mod_versions.MODE_UPDATE if update_mods else mod_versions.MODE_FREEZE
     if not docker_service.ping():
         raise InstanceError("Docker daemon is not reachable")
+    # A start someone asked for: failed starts are counted from nothing again.
+    # (The monitor's own recovery keeps its count, see _recover.)
+    start_guard.clear(instance_id)
     with Session(get_engine()) as session:
         inst = session.get(Instance, instance_id)
         if not inst:
@@ -1021,6 +1025,7 @@ def stop_instance(instance_id: int) -> None:
         session.add(inst)
         session.commit()
     forget_seen_running(instance_id)  # a user stop is not a crash to recover from (#115)
+    start_guard.forget_run(instance_id)  # ...nor a failed start
     container = docker_service.find_instance_container(instance_id)
     if container:
         forget_run(container.id)  # whatever it was, it is not online any more (#76)
@@ -1050,6 +1055,7 @@ def delete_instance(instance_id: int, purge_data: bool = False) -> None:
         _purge_instance_dir(instance_id)
     forget_cpu_sample(instance_id)
     forget_seen_running(instance_id)
+    start_guard.clear(instance_id)
     with Session(get_engine()) as session:
         inst = session.get(Instance, instance_id)
         if inst:
@@ -1178,6 +1184,9 @@ def instance_view(
         **_template_switch_view(inst, template_names),
         "status": status,
         "server_files_ready": server_files_ready(inst.branch),
+        # {attempts, at} while it is left stopped after starts that never came
+        # online (start_guard); None otherwise.
+        "start_gave_up": start_guard.given_up(inst.id),
     }
 
 
@@ -1849,6 +1858,7 @@ def instances_summary() -> dict:
             "template_changed": False,
             **_template_switch_view(inst, names),
             "server_files_ready": files_ready[inst.branch],
+            "start_gave_up": start_guard.given_up(inst.id),
             "next_restart": next_restart_label(inst),
             "uptime_seconds": None,
             "server_fps": None,
@@ -2390,6 +2400,63 @@ def forget_seen_running(instance_id: int) -> None:
     _seen_running.discard(instance_id)
 
 
+def _monitor_containers() -> dict:
+    """Every server container, in one listing, for the failed-start count."""
+    try:
+        return docker_service.instance_containers()
+    except (DockerException, OSError):
+        return {}
+
+
+def _run_is_online(container) -> bool:
+    try:
+        return server_state(container, current_run_log(container)) == STATE_ONLINE
+    except (DockerException, OSError):
+        return False
+
+
+def _gave_up_starting(inst: Instance, container, status: str) -> bool:
+    """Count this server's failed starts; stop it for good after too many.
+
+    True when it was stopped here, so the caller must not start it again.
+    """
+    if container is None:
+        return False
+    try:
+        attrs = container.attrs or {}
+    except AttributeError:
+        return False
+    started = str((attrs.get("State") or {}).get("StartedAt") or "")
+    if not started or started.startswith("0001-01-01"):
+        return False  # created, never started: no run to judge
+    failed = start_guard.observe(
+        inst.id, started, int(attrs.get("RestartCount") or 0), status == "running",
+        lambda: _run_is_online(container),
+    )
+    if failed < start_guard.MAX_FAILED_STARTS:
+        return False
+    logger.warning(
+        "Instance %s went down %d times in a row without coming online; leaving it "
+        "stopped. Its console log says what stopped it.", inst.name, failed,
+    )
+    try:
+        stop_instance(inst.id)  # also ends Docker's own restart loop
+    except InstanceError as exc:
+        logger.warning("Could not stop %s: %s", inst.name, exc)
+    start_guard.give_up(inst.id, failed)
+    return True
+
+
+def _recover(instance_id: int) -> None:
+    """Start a server the monitor found down, keeping its failed-start count:
+    start_instance clears it, as it must for a start someone asked for."""
+    kept = start_guard.snapshot(instance_id)
+    try:
+        start_instance(instance_id)
+    finally:
+        start_guard.restore(instance_id, kept)
+
+
 def reconcile_and_recover() -> None:
     """Restart instances that should be running but whose container is down.
 
@@ -2407,15 +2474,24 @@ def reconcile_and_recover() -> None:
     Without the seen-running gate an auto_restart / no-auto_start server was
     dragged back up after every reboot — the #115 bug. Called periodically and
     on startup. Non-fatal: logs and moves on.
+
+    A server that keeps going down without ever coming online is not brought
+    back for ever: after start_guard.MAX_FAILED_STARTS in a row it is stopped
+    and left stopped (see start_guard).
     """
     if not docker_service.ping():
         return
     with Session(get_engine()) as session:
         instances = _all_instances(session)
+    containers = _monitor_containers() if any(
+        i.desired_state == "running" and i.template_id is not None for i in instances
+    ) else {}
     for inst in instances:
         if inst.desired_state != "running" or inst.template_id is None:
             continue  # nothing to run without a template (#223)
         status = container_status(inst.id)
+        if _gave_up_starting(inst, containers.get(inst.id), status):
+            continue
         if status == "running":
             _seen_running.add(inst.id)  # remember it for crash detection
             continue
@@ -2428,7 +2504,7 @@ def reconcile_and_recover() -> None:
             continue  # can't run without server files; don't spam restart attempts
         logger.info("Recovering instance %s (was %s)", inst.name, status)
         try:
-            start_instance(inst.id)
+            _recover(inst.id)
             _seen_running.add(inst.id)
         except InstanceError as exc:
             logger.warning("Recovery of %s failed: %s", inst.name, exc)

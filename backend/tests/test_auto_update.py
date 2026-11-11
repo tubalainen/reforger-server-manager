@@ -1,4 +1,4 @@
-"""The daily server-files update check, its two toggles and their chain (#177)."""
+"""The hourly server-files update check, its two toggles and their chain (#177)."""
 import time
 
 import pytest
@@ -95,7 +95,7 @@ async def test_check_records_the_new_build_without_downloading(monkeypatch):
     assert stable["latest_build"] == "200"
     assert stable["update_available"] is True
     assert started == []  # auto_download is off: the prompt is all you get
-    assert auto_update.due() is False  # ...and the daily clock was reset
+    assert auto_update.due() is False  # ...and the clock was reset
 
 
 @pytest.mark.anyio
@@ -191,7 +191,7 @@ async def test_tick_does_nothing_until_the_check_comes_due(monkeypatch):
 
     auto_update._write({**auto_update._read(), "last_check_at": time.time()})
     await auto_update.tick()
-    assert checks == [1]  # ...and not again for another day
+    assert checks == [1]  # ...and not again for another hour
 
 
 # --------------------------------------------------------------------------- #
@@ -353,3 +353,82 @@ def test_api_saves_the_toggles(logged_in):
 def test_check_now_needs_docker(logged_in):
     # conftest keeps the daemon down, and the check spawns a steamcmd container.
     assert logged_in.post("/api/serverfiles/auto-update/check").status_code == 409
+
+
+# --------------------------------------------------------------------------- #
+# Hourly, with a retry; no download underneath running servers
+# --------------------------------------------------------------------------- #
+
+def test_the_check_comes_due_every_hour():
+    auto_update._write({**auto_update._read(), "last_check_at": 1000.0})
+
+    assert auto_update.due(now=1000.0 + 3599) is False
+    assert auto_update.due(now=1000.0 + 3600) is True
+
+
+def test_a_check_steam_did_not_answer_is_retried_after_ten_minutes():
+    state = auto_update._read()
+    state["last_check_at"] = 1000.0
+    state["branches"] = {"stable": {"latest_build": None, "checked_at": 1000.0,
+                                    "error": "Steam did not report a build id"}}
+    auto_update._write(state)
+
+    assert auto_update.due(now=1000.0 + 599) is False
+    assert auto_update.due(now=1000.0 + 600) is True
+    assert auto_update.status()["next_check_at"] == 1000.0 + 600
+
+
+@pytest.mark.anyio
+async def test_auto_download_waits_while_servers_run_and_restart_is_off(monkeypatch):
+    # SteamCMD rewrites the folder those servers have mounted, and with the
+    # restart off nothing would move them off the changed files afterwards.
+    auto_update.save_settings(True, False)
+    _wire(monkeypatch, installed={"stable": "100"}, latest={"stable": "200"})
+    monkeypatch.setattr(
+        instance_service, "running_instance_names_for_branch", lambda b: ["Alpha", "Bravo"]
+    )
+    started = []
+    monkeypatch.setattr(auto_update, "_start_download", lambda b: started.append(b))
+
+    await auto_update._run_check()
+
+    assert started == []
+    stable = _branch(auto_update.status(), "stable")
+    assert stable["update_available"] is True
+    assert stable["held_for"] == ["Alpha", "Bravo"]
+
+
+@pytest.mark.anyio
+async def test_auto_download_goes_ahead_when_it_may_restart_the_servers(monkeypatch):
+    auto_update.save_settings(True, True)
+    _wire(monkeypatch, installed={"stable": "100"}, latest={"stable": "200"})
+    monkeypatch.setattr(
+        instance_service, "running_instance_names_for_branch", lambda b: ["Alpha"]
+    )
+    started = []
+    monkeypatch.setattr(auto_update, "_start_download", lambda b: started.append(b))
+
+    await auto_update._run_check()
+
+    assert started == ["stable"]
+    assert _branch(auto_update.status(), "stable")["held_for"] == []
+
+
+@pytest.mark.anyio
+async def test_a_held_download_starts_once_the_servers_are_stopped(monkeypatch):
+    auto_update.save_settings(True, False)
+    _wire(monkeypatch, installed={"stable": "100"}, latest={"stable": "200"})
+    running = ["Alpha"]
+    monkeypatch.setattr(
+        instance_service, "running_instance_names_for_branch", lambda b: list(running)
+    )
+    started = []
+    monkeypatch.setattr(auto_update, "_start_download", lambda b: started.append(b))
+
+    await auto_update._run_check()
+    assert started == []
+
+    running.clear()
+    await auto_update._run_check()
+    assert started == ["stable"]
+    assert _branch(auto_update.status(), "stable")["held_for"] == []

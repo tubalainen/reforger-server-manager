@@ -106,3 +106,52 @@ def test_websocket_snapshot_with_session(logged_in):
         assert snap["state"]["branch"] == "stable"
         assert snap["state"]["job"]["status"] == "running"
         assert len(snap["log"]) == 1
+
+
+# --------------------------------------------------------------------------- #
+# A download rewrites the files running servers have mounted
+# --------------------------------------------------------------------------- #
+
+def _wire_download(monkeypatch, running):
+    from services import docker_service, instance_service
+
+    monkeypatch.setattr(docker_service, "ping", lambda: True)
+    monkeypatch.setattr(
+        instance_service, "running_instance_names_for_branch", lambda b: list(running)
+    )
+    started = []
+
+    async def fake_start(branch):
+        started.append(branch)
+        return DownloadJob(branch=branch, started_at=time.time())
+
+    monkeypatch.setattr(steam, "start", fake_start)
+    return started
+
+
+def test_download_names_the_running_servers_and_waits_for_a_yes(logged_in, monkeypatch):
+    started = _wire_download(monkeypatch, ["Alpha", "Bravo"])
+
+    r = logged_in.post("/api/serverfiles/stable/download")
+
+    assert r.status_code == 409
+    detail = r.json()["detail"]
+    assert detail["running_servers"] == ["Alpha", "Bravo"]
+    assert "Alpha, Bravo" in detail["message"]
+    assert started == []
+
+
+def test_download_goes_ahead_once_confirmed(logged_in, monkeypatch):
+    started = _wire_download(monkeypatch, ["Alpha"])
+
+    r = logged_in.post("/api/serverfiles/stable/download", json={"force": True})
+
+    assert r.status_code == 202
+    assert started == ["stable"]
+
+
+def test_download_asks_nothing_when_no_server_is_running(logged_in, monkeypatch):
+    started = _wire_download(monkeypatch, [])
+
+    assert logged_in.post("/api/serverfiles/stable/download").status_code == 202
+    assert started == ["stable"]

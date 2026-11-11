@@ -82,7 +82,7 @@ def test_wrong_type_on_a_modelled_value_errors():
 
 def test_bad_rcon_permission_errors():
     cfg = _config()
-    cfg["rcon"] = {"password": "pw", "permission": "wizard", "maxClients": 4}
+    cfg["rcon"] = {"password": "pwd", "permission": "wizard", "maxClients": 4}
     assert any(e["path"] == "rcon.permission" for e in validate_config(cfg)["errors"])
 
 
@@ -98,7 +98,7 @@ def test_optional_blocks_are_known_keys():
     # must not be mistaken for custom keys just because the default spec omits them.
     cfg = TemplateSpec(
         name="_", scenario_id="{ECC6}M.conf",
-        persistence_enabled=True, rcon_password="pw", disable_navmesh_streaming=True,
+        persistence_enabled=True, rcon_password="pwd", disable_navmesh_streaming=True,
     ).to_config()
     result = validate_config(cfg)
     assert result["errors"] == []
