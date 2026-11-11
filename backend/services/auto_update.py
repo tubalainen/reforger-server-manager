@@ -1,13 +1,18 @@
-"""Daily check for new Arma Reforger server releases on Steam (#177).
+"""Hourly check for new Arma Reforger server releases on Steam (#177).
 
 Three separate things, each one opt-in beyond the first:
 
-  1. Every 24 hours the manager asks Steam for the current build id of each
+  1. Every hour the manager asks Steam for the current build id of each
      INSTALLED branch and remembers it. Nothing is downloaded; the Server
-     Instances page just says an update is waiting.
+     Instances page just says an update is waiting. It was once a day, which
+     could leave a server on the old build, where updated players cannot join
+     it, for most of a day after a game patch. A check Steam did not answer is
+     tried again after ten minutes.
   2. With *auto_download* on, a branch whose build moved starts its normal
      SteamCMD download by itself — the same job the Download button starts,
-     visible in the same place with the same log.
+     visible in the same place with the same log. Not while servers of that
+     branch are running and *auto_restart* is off: the download rewrites the
+     files those servers have mounted, and nothing would restart them after.
   3. With *auto_restart* on, every instance of that branch that should be
      running is restarted once the download finished, which is the only way a
      server actually starts running the new build.
@@ -34,7 +39,9 @@ from services.steam_service import steam
 logger = logging.getLogger("manager.autoupdate")
 
 SETTINGS_KEY = "auto_update"
-CHECK_INTERVAL_SECONDS = 24 * 3600
+CHECK_INTERVAL_SECONDS = 3600
+# How soon a check is repeated when Steam gave no build id for a branch.
+RETRY_INTERVAL_SECONDS = 600
 # How often a running auto-download is looked at while waiting for it to end.
 DOWNLOAD_POLL_SECONDS = 5
 
@@ -116,6 +123,8 @@ def _branch_status(name: str, state: dict) -> dict:
         ),
         "checked_at": recorded.get("checked_at"),
         "error": recorded.get("error", ""),
+        # Servers that kept the automatic download from starting (see _hold).
+        "held_for": list(recorded.get("held_for") or []) if installed_build != latest_build else [],
         "downloading": bool(job and job.running),
     }
 
@@ -128,7 +137,7 @@ def status() -> dict:
         "auto_download": state["auto_download"],
         "auto_restart": state["auto_restart"],
         "last_check_at": last,
-        "next_check_at": (last + CHECK_INTERVAL_SECONDS) if last else None,
+        "next_check_at": (last + _interval(state)) if last else None,
         "checking": busy(),
         "branches": [_branch_status(name, state) for name in config.BRANCHES],
     }
@@ -150,23 +159,31 @@ def save_settings(auto_download: bool | None, auto_restart: bool | None) -> dict
 
 
 # --------------------------------------------------------------------------- #
-# The daily check
+# The hourly check
 # --------------------------------------------------------------------------- #
 
 def busy() -> bool:
     return _check_task is not None and not _check_task.done()
 
 
+def _interval(state: dict) -> int:
+    """Seconds until the next check: sooner when the last one got no answer."""
+    failed = any(entry.get("error") for entry in state["branches"].values())
+    return RETRY_INTERVAL_SECONDS if failed else CHECK_INTERVAL_SECONDS
+
+
 def due(now: float | None = None) -> bool:
-    """True when 24h have passed since the last completed check (or none has)."""
-    last = _read()["last_check_at"]
+    """True when an hour has passed since the last completed check (ten minutes
+    if Steam did not answer it), or none has run yet."""
+    state = _read()
+    last = state["last_check_at"]
     if not last:
         return True
-    return (now or time.time()) - last >= CHECK_INTERVAL_SECONDS
+    return (now or time.time()) - last >= _interval(state)
 
 
 async def tick() -> None:
-    """One background-monitor pass: start the daily check if it is due.
+    """One background-monitor pass: start the check if it is due.
 
     Returns immediately — the check itself runs as its own task, because
     querying Steam spawns a short container per branch and must never hold up
@@ -234,6 +251,8 @@ async def _run_check() -> None:
         state = await asyncio.to_thread(_record_check, results)
         if state["auto_download"]:
             for branch in updated:
+                if not state["auto_restart"] and await asyncio.to_thread(_hold, branch):
+                    continue
                 _start_download(branch)
     except Exception as exc:  # a failed check must never take the monitor down
         logger.warning("Automatic update check failed: %s", exc)
@@ -242,6 +261,31 @@ async def _run_check() -> None:
 # --------------------------------------------------------------------------- #
 # Auto-download → auto-restart
 # --------------------------------------------------------------------------- #
+
+def _hold(branch: str) -> bool:
+    """Keep the automatic download back while servers run on these files.
+
+    SteamCMD rewrites the folder every server of the branch has mounted. With
+    the automatic restart on, they are restarted onto the new build as soon as
+    it is down. With it off they would be left running on files that changed
+    underneath them, so the download waits: for a check that finds them
+    stopped, the restart switch, or the Download button. Returns True (and
+    records which servers) when it was held back (blocking).
+    """
+    names = instance_service.running_instance_names_for_branch(branch)
+    if not names:
+        return False
+    state = _read()
+    entry = state["branches"].get(branch)
+    if entry is not None:
+        entry["held_for"] = names
+        _write(state)
+    logger.info(
+        "New %s build not downloaded automatically: %s still running on these "
+        "files and the automatic restart is off", branch, ", ".join(names),
+    )
+    return True
+
 
 def _start_download(branch: str) -> None:
     task = _download_tasks.get(branch)

@@ -19,6 +19,14 @@ PC_ONLY_PLATFORMS = ["PLATFORM_PC"]
 # turn config.json into something the engine has to chew through.
 MISSION_HEADER_MAX_BYTES = 64 * 1024
 
+# The engine's own upper limits (Server Config wiki). The model used to allow
+# 256 players and 12000 m, which saved cleanly and then stopped the server at
+# its config check.
+MAX_PLAYERS_LIMIT = 128
+MAX_VIEW_DISTANCE_LIMIT = 10000
+# rcon.password: "must be at least 3 characters long".
+RCON_PASSWORD_MIN = 3
+
 
 def merge_patch(base: dict, patch: dict) -> dict:
     """Apply an RFC 7386 JSON Merge Patch to `base`, returning a new dict.
@@ -271,7 +279,8 @@ class TemplateSpec(BaseModel):
     game_name: str = "Arma Reforger Server"
     password: str = ""
     admin_password: str = ""
-    max_players: int = Field(default=64, ge=1, le=256)
+    # 1..128 is the engine's own range (Server Config wiki); it refuses more.
+    max_players: int = Field(default=64, ge=1, le=MAX_PLAYERS_LIMIT)
     visible: bool = True
     cross_platform: bool = True
     supported_platforms: list[str] = Field(default_factory=lambda: list(DEFAULT_SUPPORTED_PLATFORMS))
@@ -285,7 +294,7 @@ class TemplateSpec(BaseModel):
 
     # gameProperties
     battleye: bool = True
-    server_max_view_distance: int = Field(default=1600, ge=500, le=12000)
+    server_max_view_distance: int = Field(default=1600, ge=500, le=MAX_VIEW_DISTANCE_LIMIT)
     # The server's JSON schema requires >= 50 for this field (see issue #28).
     server_min_grass_distance: int = Field(default=50, ge=50, le=150)
     network_view_distance: int = Field(default=1500, ge=500, le=5000)
@@ -364,6 +373,22 @@ class TemplateSpec(BaseModel):
             seen.add(key)
             out.append(admin)
         return out
+
+    @field_validator("admin_password", "rcon_password")
+    @classmethod
+    def _no_spaces(cls, value: str) -> str:
+        """Neither password supports spaces (Server Config wiki): the server
+        refuses the config, so say it here instead."""
+        if any(ch.isspace() for ch in value):
+            raise ValueError("may not contain spaces")
+        return value
+
+    @field_validator("rcon_password")
+    @classmethod
+    def _rcon_password_length(cls, value: str) -> str:
+        if value and len(value) < RCON_PASSWORD_MIN:
+            raise ValueError(f"must be at least {RCON_PASSWORD_MIN} characters long")
+        return value
 
     @field_validator("player_whitelist", "player_ban_list")
     @classmethod
@@ -600,6 +625,14 @@ def _mission_header_from(props: dict, clamp: bool) -> dict:
     return header if header is not None else {}
 
 
+def _capped(value, limit: int, clamp: bool):
+    """An over-the-limit number brought down to the limit when opening a stored
+    template for editing; left as it is for validation, and when not a number."""
+    if clamp and isinstance(value, int) and not isinstance(value, bool) and value > limit:
+        return limit
+    return value
+
+
 def spec_from_config(config_json: str, clamp: bool = True) -> dict:
     """Reconstruct the wizard's editable fields from a saved config.json.
 
@@ -632,7 +665,7 @@ def spec_from_config(config_json: str, clamp: bool = True) -> dict:
         "game_name": game.get("name", ""),
         "password": game.get("password", ""),
         "admin_password": game.get("passwordAdmin", ""),
-        "max_players": game.get("maxPlayers", 64),
+        "max_players": _capped(game.get("maxPlayers", 64), MAX_PLAYERS_LIMIT, clamp),
         "visible": game.get("visible", True),
         "cross_platform": game.get("crossPlatform", True),
         "supported_platforms": game.get("supportedPlatforms", list(DEFAULT_SUPPORTED_PLATFORMS)),
@@ -641,7 +674,8 @@ def spec_from_config(config_json: str, clamp: bool = True) -> dict:
         "player_ban_list": _players_from_config(game.get("playerBanList"), reason=True),
         "mods_required_by_default": game.get("modsRequiredByDefault", False),
         "battleye": props.get("battlEye", True),
-        "server_max_view_distance": props.get("serverMaxViewDistance", 1600),
+        "server_max_view_distance": _capped(
+            props.get("serverMaxViewDistance", 1600), MAX_VIEW_DISTANCE_LIMIT, clamp),
         "server_min_grass_distance": (
             max(50, props.get("serverMinGrassDistance", 50))
             if clamp

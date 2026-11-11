@@ -97,10 +97,37 @@ export function useBranchDownload(branch, { onUpdate, onClose } = {}) {
   }
 
   async function download() {
-    state.job = await api(`/api/serverfiles/${branch}/download`, { method: 'POST' })
+    const job = await startServerFilesDownload(branch)
+    if (!job) return // servers are running on these files, and the user said no
+    state.job = job
     state.log = []
     connect()
   }
 
   return { state, connect, download, close: () => socket?.close() }
+}
+
+/**
+ * Start a branch's server-file download. SteamCMD rewrites the folder every
+ * server of that branch has mounted, so the manager refuses while any of them
+ * runs; the servers are named and the user decides. Returns the job, or null
+ * when they said no.
+ */
+export async function startServerFilesDownload(branch, { request = api, ask } = {}) {
+  const url = `/api/serverfiles/${branch}/download`
+  try {
+    return await request(url, { method: 'POST' })
+  } catch (e) {
+    const running = e?.detail?.running_servers
+    if (e?.status !== 409 || !Array.isArray(running) || !running.length) throw e
+    const ok = (ask || window.confirm)(
+      `${running.length === 1 ? 'This server is' : 'These servers are'} running on the ` +
+        `${branch} server files:\n\n${running.join('\n')}\n\n` +
+        'The download rewrites those files underneath them, which can crash a running ' +
+        'server, and they stay on the old build until they are restarted.\n\n' +
+        'Download anyway? Restart them as soon as it is done.',
+    )
+    if (!ok) return null
+    return await request(url, { method: 'POST', body: { force: true } })
+  }
 }

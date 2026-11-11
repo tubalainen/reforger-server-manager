@@ -112,7 +112,7 @@ def test_navmesh_streaming_is_array_or_omitted():
 
 
 def test_rcon_includes_blacklist_whitelist_arrays():
-    cfg = _spec(rcon_password="x").to_config()
+    cfg = _spec(rcon_password="xyz").to_config()
     assert cfg["rcon"]["blacklist"] == [] and cfg["rcon"]["whitelist"] == []
 
 
@@ -168,7 +168,7 @@ def test_hand_picked_platforms_kept_while_cross_platform_is_off():
 
 def test_defaults_render_the_same_rcon_and_operating_blocks():
     # Nobody who doesn't use the new lists sees a different config.json.
-    cfg = _spec(rcon_password="x").to_config()
+    cfg = _spec(rcon_password="xyz").to_config()
     assert cfg["rcon"]["blacklist"] == [] and cfg["rcon"]["whitelist"] == []
     assert "disableNavmeshStreaming" not in cfg["operating"]
 
@@ -222,7 +222,7 @@ def test_longbow_extra_settings_render_and_roundtrip():
     cfg = _spec(
         mods_required_by_default=True, disable_ai=True, join_queue_max_size=20,
         persistence_enabled=True, auto_save_interval=15, hive_id=42,
-        rcon_password="pw", rcon_permission="monitor", rcon_max_clients=8,
+        rcon_password="pwd", rcon_permission="monitor", rcon_max_clients=8,
     ).to_config()
     assert cfg["game"]["modsRequiredByDefault"] is True
     assert cfg["operating"]["disableAI"] is True
@@ -608,3 +608,35 @@ def test_hand_written_mission_header_is_read_leniently():
     cfg = json.loads(render_config_json(_spec()))
     cfg["game"]["gameProperties"]["missionHeader"] = "m_iPlayerCount:64"
     assert spec_from_config(json.dumps(cfg))["mission_header"] == {}
+
+
+def test_engine_upper_limits_are_the_models():
+    # The Server Config wiki: maxPlayers 1..128, serverMaxViewDistance 500..10000.
+    # More used to save cleanly and stop the server at its config check.
+    TemplateSpec(name="t", scenario_id="x", max_players=128, server_max_view_distance=10000)
+    with pytest.raises(ValidationError):
+        TemplateSpec(name="t", scenario_id="x", max_players=129)
+    with pytest.raises(ValidationError):
+        TemplateSpec(name="t", scenario_id="x", server_max_view_distance=10001)
+
+
+def test_a_stored_template_over_the_limits_still_opens_for_editing():
+    cfg = TemplateSpec(name="t", scenario_id="x").to_config()
+    cfg["game"]["maxPlayers"] = 200
+    cfg["game"]["gameProperties"]["serverMaxViewDistance"] = 12000
+    raw = json.dumps(cfg)
+    opened = spec_from_config(raw)
+    assert (opened["max_players"], opened["server_max_view_distance"]) == (128, 10000)
+    TemplateSpec(name="t", **opened)  # and saves again
+    # Validation judges what was typed.
+    assert spec_from_config(raw, clamp=False)["max_players"] == 200
+
+
+def test_passwords_follow_the_engines_rules():
+    TemplateSpec(name="t", scenario_id="x", admin_password="s3cret", rcon_password="abc")
+    for bad in ({"admin_password": "two words"}, {"rcon_password": "two words"},
+                {"rcon_password": "ab"}):
+        with pytest.raises(ValidationError):
+            TemplateSpec(name="t", scenario_id="x", **bad)
+    # No RCON password is still "RCON off".
+    assert "rcon" not in TemplateSpec(name="t", scenario_id="x").to_config()

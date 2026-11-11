@@ -91,7 +91,8 @@ All of this lives under **System › Server files**.
 - Download stable and experimental Arma Reforger server files with SteamCMD.
 - Pull the SteamCMD image with live progress, instead of Docker fetching it silently on the first download.
 - Watch download progress and recent output in real time.
-- Check daily for new server builds.
+- Check every hour for new server builds.
+- Ask before downloading server files while servers are running on them; the automatic download waits for them unless it may also restart them.
 - Optionally download new builds automatically and restart affected servers.
 - Pull or replace the configurable server runtime image independently of manager updates.
 

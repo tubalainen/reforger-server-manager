@@ -42,7 +42,7 @@ def test_catalog_fields_are_spec_fields_in_known_groups():
 def test_limits_and_defaults_come_from_the_model():
     fields = _fields()
     view = fields["server_max_view_distance"]
-    assert (view["min"], view["max"]) == (500, 12000)
+    assert (view["min"], view["max"]) == (500, 10000)
     assert (fields["player_save_time"]["min"], fields["player_save_time"]["default"]) == (1, 120)
     assert fields["ai_limit"]["min"] == -1
     assert fields["von_can_transmit_cross_faction"]["default"] is False

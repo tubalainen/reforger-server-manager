@@ -75,7 +75,7 @@ async function checkUpdate(branch) {
 
 function applyAutoUpdate(data) {
   Object.assign(autoUpdate, data)
-  // The daily check already knows each branch's latest Steam build, so show it
+  // The hourly check already knows each branch's latest Steam build, so show it
   // in the branch cards instead of making the user press "Check for updates".
   for (const b of autoUpdate.branches) {
     if (b.latest_build) updateInfo[b.branch] = b
@@ -247,7 +247,7 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Automatic updates: the daily check, and how far it is allowed to go
+    <!-- Automatic updates: the hourly check, and how far it is allowed to go
          on its own (#177). -->
     <div class="card mb-3">
       <div class="card-body">
@@ -255,7 +255,7 @@ onUnmounted(() => {
           <div>
             <h2 class="h5 mb-1">Automatic updates</h2>
             <p class="text-secondary small mb-0">
-              Once a day the manager asks Steam whether a newer server release exists for
+              Every hour the manager asks Steam whether a newer server release exists for
               the branches you have installed.
             </p>
           </div>
@@ -282,7 +282,9 @@ onUnmounted(() => {
             Download new server files automatically
             <small class="text-secondary d-block">
               Off: nothing is downloaded on its own — you get a prompt on the Servers page
-              when an update is waiting.
+              when an update is waiting. A download rewrites the files running servers
+              use, so it also waits while a server of that branch is running, unless the
+              restart below is on.
             </small>
           </label>
         </div>
@@ -299,8 +301,8 @@ onUnmounted(() => {
             Restart my servers onto the new build once it is downloaded
             <small class="text-secondary d-block">
               Every server on that branch that should be running is restarted, which
-              disconnects the players on it. Without this the files are updated but each
-              server keeps running the build it started with.
+              disconnects the players on it. Without this a new build is downloaded only
+              while no server of that branch is running.
             </small>
           </label>
         </div>
@@ -352,6 +354,12 @@ onUnmounted(() => {
                 v-else-if="updateInfo[b.branch].installed_build"
                 class="badge text-bg-success ms-1"
               >Up to date</span>
+              <div v-if="updateInfo[b.branch].held_for?.length" class="text-warning-emphasis mt-1">
+                Not downloaded automatically: {{ updateInfo[b.branch].held_for.join(', ') }}
+                {{ updateInfo[b.branch].held_for.length === 1 ? 'is' : 'are' }} running on these
+                files. Stop {{ updateInfo[b.branch].held_for.length === 1 ? 'it' : 'them' }}, turn
+                on the automatic restart, or update by hand.
+              </div>
             </div>
 
             <div class="d-flex gap-2">

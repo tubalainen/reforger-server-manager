@@ -56,7 +56,7 @@ onMounted(async () => {
   }
   loadUpdates()
   loadWarnings()
-  // The check itself runs once a day on the server; a minute is plenty to notice it.
+  // The check itself runs once an hour on the server; a minute is plenty to notice it.
   updatePoll = setInterval(() => {
     loadUpdates()
     loadWarnings()

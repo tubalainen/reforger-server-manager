@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../../api'
+import { startServerFilesDownload } from '../../jobs'
 import { isErrorLine } from '../../log'
 import { attentionItems } from '../../overview'
 import { SERVER_TABS, tabParams } from '../../server'
@@ -173,13 +174,13 @@ const attention = computed(() => {
 async function runAttention(item) {
   const a = item.action
   if (a.kind === 'restart') return action('restart')
-  if (a.kind === 'settings') {
-    return router.push({ name: 'instance-detail', params: tabParams(a.id, 'settings') })
+  if (a.kind === 'settings' || a.kind === 'console') {
+    return router.push({ name: 'instance-detail', params: tabParams(a.id, a.kind) })
   }
   if (a.kind === 'update') {
     // Start the download, then watch it where downloads are shown (#177).
     try {
-      await api(`/api/serverfiles/${a.branch}/download`, { method: 'POST' })
+      if (!(await startServerFilesDownload(a.branch))) return
     } catch (e) {
       error.value = e.message
       return
@@ -192,6 +193,7 @@ const ATTENTION_BUTTON = {
   update: 'Update server files',
   'server-files': 'Server files',
   settings: 'Choose a template',
+  console: 'Open Console',
 }
 
 // The ⋯ menu. Bootstrap's dropdown needs its JavaScript, which the app does not ship

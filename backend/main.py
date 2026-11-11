@@ -141,7 +141,7 @@ async def _crash_monitor():
                 # reboot / the #113 shutdown that removed their containers.
                 await asyncio.to_thread(instance_service.reconcile_and_recover)
                 await asyncio.to_thread(instance_service.apply_scheduled_restarts)
-                # Daily check for new Arma server releases; a no-op until it
+                # Hourly check for new Arma server releases; a no-op until it
                 # comes due, and it runs its own task when it does (#177).
                 await auto_update.tick()
                 if ticks % 240 == 0:  # ~hourly at a 15s cadence
