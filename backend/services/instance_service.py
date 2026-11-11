@@ -32,6 +32,7 @@ from services import (
     load_order,
     mod_download,
     mod_versions,
+    pak_index,
     ports,
     stages,
     template_service,
@@ -1390,7 +1391,7 @@ def mod_failures(instance_id: int) -> dict:
     out = {"available": True, "failed": parsed["failed"], "online": parsed["online"],
            "log": log.relative_to(_profile_dir(instance_id)).as_posix(),
            "logged_at": log.stat().st_mtime, "template_id": template_id,
-           "mods": [], "script_errors": [], "fatal": []}
+           "mods": [], "script_errors": [], "fatal": [], "compile_errors": []}
     if not parsed["failed"]:
         return out
     idir = Path(config.settings.data_dir) / "instances" / str(instance_id)
@@ -1419,6 +1420,22 @@ def mod_failures(instance_id: int) -> dict:
             projects.setdefault(mod_failures_log.name_key(project), mid)
     available = set(dirs) | mod_failures_log.available_ids(text)
     mods = mod_failures_log.failing_mods(parsed, available, listed, deps, names, projects)
+    # A script that did not compile: the log gives its path only, so the mod
+    # folders say whose it is. Asked of the mods this start mounted (all of
+    # them, should the log list none).
+    errors = parsed["compile_errors"]
+    if errors:
+        mounted = {mid: dirs[mid] for mid in mod_failures_log.folder_names(text) if mid in dirs}
+        owners = pak_index.owners(mounted or dirs, [e["file"] for e in errors])
+        for mid, folders in dirs.items():
+            if mid not in names:
+                names[mid] = mod_versions.gproj_project(folders[0])[0] or mid
+        for e in errors:
+            e["owners"] = [{"modId": mid, "name": names.get(mid)}
+                           for mid in owners.get(e["file"], [])]
+        known = {m["modId"] for m in mods}
+        mods += [m for m in mod_failures_log.script_failing_mods(errors, owners, names)
+                 if m["modId"] not in known]
     template = mod_versions.config_mod_ids(cfg)
     pullers = mod_failures_log.pulled_in_by(
         [m["modId"] for m in mods if m["modId"]], template, deps)
@@ -1431,7 +1448,8 @@ def mod_failures(instance_id: int) -> dict:
         for r in m["needs"]:
             r["name"] = r["name"] or found.get(r["modId"])
             r["in_template"] = r["modId"] in listed_ids
-    out.update(mods=mods, script_errors=parsed["script_errors"], fatal=parsed["fatal"])
+    out.update(mods=mods, script_errors=parsed["script_errors"], fatal=parsed["fatal"],
+               compile_errors=errors)
     return out
 
 

@@ -336,7 +336,7 @@ onUnmounted(() => {
 
       <div v-if="error" class="alert alert-warning py-2">{{ error }}</div>
 
-      <ModFailureAlert :failures="modFailures" />
+      <ModFailureAlert :server-id="id" :failures="modFailures" />
 
       <!-- The one thing it needs, with its button -->
       <div

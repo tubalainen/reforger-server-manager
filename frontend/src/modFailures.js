@@ -16,9 +16,40 @@ function joinWords(items) {
   return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`
 }
 
+// "Its script scripts/Game/X.c (line 24) does not compile: Undefined function 'Y'.
+// It is probably not updated for this game version."
+function scriptReason(mod) {
+  const [first, ...rest] = mod.errors || []
+  if (!first) return 'One of its scripts does not compile.'
+  const more = rest.length ? ` (and ${rest.length} more)` : ''
+  const shared = (mod.shared_with || []).map(needName)
+  return (
+    `Its script ${first.file} (line ${first.line}) does not compile: ${first.message.replace(/\.$/, '')}${more}. ` +
+    (shared.length
+      ? `${joinWords(shared)} ${shared.length === 1 ? 'ships' : 'ship'} the same file, so either may be the cause.`
+      : 'It is probably not updated for this game version.')
+  )
+}
+
+// A failed start's script errors that name no mod: the file is the base game's,
+// or no mod folder could be read.
+export function unexplainedCompile(failures) {
+  if (!failures?.failed || !failures.compile_errors?.length) return false
+  return !(failures.mods || []).some((m) => m.reason === 'script')
+}
+
+// "scripts/Game/X.c:24: Undefined function 'Y' — in Mod A", the root error first.
+export function compileErrorLines(failures) {
+  return (failures?.compile_errors || []).map((e) => {
+    const owners = (e.owners || []).map(needName)
+    return `${e.file}:${e.line}: ${e.message}` + (owners.length ? ` — in ${joinWords(owners)}` : '')
+  })
+}
+
 // "Needs WCS_NATO and WCS_RU, which aren't installed."
 // A knock-on: "Fails because WCS_Scopes failed to load: fix that one first."
 export function failureReason(mod) {
+  if (mod?.reason === 'script') return scriptReason(mod)
   const needs = mod?.needs || []
   if (!needs.length) return 'The engine could not add it.'
   if (mod.knock_on) {
@@ -50,13 +81,20 @@ export function failureHeadline(failures) {
     const causes = rootCauses(failures)
     const names = joinWords(causes.map((m) => m.name || m.modId))
     const more = mods.length - causes.length
+    if (causes.length && causes.every((m) => m.reason === 'script')) {
+      const what = causes.length === 1 ? 'has a script that does' : 'have scripts that do'
+      return `The last start failed: ${names} ${what} not compile.`
+    }
     return (
       `The last start failed: ${names} could not be loaded` +
       (more ? `, and ${more} mod${more === 1 ? '' : 's'} that need${more === 1 ? 's' : ''} ${causes.length === 1 ? 'it' : 'them'}.` : '.')
     )
   }
   if (failures.script_errors?.length) {
-    return "The last start failed: a mod's scripts did not compile. The log does not say which mod."
+    return (
+      'The last start failed: a script did not compile, and the mod folders on this ' +
+      'server do not show which mod it belongs to.'
+    )
   }
   return 'The last start failed before the server came online.'
 }

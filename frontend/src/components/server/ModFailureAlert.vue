@@ -1,12 +1,16 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { api } from '../../api'
 import ModIdLink from '../ModIdLink.vue'
+import AskAiDialog from './AskAiDialog.vue'
 import {
+  compileErrorLines,
   editTemplateRoute,
   failureHeadline,
   failureReason,
   pulledInByText,
   pullingMods,
+  unexplainedCompile,
 } from '../../modFailures'
 
 // The mods that stopped this server's last start (#270), on top of every tab of the
@@ -14,6 +18,7 @@ import {
 // a FAILED start shows here; mods that log errors on a server that still comes
 // online are left alone.
 const props = defineProps({
+  serverId: { type: [String, Number], required: true },
   failures: { type: Object, default: null },
 })
 
@@ -27,6 +32,31 @@ const removable = computed(
 const editRoute = computed(() =>
   props.failures?.template_id != null ? editTemplateRoute(props.failures.template_id, mods.value) : null,
 )
+// A script error with its file and line, and the mod that ships the file where one
+// does; the raw lines for an answer without them.
+const scriptLines = computed(() => {
+  const lines = compileErrorLines(props.failures)
+  return lines.length ? lines : props.failures?.script_errors || []
+})
+
+// Ask AI, only for a compile failure the mod folders could not pin on a mod, and only
+// while the AI service in .env answers (#254). Asked about the log file itself.
+const ai = ref(null)
+const asking = ref(false)
+const unexplained = computed(() => unexplainedCompile(props.failures))
+watch(
+  unexplained,
+  async (now) => {
+    if (!now || ai.value) return
+    try {
+      ai.value = await api('/api/system/ai')
+    } catch {
+      ai.value = null
+    }
+  },
+  { immediate: true },
+)
+
 const when = computed(() =>
   props.failures?.logged_at ? new Date(props.failures.logged_at * 1000).toLocaleString() : '',
 )
@@ -36,6 +66,15 @@ const when = computed(() =>
   <div v-if="failures?.failed" class="alert alert-danger py-2" role="alert">
     <div class="d-flex flex-wrap align-items-center gap-2">
       <strong class="me-auto">{{ headline }}</strong>
+      <button
+        v-if="unexplained && ai?.available"
+        type="button"
+        class="btn btn-sm btn-outline-danger"
+        title="Ask the AI service which mod this log points at"
+        @click="asking = true"
+      >
+        ✨ Ask AI
+      </button>
       <router-link v-if="editRoute" :to="editRoute" class="btn btn-sm btn-danger">
         {{ removable ? 'Remove in template…' : 'Open template' }}
       </router-link>
@@ -61,9 +100,9 @@ const when = computed(() =>
       </li>
     </ul>
 
-    <details v-if="failures.script_errors?.length" class="small mt-2">
-      <summary>Script compile errors ({{ failures.script_errors.length }})</summary>
-      <pre class="small mb-0 mt-1 text-wrap">{{ failures.script_errors.join('\n') }}</pre>
+    <details v-if="scriptLines.length" class="small mt-2" :open="unexplained">
+      <summary>Script compile errors ({{ scriptLines.length }})</summary>
+      <pre class="small mb-0 mt-1 text-wrap">{{ scriptLines.join('\n') }}</pre>
     </details>
     <details v-else-if="!mods.length && failures.fatal?.length" class="small mt-2">
       <summary>What the log says</summary>
@@ -74,5 +113,12 @@ const when = computed(() =>
       From <code>{{ failures.log }}</code><template v-if="when">, {{ when }}</template>.
       Remove the failing mods from the template, or check their Workshop pages for a fix.
     </small>
+    <AskAiDialog
+      v-if="asking"
+      :server-id="serverId"
+      :path="failures.log"
+      :ai="ai"
+      @close="asking = false"
+    />
   </div>
 </template>

@@ -3,11 +3,16 @@ import json
 from pathlib import Path
 
 import pytest
+from pak_helper import write_pak
 
 import config
 from services import instance_service, mod_failures, mod_versions
 
 FIXTURE = Path(__file__).parent / "fixtures" / "console_missing_dependency.log"
+# The compile of a real failed start (1.9.x), with the mod folders it mounted.
+COMPILE_FIXTURE = Path(__file__).parent / "fixtures" / "console_script_compile.log"
+RO_VEHICLES, RO_SOUNDS = "631C0CCC3F4506CB", "631B695913C7781F"
+RO_SCRIPT = "scripts/Game/Player/RO_V_PlayerController.c"
 
 SCOPES, NATO, RU, SOUNDS, WSCRIPTS = ("62A668F513428630", "615806DC6C57AF02", "615818DA7C0343FD",
                                       "631C3C1AEE9C90BC", "68F006D910E7546F")
@@ -81,6 +86,99 @@ def test_script_errors_come_from_the_compile_only():
         'SCRIPT    (E): @"scripts/Game/ADM_Wing.c,12": Can\'t find variable \'GraphDialog\'',
         'SCRIPT    (E): Can\'t compile "Game" script module!',
     ]
+
+
+def test_a_real_compile_failure_gives_the_file_the_engine_stopped_on():
+    """The user's host: Realism Overhaul - Vehicles against a newer game (#270)."""
+    out = mod_failures.parse(COMPILE_FIXTURE.read_text(encoding="utf-8"))
+
+    assert out["failed"] is True and out["dependencies"] == []
+    root, *rest = out["compile_errors"]
+    assert root == {
+        "file": RO_SCRIPT, "line": 24, "root": True,
+        "message": "Undefined function 'CharacterControllerComponent.SetGamepadControlAircraft'",
+    }
+    # The base game's own file, twice: listed, but not what the engine stopped on.
+    assert [(e["file"].rsplit("/", 1)[-1], e["line"], e["root"]) for e in rest] == [
+        ("SCR_ScenarioUICommon.c", 452, False), ("SCR_ScenarioUICommon.c", 517, False)]
+    # The warnings of the same compile are not errors.
+    assert not any("obsolete" in e["message"] for e in out["compile_errors"])
+
+
+def test_a_compile_that_passed_has_no_compile_errors():
+    log = "\n".join([
+        "10:00:01.000  SCRIPT       : SCRIPT       : Compiling Game scripts",
+        '10:00:01.600  SCRIPT    (E): @"scripts/Game/A.c,12": something a start survives',
+        "10:00:02.000  SCRIPT       : Module: Game; loaded 5722x files",
+    ])
+    assert mod_failures.parse(log)["compile_errors"] == []
+
+
+def test_without_a_verdict_the_first_error_is_the_root():
+    log = "\n".join([
+        "10:00:01.000  SCRIPT       : SCRIPT       : Compiling Game scripts",
+        '10:00:01.600  SCRIPT    (E): @"scripts/Game/A.c,12": first',
+        '10:00:01.601  SCRIPT    (E): @"scripts/Game/B.c,3": second',
+        '10:00:01.700 SCRIPT    (E): Can\'t compile "Game" script module!',
+        "10:00:02.000 ENGINE       : Game destroyed.",
+    ])
+    assert [(e["file"], e["root"]) for e in mod_failures.parse(log)["compile_errors"]] == [
+        ("scripts/Game/A.c", True), ("scripts/Game/B.c", False)]
+
+
+def test_only_the_root_errors_file_blames_a_mod():
+    errors = [
+        {"file": "scripts/Game/A.c", "line": 1, "message": "m", "root": True},
+        {"file": "scripts/Game/B.c", "line": 2, "message": "n", "root": False},
+    ]
+    owners = {"scripts/Game/A.c": ["X", "Y"], "scripts/Game/B.c": ["Z"]}
+    x, y = mod_failures.script_failing_mods(errors, owners, {"X": "Mod X"})
+    assert x["modId"] == "X" and x["name"] == "Mod X" and x["reason"] == "script"
+    assert x["errors"] == [{"file": "scripts/Game/A.c", "line": 1, "message": "m"}]
+    assert x["shared_with"] == [{"modId": "Y", "name": None}]
+    assert y["modId"] == "Y" and y["knock_on"] is False and y["needs"] == []
+    # The base game's file, or one no folder holds: nobody.
+    assert mod_failures.script_failing_mods(errors, {}, {}) == []
+
+
+def test_the_server_view_names_the_mod_whose_script_failed(server_dir):
+    iid, idir = server_dir
+    session = idir / "profile" / "logs" / "logs_2026-11-11_16-09-11"
+    session.mkdir(parents=True)
+    (session / "console.log").write_bytes(COMPILE_FIXTURE.read_bytes())
+    addons = idir / "workshop" / "addons"
+    write_pak(addons / f"RealismOverhaul-Vehicles_{RO_VEHICLES}" / "data.pak",
+              [RO_SCRIPT, "scripts/Game/UserActions/RO_LockTransmissionGearUserAction.c"])
+    write_pak(addons / f"RealismOverhaul-Sounds_{RO_SOUNDS}" / "data.pak", ["Sounds/a.acp"])
+    (idir / "configs").mkdir(parents=True)
+    (idir / "configs" / instance_service.CONFIG_FILENAME).write_text(json.dumps({"game": {"mods": [
+        {"modId": RO_VEHICLES, "name": "Realism Overhaul - Vehicles"},
+        {"modId": RO_SOUNDS, "name": "Realism Overhaul - Sounds"},
+    ]}}))
+
+    out = instance_service.mod_failures(iid)
+
+    assert out["failed"] is True
+    (mod,) = out["mods"]
+    assert mod["modId"] == RO_VEHICLES and mod["name"] == "Realism Overhaul - Vehicles"
+    assert mod["reason"] == "script" and mod["in_template"] is True
+    assert mod["errors"][0]["file"] == RO_SCRIPT and mod["errors"][0]["line"] == 24
+    assert mod["pulled_in_by"] == [] and mod["shared_with"] == []
+    root, other, _ = out["compile_errors"]
+    assert root["owners"] == [{"modId": RO_VEHICLES, "name": "Realism Overhaul - Vehicles"}]
+    assert other["owners"] == []
+
+
+def test_a_script_no_mod_folder_holds_names_no_mod(server_dir):
+    iid, idir = server_dir
+    session = idir / "profile" / "logs" / "logs_2026-11-11_16-09-11"
+    session.mkdir(parents=True)
+    (session / "console.log").write_bytes(COMPILE_FIXTURE.read_bytes())
+
+    out = instance_service.mod_failures(iid)
+
+    assert out["failed"] is True and out["mods"] == []
+    assert out["compile_errors"][0]["file"] == RO_SCRIPT
 
 
 def test_addon_names_cover_folder_and_project_file():

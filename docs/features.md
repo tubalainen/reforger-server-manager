@@ -24,7 +24,7 @@ Key template capabilities include:
   you type a template name of your own.
 - Search the Workshop, fetch metadata, resolve dependencies, and preserve dependency order.
 - Drag mods into a load order, and let **Fix order** sort the whole list from the dependencies: frameworks first, every mod after the mods it requires, the rest by name, the scenario last (with Undo).
-- See which mods stopped a server's last start, and why (a missing dependency, a script that did not compile), in a red box on top of the server's page, read from its own log. **Remove in template** opens the template's Mods step with those mods marked. A mod that only logs errors on a server that still comes online is not flagged.
+- See which mods stopped a server's last start, and why (a missing dependency, a script that does not compile), in a red box on top of the server's page, read from its own log. The mod whose script failed is found by looking the script up in the mod folders on disk. **Remove in template** opens the template's Mods step with those mods marked. A mod that only logs errors on a server that still comes online is not flagged.
 - See the order the engine actually loaded a server's mods in at its last start, read from its own log, next to the order of its `config.json` (Settings › Mods › Load order the engine used).
 - With an AI service set up and answering (a local Ollama on your own GPU or any
   OpenAI-compatible service), ask it what an error in a server's Console or log files
