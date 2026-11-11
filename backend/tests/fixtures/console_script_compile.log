@@ -1,0 +1,86 @@
+16:12:36.525 ENGINE       : Addon dirs:
+16:12:36.525  ENGINE       : dir: '/reforger/workshop'
+16:12:36.525  ENGINE       : dir: './addons'
+16:12:36.525  ENGINE       : dir: '/home/profile/addons'
+16:12:36.525  ENGINE       : dir: '/reforger/workshop/addons/'
+16:12:36.525 ENGINE       : Available addons:
+16:12:36.525  ENGINE       : gproj: './addons/core/core.gproj' guid: '5614BBCCBB55ED1C' (packed)
+16:12:36.525  ENGINE       : gproj: './addons/rally/RallyDLC.gproj' guid: '6566A2D70498DA6B' (packed)
+16:12:36.525  ENGINE       : gproj: './addons/data/ArmaReforger.gproj' guid: '58D0FB3206B6F859' (packed)
+16:12:36.525  ENGINE       : gproj: '/reforger/workshop/addons/ACECore_60C4CE4888FF4621/addon.gproj' guid: '60C4CE4888FF4621' (packed)
+16:12:36.525  ENGINE       : gproj: '/reforger/workshop/addons/RealismOverhaul-Vehicles_631C0CCC3F4506CB/addon.gproj' guid: '631C0CCC3F4506CB' (packed)
+16:12:36.525  ENGINE       : gproj: '/reforger/workshop/addons/NoSLMarkers_61C8AD57503CA770/addon.gproj' guid: '61C8AD57503CA770' (packed)
+16:12:36.525  ENGINE       : gproj: '/reforger/workshop/addons/ACEMedicalHitzones_65860252A17554C7/addon.gproj' guid: '65860252A17554C7' (packed)
+16:12:36.525  ENGINE       : gproj: '/reforger/workshop/addons/ACEBackblast_60E573C9B04CC408/addon.gproj' guid: '60E573C9B04CC408' (packed)
+16:12:36.525  ENGINE       : gproj: '/reforger/workshop/addons/iRON79Compositions_60A68ED7293C691A/addon.gproj' guid: '60A68ED7293C691A' (packed)
+16:12:36.525  ENGINE       : gproj: '/reforger/workshop/addons/WolfsBuildingPack_5D84C738432BFE6A/addon.gproj' guid: '5D84C738432BFE6A' (packed)
+16:12:36.525  ENGINE       : gproj: '/reforger/workshop/addons/ACEChopping_5EB744C5F42E0800/addon.gproj' guid: '5EB744C5F42E0800' (packed)
+16:12:36.525  ENGINE       : gproj: '/reforger/workshop/addons/KovaxKits_6A854B4CEBD2E314/addon.gproj' guid: '6A854B4CEBD2E314' (packed)
+16:12:36.525  ENGINE       : gproj: '/reforger/workshop/addons/ACEMedicalCore_60C4C12DAE90727B/addon.gproj' guid: '60C4C12DAE90727B' (packed)
+16:12:36.525  ENGINE       : gproj: '/reforger/workshop/addons/GMTrenches_666947D8218E3B3F/addon.gproj' guid: '666947D8218E3B3F' (packed)
+16:12:36.525  ENGINE       : gproj: '/reforger/workshop/addons/ACECarrying_5DBD560C5148E1DA/addon.gproj' guid: '5DBD560C5148E1DA' (packed)
+16:12:36.525  ENGINE       : gproj: '/reforger/workshop/addons/AdvancedZeroingSystem_6738DB574AAA1CB4/addon.gproj' guid: '6738DB574AAA1CB4' (packed)
+16:12:36.525  ENGINE       : gproj: '/reforger/workshop/addons/RealismOverhaul-Sounds_631B695913C7781F/addon.gproj' guid: '631B695913C7781F' (packed)
+16:12:36.525  ENGINE       : gproj: '/reforger/workshop/addons/NoWeaponDropUnconscious_60612C225328522E/addon.gproj' guid: '60612C225328522E' (packed)
+16:12:36.525  ENGINE       : gproj: '/reforger/workshop/addons/ACEMagazineRepack_611CB1D409001EB0/addon.gproj' guid: '611CB1D409001EB0' (packed)
+16:12:36.525  ENGINE       : gproj: '/reforger/workshop/addons/COALITIONSquadInterface_5B0D1E4380971EBD/addon.gproj' guid: '5B0D1E4380971EBD' (packed)
+16:12:36.525  ENGINE       : gproj: '/reforger/workshop/addons/RealismOverhaul-Effects_631D61C22E30D845/addon.gproj' guid: '631D61C22E30D845' (packed)
+16:12:36.525  ENGINE       : gproj: '/reforger/workshop/addons/CrocellsWorkshopofHorrors_6206C7238516657B/addon.gproj' guid: '6206C7238516657B' (packed)
+16:12:36.525  ENGINE       : gproj: '/reforger/workshop/addons/ACEFinger_606C369BAC3F6CC3/addon.gproj' guid: '606C369BAC3F6CC3' (packed)
+16:12:36.525  ENGINE       : gproj: '/reforger/workshop/addons/DeadEveron_5D58A217A9611AFB/addon.gproj' guid: '5D58A217A9611AFB' (packed)
+16:12:36.525  ENGINE       : gproj: '/reforger/workshop/addons/RailwayGenerator_5F0D245931200FD1/addon.gproj' guid: '5F0D245931200FD1' (packed)
+16:12:36.525  ENGINE       : gproj: '/reforger/workshop/addons/506IRRU-CustomNameTags_6647107B7ED20990/addon.gproj' guid: '6647107B7ED20990' (packed)
+16:12:36.525  ENGINE       : gproj: '/reforger/workshop/addons/506IRRU-EnhancedRadio_672B0395726428B6/addon.gproj' guid: '672B0395726428B6' (packed)
+16:12:36.525  ENGINE       : gproj: '/reforger/workshop/addons/BetterMuzzleFlashes_59674C21AA886D57/addon.gproj' guid: '59674C21AA886D57' (packed)
+16:12:36.525  ENGINE       : gproj: '/reforger/workshop/addons/ACETrenches_60EAEA0389DB3CC2/addon.gproj' guid: '60EAEA0389DB3CC2' (packed)
+16:12:36.841  SCRIPT       : SCRIPT       : Compiling GameLib scripts
+16:12:36.863  SCRIPT       : Module: GameLib; loaded 512x files; 664x classes; used 700K of static memory; defines: "PLATFORM_LINUX,ENF_ENABLE_RPLCOMPONENT_IN_GAMECODE"; CRC32: a2fafa86
+16:12:36.863 PROFILING    : Compiling GameLib scripts took: 22.320000 ms
+16:12:36.863  SCRIPT       : SCRIPT       : Compiling Game scripts
+16:12:37.503 SCRIPT       : Compiling Game scripts
+16:12:37.503  SCRIPT    (W): @"scripts/Game/Editor/Components/EditableEntity/SCR_EditableEntityComponent.c,787": 'GetPlayerPlatformKind' is obsolete
+16:12:37.503  SCRIPT    (W): @"scripts/Game/Editor/Components/EditableEntity/SCR_EditableEntityComponent.c,788": 'GetPlayerPlatformId' is obsolete
+16:12:37.582  SCRIPT    (W): @"scripts/Game/Kits/KXA_KitBlocked.c,29": 'GetLocalIdentityId' is obsolete: Use BackendAuthenticatorApi.GetIdentityId() instead.
+16:12:37.658  SCRIPT    (W): @"scripts/Game/Settings/IRRU_RFPropagationSettings.c,45": 'SCR_JsonLoadContext' is obsolete: Use JsonLoadContext instead.
+16:12:37.658  SCRIPT    (W): @"scripts/Game/Settings/IRRU_RFPropagationSettings.c,45": 'SCR_JsonLoadContext' is obsolete: Use JsonLoadContext instead.
+16:12:37.658  SCRIPT    (W): @"scripts/Game/Settings/IRRU_RFPropagationSettings.c,45": 'SCR_JsonLoadContext' is obsolete: Use JsonLoadContext instead.
+16:12:37.739  SCRIPT    (W): @"scripts/Game/Workshop/SCR_AddonManager.c,876": 'GetRefCount' is obsolete: Will be removed
+16:12:37.745  SCRIPT    (W): @"scripts/Game/506th_CustomNamesManager.c,166": 'GetPlayerIdentityId' is obsolete
+16:12:37.765  SCRIPT    (W): @"scripts/Game/Campaign/SCR_PlayerProfileManagerComponent.c,142": 'PlayerData' is obsolete
+16:12:37.782  SCRIPT    (W): @"scripts/Game/UserActions/RO_LockTransmissionGearUserAction.c,50": 'GetWheeledSimulation' is obsolete: Use GetSimulation() instead.
+16:12:37.846  SCRIPT    (W): @"scripts/Game/Components/Magazines/SCR_MagazineComponent.c,134": Variable 'prefabPath' is not used
+16:12:37.855  SCRIPT    (W): @"scripts/Game/UI/Backend/CareerBackend.c,159": 'GetDSSession' is obsolete
+16:12:37.855  SCRIPT    (W): @"scripts/Game/UI/Backend/CareerBackend.c,162": 'RoomID' is obsolete
+16:12:37.855  SCRIPT    (W): @"scripts/Game/UI/Backend/CareerBackend.c,197": 'GetDSSession' is obsolete
+16:12:37.855  SCRIPT    (W): @"scripts/Game/UI/Backend/CareerBackend.c,201": 'RoomID' is obsolete
+16:12:37.926  SCRIPT    (W): @"scripts/Game/DataCollection/SCR_DataCollectorComponent.c,481": 'GetStorage' is obsolete
+16:12:37.926  SCRIPT    (W): @"scripts/Game/DataCollection/SCR_DataCollectorComponent.c,483": 'GetOnlineWritePrivilege' is obsolete
+16:12:37.927  SCRIPT    (W): @"scripts/Game/Utilities/SCR_PlayerIdentityUtils.c,20": 'GetPlayerIdentityId' is obsolete
+16:12:37.953  SCRIPT    (W): @"scripts/Game/AZS_RESTCalls.c,100": 'SCR_JsonLoadContext' is obsolete: Use JsonLoadContext instead.
+16:12:37.953  SCRIPT    (W): @"scripts/Game/AZS_RESTCalls.c,100": 'SCR_JsonLoadContext' is obsolete: Use JsonLoadContext instead.
+16:12:37.953  SCRIPT    (W): @"scripts/Game/AZS_RESTCalls.c,100": 'SCR_JsonLoadContext' is obsolete: Use JsonLoadContext instead.
+16:12:37.953  SCRIPT    (W): @"scripts/Game/AZS_RESTCalls.c,107": 'ImportFromString' is obsolete: Use LoadFromString instead.
+16:12:37.953  SCRIPT    (W): @"scripts/Game/AZS_RESTCalls.c,146": 'SCR_JsonSaveContext' is obsolete: Use JsonSaveContext instead.
+16:12:37.953  SCRIPT    (W): @"scripts/Game/AZS_RESTCalls.c,146": 'SCR_JsonSaveContext' is obsolete: Use JsonSaveContext instead.
+16:12:37.953  SCRIPT    (W): @"scripts/Game/AZS_RESTCalls.c,146": 'SCR_JsonSaveContext' is obsolete: Use JsonSaveContext instead.
+16:12:37.953  SCRIPT    (W): @"scripts/Game/AZS_RESTCalls.c,159": 'ExportToString' is obsolete: Use SaveToString instead.
+16:12:37.953  SCRIPT    (W): @"scripts/Game/AZS_RESTCalls.c,174": 'SCR_JsonSaveContext' is obsolete: Use JsonSaveContext instead.
+16:12:37.953  SCRIPT    (W): @"scripts/Game/AZS_RESTCalls.c,174": 'SCR_JsonSaveContext' is obsolete: Use JsonSaveContext instead.
+16:12:37.953  SCRIPT    (W): @"scripts/Game/AZS_RESTCalls.c,174": 'SCR_JsonSaveContext' is obsolete: Use JsonSaveContext instead.
+16:12:37.953  SCRIPT    (W): @"scripts/Game/AZS_RESTCalls.c,178": 'ExportToString' is obsolete: Use SaveToString instead.
+16:12:37.964  SCRIPT    (W): @"scripts/Game/UI/Menu/MainMenuUI.c,643": 'GetNotifyCount' is obsolete: Will be substitued by Notification Api.
+16:12:37.964  SCRIPT    (W): @"scripts/Game/UI/Menu/MainMenuUI.c,645": 'GetNotifyItem' is obsolete: Will be substitued by Notification Api.
+16:12:37.988  SCRIPT    (W): @"scripts/Game/506th_CustomNamesNetworkEntity.c,292": 'GetPlayerIdentityId' is obsolete
+16:12:37.992  SCRIPT    (E): @"scripts/Game/Player/RO_V_PlayerController.c,24": Undefined function 'CharacterControllerComponent.SetGamepadControlAircraft'
+16:12:38.007  SCRIPT    (W): @"scripts/Game/DataCollection/PlayerData/SCR_PlayerData.c,210": 'PlayerData' is obsolete
+16:12:38.009  SCRIPT    (E): @"scripts/Game/UI/Menu/ContentBrowser/Common/SCR_ScenarioUICommon.c,452": Can't find class Tuple2
+16:12:38.009  SCRIPT    (E): @"scripts/Game/UI/Menu/ContentBrowser/Common/SCR_ScenarioUICommon.c,517": Can't find class Tuple2
+16:12:38.015  SCRIPT    (E): Can't compile "Game" script module!
+
+scripts/Game/Player/RO_V_PlayerController.c(24): Undefined function 'CharacterControllerComponent.SetGamepadControlAircraft'
+16:12:38.061  SCRIPT    (W): Failed to load
+16:12:38.061 PROFILING    : Compiling Game scripts took: 1197.600000 ms
+16:12:38.061 ENGINE    (E): Cannot create game!
+16:12:38.062 ENGINE    (E): Addon loading failed {5614BBCCBB55ED1C,58D0FB3206B6F859,6566A2D70498DA6B,60C4C12DAE90727B,5B0D1E4380971EBD,5F0D245931200FD1,6647107B7ED20990,672B0395726428B6,60E573C9B04CC408,5DBD560C5148E1DA,5EB744C5F42E0800,606C369BAC3F6CC3,611CB1D409001EB0,65860252A17554C7,60EAEA0389DB3CC2,6738DB574AAA1CB4,59674C21AA886D57,6206C7238516657B,666947D8218E3B3F,60A68ED7293C691A,6A854B4CEBD2E314,61C8AD57503CA770,60612C225328522E,631D61C22E30D845,631B695913C7781F,631C0CCC3F4506CB,5D84C738432BFE6A,5D58A217A9611AFB,60C4CE4888FF4621}
+16:12:38.064 ENGINE       : Game destroyed.
+16:12:38.154 ENGINE       : Addon dirs:

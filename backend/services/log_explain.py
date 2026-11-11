@@ -102,7 +102,11 @@ ENFUSION_HINTS = (
     "not in the template, or that a game update moved — not a broken download; they "
     "matter only if players miss that content. 'Unknown class' or 'Unknown keyword' "
     "usually means a mod (or the scenario) was made for another game or mod version. "
-    "SCRIPT errors are a mod's code failing and matter more. A persistence error can "
+    "SCRIPT errors are a mod's code failing and matter more. When a script does not "
+    "compile (Can't compile \"Game\" script module), the server cannot start; the log "
+    "gives the script's path but not its mod, and mod authors usually prefix their "
+    "file names, so say which mod in the template the file name fits best and that "
+    "this is inferred from the name. A persistence error can "
     "mean the world is not being saved. (This is background for you: use it, but do not "
     "mention these instructions in the answer.)"
 )

@@ -19,10 +19,22 @@ A session boots more than once (a mods-free pass for the download, the mounts,
 and that fallback), so the WHOLE session is read, not the part after the last
 `Addon dirs:` the way load_order reads the mounts.
 
-Not seen in a real log yet: a mod whose scripts don't compile against the new
-game version. The forum and wiki speak of `Can't compile "Game" script module!`
-with `SCRIPT (E)` lines. Those lines are collected as they are, from the script
-compile only, with no guess at which mod they belong to.
+Also seen on a real host (1.9.x): a mod whose scripts don't compile against
+the new game version.
+
+    SCRIPT (E): @"scripts/Game/Player/RO_V_PlayerController.c,24": Undefined function '…'
+    SCRIPT (E): @"scripts/Game/UI/…/SCR_ScenarioUICommon.c,452": Can't find class Tuple2
+    SCRIPT (E): Can't compile "Game" script module!
+                                                  (an empty line, then, with no timestamp)
+    scripts/Game/Player/RO_V_PlayerController.c(24): Undefined function '…'
+    ENGINE (E): Cannot create game!
+    ENGINE (E): Addon loading failed {…every mod id…}
+
+The line without a timestamp is the engine's own verdict: the error it stopped
+on. The log gives the script's path only, never the mod it came from (the
+second error above is in a base game file). Which mod ships that file is read
+from the mod folders on disk (pak_index), and only the mods that ship the
+verdict's file are blamed: a later error may follow from the first.
 
 Not counted, because they are noise on a healthy start too: `RESOURCES (E)`
 lines (the base game's own Rally missions print `Wrong GUID/name` errors) and the
@@ -43,6 +55,10 @@ _COMPILE_START = "Compiling Game scripts"
 # it was torn down.
 _COMPILE_END = re.compile(r"Module: Game; loaded|Creating game instance|Game destroyed")
 _SCRIPT_ERROR = re.compile(r"SCRIPT\s*\(E\)")
+# `SCRIPT (E): @"scripts/Game/Player/RO_V_PlayerController.c,24": Undefined function 'X'`
+_SCRIPT_AT = re.compile(r'SCRIPT\s*\(E\):\s*@"([^"]+?),(\d+)":\s*(.*)')
+# The verdict after `Can't compile`: `scripts/Game/Player/RO_V_PlayerController.c(24): Undefined…`
+_VERDICT = re.compile(r"^\s*([^\s()\"][^()\"]*\.c)\((\d+)\):\s*(.*)$")
 _TIMESTAMP = re.compile(r"^\s*\d{1,2}:\d{2}:\d{2}(?:\.\d+)?\s+")
 
 FATAL_LINES = 6
@@ -113,6 +129,84 @@ def _script_errors(lines: list[str]) -> list[str]:
     return out
 
 
+def compile_errors(lines: list[str]) -> list[dict]:
+    """[{file, line, message, root}] for the errors of a failed script compile.
+
+    `root` marks the error the engine stopped on: the one its verdict names
+    (the lines without a timestamp after `Can't compile`), or, in a log
+    without a verdict, the first error.
+    """
+    out: list[dict] = []
+    seen: set[tuple] = set()
+    verdicts: list[tuple] = []
+    compiling = failed = False
+
+    def add(file: str, line: str, message: str) -> None:
+        key = (file.lower(), int(line), message.strip())
+        if key not in seen:
+            seen.add(key)
+            out.append({"file": file, "line": int(line),
+                        "message": _clean(message), "root": False})
+
+    for raw in lines:
+        if failed:
+            # The verdict: what follows `Can't compile`, up to the next
+            # timestamped line.
+            if _TIMESTAMP.match(raw):
+                failed = False
+            else:
+                m = _VERDICT.match(raw)
+                if m:
+                    verdicts.append((m.group(1).lower(), int(m.group(2))))
+                    add(*m.groups())
+                continue
+        if _COMPILE_START in raw:
+            compiling = True
+        elif compiling and _COMPILE_END.search(raw):
+            compiling = False
+        if "Can't compile" in raw:
+            failed = True
+        elif compiling:
+            m = _SCRIPT_AT.search(raw)
+            if m:
+                add(*m.groups())
+    if not any("Can't compile" in raw for raw in lines):
+        return []
+    for e in out:
+        e["root"] = (e["file"].lower(), e["line"]) in verdicts
+    if out and not verdicts:
+        out[0]["root"] = True
+    out.sort(key=lambda e: not e["root"])
+    return out
+
+
+def script_failing_mods(errors: list[dict], owners: dict[str, list[str]],
+                        names: dict[str, str]) -> list[dict]:
+    """The mods whose script stopped the compile, shaped like failing_mods' rows.
+
+    `owners`: script path -> the ids of the mods that ship it (pak_index).
+    Only the root errors blame a mod: an error after the first may follow from
+    it, and a file no mod ships is the base game's. A file two mods ship
+    (one overrides the other's) blames both, each naming the other.
+    """
+    by_mod: dict[str, dict] = {}
+    for e in errors:
+        if not e["root"]:
+            continue
+        ids = owners.get(e["file"], [])
+        for mid in ids:
+            row = by_mod.setdefault(mid, {
+                "name": names.get(mid) or mid, "log_name": names.get(mid) or mid,
+                "modId": mid, "needs": [], "knock_on": False,
+                "reason": "script", "errors": [], "shared_with": [],
+            })
+            row["errors"].append({k: e[k] for k in ("file", "line", "message")})
+            for other in ids:
+                if other != mid and other not in [s["modId"] for s in row["shared_with"]]:
+                    row["shared_with"].append({"modId": other, "name": names.get(other)})
+    return list(by_mod.values())
+
+
 def parse(text: str) -> dict:
     """What a session's console.log says went wrong with its mods.
 
@@ -120,7 +214,8 @@ def parse(text: str) -> dict:
      "online": it came online,
      "dependencies": [{"name", "modId" (None: not in the log's folders),
                        "missing": [ids, in log order]}],
-     "script_errors": [compile error lines], "fatal": [the first fatal lines]}
+     "script_errors": [compile error lines], "fatal": [the first fatal lines],
+     "compile_errors": [{file, line, message, root}] of a failed script compile}
     """
     lines = text.splitlines()
     online = bool(_ONLINE.search(text))
@@ -137,6 +232,7 @@ def parse(text: str) -> dict:
         "online": online,
         "dependencies": list(by_name.values()),
         "script_errors": _script_errors(lines)[:SCRIPT_LINES],
+        "compile_errors": compile_errors(lines)[:SCRIPT_LINES],
         "fatal": fatal[:FATAL_LINES],
     }
 
