@@ -16,6 +16,13 @@ def test_a_paks_file_table_lists_nested_paths(tmp_path):
     assert not table.contains("scripts/Game/Player/Other.c")
 
 
+def test_a_first_folder_with_a_name_of_its_own_still_matches(tmp_path):
+    pak = write_pak(tmp_path / "data.pak", ["RealismOverhaulVehicles/" + SCRIPT])
+    table = pak_index.read(pak)
+    assert table.contains(SCRIPT)
+    assert not table.contains("Player/RO_V_PlayerController.c".replace("Player/", "layer/"))
+
+
 def test_only_the_table_is_read_past_a_large_data_chunk(tmp_path):
     pak = write_pak(tmp_path / "data.pak", [SCRIPT], data=b"\1\x17RO_V_Nope.c" * 50_000)
     assert pak_index.read(pak).paths == {SCRIPT.lower()}

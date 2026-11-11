@@ -6,7 +6,9 @@ into one file system and does not say which mod the file came from. The mod
 folders on disk do: each .pak lists its files.
 
 The layout (PAC1) is taken from the open-source `enfusion_pak` parser, not from
-Bohemia:
+Bohemia. The header and the end of the file table of a real mod's data.pak
+(1.9.x, 2026-11-11) match it: FORM size = file size - 8, HEAD of 28 bytes,
+folder and file entries as below, the FILE chunk last in the file.
 
     "FORM" u32-BE size "PAC1"
     chunks, each: 4-char tag, u32-BE body length, body
@@ -42,7 +44,10 @@ class PakTable:
     def contains(self, path: str) -> bool:
         path = path.replace("\\", "/").lower()
         if self.paths is not None:
-            return path in self.paths
+            # Also under a first folder with a name of its own, should a pak
+            # have one: only the table's end was seen in a real pak.
+            tail = "/" + path
+            return path in self.paths or any(p.endswith(tail) for p in self.paths)
         name = PurePosixPath(path).name.encode("utf-8", errors="replace")
         # As an entry: the file kind, the name's length, the name.
         return 0 < len(name) < 256 and (bytes([1, len(name)]) + name).lower() in self.raw
