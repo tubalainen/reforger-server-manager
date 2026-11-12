@@ -15,6 +15,10 @@ with the `admin` permission:
 There is no command that sends players a message, so a restart still cannot be
 announced in the game.
 
+A ban is not kept on this machine: the server sends it to Bohemia's online
+services (its log shows LobbyApiS2S/CreateBanS2S), which refuse an identity id
+that is not a real player's.
+
 Where the server listens, seen from the manager's container:
 
 - with host networking (Linux), on the Docker host, by the manager's own
@@ -149,11 +153,25 @@ def _clean_reason(reason: str) -> str:
     return text[:REASON_MAX].strip()
 
 
+# What the server prints when a command did not do what it was asked (Arma
+# Reforger 1.9: "Player not found", "error '<command>'", "unknown command '...'").
+_FAILED = ("error", "unknown command", "player not found", "not found", "invalid",
+           "failed", "cannot", "can't")
+
+
+def _check(reply: str, what: str) -> str:
+    """The server's answer, or InstanceError when it says the command failed."""
+    first = (reply or "").strip().splitlines()[0].lower() if (reply or "").strip() else ""
+    if first.startswith(_FAILED):
+        raise InstanceError(f"The server could not {what}: {reply.strip()}")
+    return reply
+
+
 def kick(instance_id: int, player_id: int) -> str:
     """Kick a connected player by the server's player id; they can rejoin."""
     if isinstance(player_id, bool) or not isinstance(player_id, int) or player_id < 0:
         raise InstanceError("A player id is a whole number")
-    reply = _send(instance_id, [f"#kick {player_id}"])[0]
+    reply = _check(_send(instance_id, [f"#kick {player_id}"])[0], "kick that player")
     logger.info("Kicked player %s from instance %s (RCON: %r)", player_id, instance_id, reply)
     return reply
 
@@ -179,7 +197,7 @@ def ban(instance_id: int, *, player_id: int | None = None, identity_id: str | No
     cleaned = _clean_reason(reason)
     if cleaned:
         command += f" {cleaned}"
-    reply = _send(instance_id, [command])[0]
+    reply = _check(_send(instance_id, [command])[0], "ban that player")
     logger.info("Banned %s on instance %s for %s s (RCON: %r)",
                 target, instance_id, duration_seconds, reply)
     return reply
@@ -197,6 +215,6 @@ def ban_remove(instance_id: int, ban_id: str) -> str:
     ban_id = str(ban_id or "").strip()
     if not _BAN_ID_RE.match(ban_id):
         raise InstanceError("That is not an id from the ban list")
-    reply = _send(instance_id, [f"#ban remove {ban_id}"])[0]
+    reply = _check(_send(instance_id, [f"#ban remove {ban_id}"])[0], "lift that ban")
     logger.info("Removed ban %s on instance %s (RCON: %r)", ban_id, instance_id, reply)
     return reply

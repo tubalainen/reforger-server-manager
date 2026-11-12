@@ -273,7 +273,7 @@ function joinedAt(p) {
         </button>
       </div>
       <template v-if="bans !== null">
-        <pre class="rsm-bans mt-2 mb-2">{{ bans || 'The server sent back nothing.' }}</pre>
+        <pre class="rsm-bans mt-2 mb-2">{{ bans || 'The server printed nothing.' }}</pre>
         <div class="d-flex flex-wrap align-items-center gap-2">
           <button type="button" class="btn btn-sm btn-link p-0" :disabled="!!busy || banPage <= 1" @click="loadBans(banPage - 1)">← Previous</button>
           <span class="text-secondary">Page {{ banPage }}</span>
@@ -292,8 +292,9 @@ function joinedAt(p) {
         </div>
       </template>
       <p class="text-secondary mt-2 mb-0">
-        Bans made here are kept by the server itself. They are separate from the ban
-        list in the template, which every server on that template gets.
+        Bans made here are sent by the server to Bohemia's online services, which keep
+        them for this server. They are separate from the ban list in the template,
+        which every server on that template gets.
       </p>
     </div>
     <div v-else-if="inst.status === 'running'" class="card-footer small text-secondary">

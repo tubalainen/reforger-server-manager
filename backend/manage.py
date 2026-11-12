@@ -3,8 +3,10 @@
     docker exec -u app <stack>-manager python manage.py reset-password
     docker exec -u app <stack>-manager python manage.py servers
     docker exec -u app <stack>-manager python manage.py start|stop|restart ID
+    docker exec -u app <stack>-manager python manage.py keep-servers
 
-`rsm reset-password` runs the first; `rsm cli` (#237) the others. Team admins
+`rsm reset-password` runs the first, `rsm cli` (#237) the next ones, and
+`rsm update` the last, just before it replaces this manager. Team admins
 never need these: they exist for the host administrator, who has a shell where
 team admins have only the GUI (#204).
 """
@@ -108,15 +110,26 @@ def _action(verb: str):
     return run
 
 
+def keep_servers() -> int:
+    """Have this manager's next shutdown leave the game servers running."""
+    from services import handover
+
+    handover.request()
+    print("The game servers keep running while this manager is replaced.")
+    return 0
+
+
 COMMANDS = {
     "reset-password": lambda _args: reset_password(),
+    "keep-servers": lambda _args: keep_servers(),
     "servers": servers,
     "start": _action("start"),
     "stop": _action("stop"),
     "restart": _action("restart"),
 }
 # How many arguments each takes.
-ARITY = {"reset-password": 0, "servers": 0, "start": 1, "stop": 1, "restart": 1}
+ARITY = {"reset-password": 0, "keep-servers": 0, "servers": 0, "start": 1, "stop": 1,
+         "restart": 1}
 
 
 def main(argv: list[str]) -> int:
