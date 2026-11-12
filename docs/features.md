@@ -68,6 +68,7 @@ A server's own page keeps every server listed down the left and splits into five
 - View player count, process state, resource use, and server metadata.
 - See who is on: each player's name, time online, platform, IP address (shown on
   request) and identity, Steam and BattlEye ids, with server admins marked.
+- Kick and ban players from the Players tab, and read or lift the server's own bans, over the server's RCON.
 - Recover servers after manager or host restarts.
 - Configure auto-start and scheduled restarts: on chosen weekdays, waiting up to 45 minutes for the last player to leave, and with a backup of the saved game taken while the server is stopped.
 - Stop a server that goes down three times in a row without coming online, instead of restarting it for ever, and say so under *Needs attention*.

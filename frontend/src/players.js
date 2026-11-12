@@ -125,3 +125,27 @@ export function addNotice({ added = [], duplicates = [], invalid = [], overflow 
   }
   return parts.join(' · ')
 }
+
+// How long a ban from the Players tab lasts; 0 is for ever (the game's own).
+export const BAN_DURATIONS = [
+  { seconds: 3600, label: '1 hour' },
+  { seconds: 86400, label: '1 day' },
+  { seconds: 7 * 86400, label: '1 week' },
+  { seconds: 30 * 86400, label: '30 days' },
+  { seconds: 0, label: 'For ever' },
+]
+
+/**
+ * What POST /players/ban gets for a player on the roster: by identity id where
+ * the log gave one (that also works once they have left), else by the session's
+ * player id. null when the roster has neither, so there is nothing to ban by.
+ */
+export function banBody(player, durationSeconds, reason = '') {
+  const target = player?.identity_id
+    ? { identity_id: player.identity_id }
+    : Number.isInteger(player?.player_id)
+      ? { player_id: player.player_id }
+      : null
+  if (!target) return null
+  return { ...target, duration_seconds: durationSeconds, reason: String(reason || '').trim() }
+}

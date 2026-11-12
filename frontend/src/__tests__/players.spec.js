@@ -3,6 +3,7 @@ import {
   ADMIN_LIMIT,
   addAdmins,
   addNotice,
+  banBody,
   addPlayers,
   idKind,
   normalizePlayer,
@@ -138,5 +139,21 @@ describe('addNotice', () => {
   it('is empty when everything landed', () => {
     expect(addNotice({ added: [IDENTITY] })).toBe('Added 1')
     expect(addNotice({})).toBe('')
+  })
+})
+
+describe('banBody', () => {
+  it('bans by identity id where the log gave one', () => {
+    expect(banBody({ identity_id: 'abc', player_id: 3 }, 86400, ' griefing ')).toEqual({
+      identity_id: 'abc', duration_seconds: 86400, reason: 'griefing',
+    })
+  })
+
+  it('falls back to the session player id', () => {
+    expect(banBody({ player_id: 0 }, 0)).toEqual({ player_id: 0, duration_seconds: 0, reason: '' })
+  })
+
+  it('has nothing to ban by without either', () => {
+    expect(banBody({ name: 'x', player_id: null }, 0)).toBeNull()
   })
 })
