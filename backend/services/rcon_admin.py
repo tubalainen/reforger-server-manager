@@ -17,10 +17,13 @@ announced in the game.
 
 Where the server listens, seen from the manager's container:
 
-- with host networking (Linux), on the Docker host: `host.docker.internal`,
-  which the compose files map to the host, or else the manager's own default
-  gateway. A host firewall that drops traffic from the Docker network to the
-  host (ufw's default) is in the way of that;
+- with host networking (Linux), on the Docker host, by the manager's own
+  default gateway: the host's address on the manager's own network. Not
+  `host.docker.internal`: the compose files map that to the default docker0
+  bridge, and Docker drops packets from one bridge network to another bridge's
+  address (seen on Docker 29: no answer, while the gateway answered at once).
+  A host firewall that drops traffic from the Docker networks to the host
+  (ufw's default) is in the way too;
 - on the stack's Docker network (Docker Desktop), under the server container's
   name.
 
@@ -92,17 +95,13 @@ def _default_gateway() -> str | None:
     return None
 
 
-# The compose files give the manager this name for the Docker host (host-gateway).
+# Only when the container has no default route (it always has one on a bridge).
 _HOST_ALIAS = "host.docker.internal"
 
 
 def _docker_host() -> str:
-    """The Docker host as the manager's container reaches it."""
-    try:
-        socket.getaddrinfo(_HOST_ALIAS, None)
-        return _HOST_ALIAS
-    except OSError:
-        return _default_gateway() or "127.0.0.1"
+    """The Docker host as the manager's container reaches it: its own gateway."""
+    return _default_gateway() or _HOST_ALIAS
 
 
 def _host(instance_id: int) -> str:
