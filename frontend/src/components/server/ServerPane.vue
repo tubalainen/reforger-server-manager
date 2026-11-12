@@ -169,7 +169,9 @@ async function copyAddress() {
 const attention = computed(() => {
   if (!inst.value) return []
   const mine = props.updates.filter((u) => u.branch === inst.value.branch)
-  return attentionItems([inst.value], mine, false)
+  // "Not responding" is read from the log, which only the summary row carries.
+  const me = { ...inst.value, unresponsive_seconds: row.value?.unresponsive_seconds ?? null }
+  return attentionItems([me], mine, false)
 })
 async function runAttention(item) {
   const a = item.action

@@ -144,6 +144,8 @@ async def _crash_monitor():
                 # Hourly check for new Arma server releases; a no-op until it
                 # comes due, and it runs its own task when it does (#177).
                 await auto_update.tick()
+                if ticks % 4 == 0:  # about once a minute
+                    await asyncio.to_thread(instance_service.restart_unresponsive_servers)
                 if ticks % 240 == 0:  # ~hourly at a 15s cadence
                     await asyncio.to_thread(instance_service.prune_old_logs)
                 # One point a minute for the Servers overview's sparklines (#189).

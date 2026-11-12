@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 import stacks
 
 APP_NAME = "Reforger Server Manager"
-APP_VERSION = "0.94.0"
+APP_VERSION = "0.95.0"
 
 # The password shipped in .env.example. Refusing to start with it (when exposed)
 # is what stops a "just ran docker compose up" box from facing the internet on
@@ -98,6 +98,15 @@ def _port_range(raw: str | None, fallback: tuple[int, int]) -> tuple[int, int]:
     return lo, hi
 
 
+def _stop_timeout(raw: str | None, fallback: int = 60) -> int:
+    """INSTANCE_STOP_TIMEOUT in seconds, held to 10..600; anything else = 60."""
+    try:
+        value = int((raw or "").strip())
+    except ValueError:
+        return fallback
+    return min(600, max(10, value))
+
+
 @dataclass
 class Settings:
     admin_username: str
@@ -177,6 +186,9 @@ class Settings:
     ai_order_url: str = ""
     ai_order_model: str = ""
     ai_order_key: str = ""
+    # Seconds a game server gets to shut down (and write its last save) before
+    # Docker kills it. Was a fixed 30.
+    instance_stop_timeout: int = 60
     # Which stack this manager is (#204): the name every container, network and
     # volume of this install starts with, and the label its containers carry.
     # 'reforger' — the default — keeps every name an install had before stacks.
@@ -245,6 +257,7 @@ class Settings:
             ai_order_url=os.environ.get("AI_ORDER_URL", "").strip(),
             ai_order_model=os.environ.get("AI_ORDER_MODEL", "").strip(),
             ai_order_key=os.environ.get("AI_ORDER_KEY", "").strip(),
+            instance_stop_timeout=_stop_timeout(os.environ.get("INSTANCE_STOP_TIMEOUT")),
         )
 
 

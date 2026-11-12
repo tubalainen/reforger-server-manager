@@ -217,6 +217,14 @@ class Instance(SQLModel, table=True):
     # disk came from that one. When the template is switched, the next Start in
     # the GUI offers to clear them first. No foreign key: the template may be gone.
     last_started_template_id: int | None = None
+    # Restart the server when it stops printing its status line (a freeze): the
+    # container is still "running", so neither Docker nor the crash recovery
+    # notices. Off by default.
+    restart_unresponsive: bool = False
+    # Optional limits on the server's container; None / "" = none. Applied when
+    # the container is next created.
+    mem_limit_mb: int | None = None
+    cpuset: str = ""
     created_at: datetime = Field(default_factory=_utcnow)
 
 
@@ -338,6 +346,20 @@ def _migrate(engine) -> None:
         if "last_started_template_id" not in icols:
             conn.execute(text("ALTER TABLE instance ADD COLUMN last_started_template_id INTEGER"))
             conn.execute(text("UPDATE instance SET last_started_template_id = template_id"))
+            conn.commit()
+        # freeze watchdog and container limits (functional review, v0.95.0)
+        if "restart_unresponsive" not in icols:
+            conn.execute(text(
+                "ALTER TABLE instance ADD COLUMN restart_unresponsive BOOLEAN NOT NULL DEFAULT 0"
+            ))
+            conn.commit()
+        if "mem_limit_mb" not in icols:
+            conn.execute(text("ALTER TABLE instance ADD COLUMN mem_limit_mb INTEGER"))
+            conn.commit()
+        if "cpuset" not in icols:
+            conn.execute(text(
+                "ALTER TABLE instance ADD COLUMN cpuset VARCHAR NOT NULL DEFAULT ''"
+            ))
             conn.commit()
         # pinned Prod template version (#223); NULL = run the latest
         if "template_version" not in icols:

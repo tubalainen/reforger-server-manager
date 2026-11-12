@@ -216,7 +216,14 @@ _HOST_FIELDS = frozenset({
     "ReadonlyRootfs", "Init", "Tmpfs", "ShmSize", "Memory", "MemoryReservation",
     "MemorySwap", "NanoCpus", "CpuShares", "CpuPeriod", "CpuQuota", "CpusetCpus",
     "PidsLimit", "Ulimits", "ExtraHosts", "Dns", "DnsOptions", "DnsSearch",
+    # Checked below: only a size-limited json-file / local log.
+    "LogConfig",
 })
+# A log driver can ship a container's output anywhere (syslog, fluentd, a cloud
+# service), so only the two that write on this host are let through, and of
+# their options only the ones that limit size.
+_LOG_DRIVERS = frozenset({"json-file", "local"})
+_LOG_OPTIONS = frozenset({"max-size", "max-file"})
 _MOUNT_FIELDS = frozenset({
     "Type", "Source", "Target", "ReadOnly", "Consistency", "VolumeOptions", "TmpfsOptions",
 })
@@ -328,6 +335,21 @@ def _check_network(body: dict, host: dict, image: str, scope: Scope) -> None:
         _only(endpoint, _ENDPOINT_FIELDS, f"NetworkingConfig.EndpointsConfig.{name}.")
 
 
+def _check_log_config(host: dict) -> None:
+    log = host.get("LogConfig")
+    if log is None:
+        return
+    if not isinstance(log, dict):
+        raise Denied("HostConfig.LogConfig must be an object")
+    _only(log, frozenset({"Type", "Config"}), "HostConfig.LogConfig.")
+    if (log.get("Type") or "json-file") not in _LOG_DRIVERS:
+        raise Denied(f"log driver {log.get('Type')!r} is not allowed")
+    options = log.get("Config") or {}
+    if not isinstance(options, dict):
+        raise Denied("HostConfig.LogConfig.Config must be an object")
+    _only(options, _LOG_OPTIONS, "HostConfig.LogConfig.Config.")
+
+
 # The roles of the containers a manager creates itself.
 _CREATABLE_ROLES = frozenset({stacks.ROLE_INSTANCE, stacks.ROLE_STEAMCMD})
 
@@ -378,6 +400,7 @@ def check_create(body: dict, name: str | None, scope: Scope) -> dict:
             raise Denied(f"security option {opt!r} is not allowed")
     if str(host.get("Runtime") or "runc") != "runc":
         raise Denied(f"runtime {host.get('Runtime')!r} is not allowed")
+    _check_log_config(host)
     _check_mounts(host, scope)
     _check_network(body, host, image, scope)
 

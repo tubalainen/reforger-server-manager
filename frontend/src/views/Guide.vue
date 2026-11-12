@@ -761,7 +761,20 @@ const faq = [
             (the one that brings it back after a reboot), and scheduled daily restarts at
             fixed times (server local time). A daily restart can also update the template's
             mods to their newest Workshop release (<em>Update mods on the daily restart</em>);
-            every other start keeps the mod versions already downloaded.
+            every other start keeps the mod versions already downloaded. It can be kept to
+            certain weekdays, wait up to 45 minutes for the last player to leave, and back
+            up the saved game while the server is stopped. When the clocks go forward, a
+            restart set inside the skipped hour does not happen that day; when they go
+            back, a restart inside the repeated hour happens once.
+          </li>
+          <li class="mb-2">
+            <strong>A server that fails or freezes:</strong> a server that goes down three
+            times in a row without coming online is stopped and listed under
+            <em>Needs attention</em>, instead of being restarted for ever. An online server
+            that prints no status line for five minutes is listed as not responding;
+            <em>Restart when it stops responding</em> restarts it after ten. Under
+            <em>Limits</em> a server can be given a memory limit and a set of CPUs, so one
+            server cannot take the whole machine.
           </li>
           <li class="mb-2">
             <strong>Saved game backups:</strong> one archive of a server's world — the save

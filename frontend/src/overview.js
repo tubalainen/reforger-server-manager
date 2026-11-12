@@ -39,6 +39,19 @@ export function attentionItems(servers = [], updates = [], autoDownload = false)
     }
   }
 
+  // Online, but its status line stopped coming: the game loop is not running.
+  for (const s of servers) {
+    if (s.status === 'running' && s.unresponsive_seconds) {
+      const minutes = Math.floor(s.unresponsive_seconds / 60)
+      items.push({
+        key: `unresponsive-${s.id}`,
+        subject: s.name,
+        text: `Not responding: it has printed no status line for ${minutes} minutes, so it has probably frozen. Players on it are stuck until it is restarted.`,
+        action: { kind: 'restart', id: s.id },
+      })
+    }
+  }
+
   // It went down several times in a row without coming online, so the manager
   // stopped bringing it back. Its log says what stopped it.
   for (const s of servers) {

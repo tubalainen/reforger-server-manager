@@ -52,6 +52,7 @@ const SOURCE_LABEL = {
   'template-switch': 'Made before a template change',
   'pre-restore': 'Replaced by a restore',
   upload: 'Uploaded',
+  'scheduled-restart': 'Made at a daily restart',
 }
 
 // An instance outlives its templates, so most of a long-lived shelf is worlds
@@ -375,7 +376,8 @@ onMounted(load)
             />
           </label>
           <small class="text-secondary">
-            The newest {{ info.keep }} are kept.
+            The newest {{ info.keep }} are kept<template v-if="info.keep_scheduled">, and
+            the newest {{ info.keep_scheduled }} made at a daily restart</template>.
             <HelpTip label="How long backups are kept">
               Older backups are removed automatically as new ones are made. They live on the
               host with the server, so a downloaded copy is the one that survives the machine.

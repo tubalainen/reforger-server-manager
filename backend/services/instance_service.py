@@ -21,6 +21,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from docker.errors import DockerException, ImageNotFound, NotFound
+from docker.types import LogConfig
 from sqlmodel import Session, select
 
 import config
@@ -143,6 +144,25 @@ STATS_LOG_ARG = "-logStats"
 # (a very long, very chatty session can age a join out); the numeric count from
 # the stats line remains authoritative for how many are online.
 ROSTER_LOG_TAIL = 4000
+
+# A server's container log is kept to this size. Docker's default is no limit
+# at all, and the status line alone adds one every ten seconds, for as long as
+# the container lives.
+SERVER_LOG_MAX_SIZE = "50m"
+SERVER_LOG_MAX_FILES = "3"
+
+# An online server prints its status line every STATS_LOG_INTERVAL_MS. One that
+# has printed none for this long has stopped running its game loop (a freeze, a
+# deadlock), although its container is still "running".
+UNRESPONSIVE_AFTER_SECONDS = 300
+# ...and with "restart when it stops responding" on, it is restarted after this.
+UNRESPONSIVE_RESTART_SECONDS = 600
+_LOG_STATS_ARG_RE = re.compile(r"-logStats\s+(\d+)")
+
+# Container limits a server can be given (Settings > Limits).
+MEM_LIMIT_MIN_MB = 2048
+MEM_LIMIT_MAX_MB = 1024 * 1024
+_CPUSET_RE = re.compile(r"^\d+(-\d+)?(,\d+(-\d+)?)*$")
 
 # The dedicated-server binary the image launches from /reforger (WORKDIR).
 # Its presence is our proof that a branch's server files are installed.
@@ -806,6 +826,8 @@ def start_instance(instance_id: int, update_mods: bool = False) -> None:
                 reason = "network mode changed (host vs bridge, #150)"
             elif not _container_mounts_match(container, inst):
                 reason = "mounts changed (volume subpaths, v0.65.0, #206)"
+            elif not _container_resources_match(container, inst):
+                reason = "memory or CPU limit changed"
             elif not docker_service.is_current_stack(container):
                 # Adopted from before stacks existed: give it this stack's label
                 # and name, so the Docker gate lets this manager keep managing it.
@@ -977,6 +999,11 @@ def _create_container(inst: Instance, config_path: Path, launch: "LaunchParams |
             **_display_labels(inst, template_config, template_name),
         }),
         **net_kwargs,
+        **_resource_kwargs(inst),
+        log_config=LogConfig(
+            type=LogConfig.types.JSON,
+            config={"max-size": SERVER_LOG_MAX_SIZE, "max-file": SERVER_LOG_MAX_FILES},
+        ),
         restart_policy={"Name": _restart_policy(inst)},
         # Opt-in only. See config.instance_no_new_privileges: applying this to a
         # game server broke player connections in v0.45.0 (#150), because the
@@ -987,6 +1014,63 @@ def _create_container(inst: Instance, config_path: Path, launch: "LaunchParams |
             else {}
         ),
     )
+
+
+def _resource_kwargs(inst: Instance) -> dict:
+    """The container limits this server asks for, as create() takes them."""
+    out: dict = {}
+    if inst.mem_limit_mb:
+        limit = int(inst.mem_limit_mb) * 1024 * 1024
+        # The same number for memory+swap: no swap on top, so the limit means
+        # what it says.
+        out["mem_limit"] = limit
+        out["memswap_limit"] = limit
+    if inst.cpuset:
+        out["cpuset_cpus"] = inst.cpuset
+    return out
+
+
+def _container_resources_match(container, inst: Instance) -> bool:
+    """True if the container has the memory and CPU limits it would get now.
+
+    Fixed at creation, like the rest. On any read failure return True: never
+    destroy a container we cannot inspect.
+    """
+    try:
+        container.reload()
+        host = container.attrs.get("HostConfig") or {}
+    except (DockerException, NotFound, AttributeError):
+        return True
+    want_mem = int(inst.mem_limit_mb or 0) * 1024 * 1024
+    return (int(host.get("Memory") or 0) == want_mem
+            and str(host.get("CpusetCpus") or "") == (inst.cpuset or ""))
+
+
+def set_resources(instance_id: int, mem_limit_mb: int | None, cpuset: str) -> None:
+    """Set (or clear) a server's memory limit and the CPUs it may run on.
+
+    Takes effect when the server next starts: its container is rebuilt then.
+    """
+    cpuset = (cpuset or "").replace(" ", "")
+    if cpuset and not _CPUSET_RE.match(cpuset):
+        raise InstanceError(
+            "CPUs are given as numbers and ranges, for example 0-3 or 0,2,4"
+        )
+    if mem_limit_mb is not None and not MEM_LIMIT_MIN_MB <= mem_limit_mb <= MEM_LIMIT_MAX_MB:
+        raise InstanceError(
+            f"A memory limit must be at least {MEM_LIMIT_MIN_MB} MB: with less, the "
+            "server is killed while it loads"
+        )
+    with Session(get_engine()) as session:
+        inst = session.get(Instance, instance_id)
+        if not inst:
+            raise InstanceError("Server not found")
+        inst.mem_limit_mb = mem_limit_mb
+        inst.cpuset = cpuset
+        session.add(inst)
+        session.commit()
+    logger.info("Limits for instance %s: memory %s, CPUs %s", instance_id,
+                f"{mem_limit_mb} MB" if mem_limit_mb else "none", cpuset or "any")
 
 
 def _inject_stats_logging(arma_params: str) -> str:
@@ -1030,9 +1114,27 @@ def stop_instance(instance_id: int) -> None:
     if container:
         forget_run(container.id)  # whatever it was, it is not online any more (#76)
         try:
-            container.stop(timeout=30)
+            container.stop(timeout=config.settings.instance_stop_timeout)
         except DockerException as exc:
             logger.warning("Stop of instance %s failed: %s", instance_id, exc)
+        else:
+            _warn_if_killed(container, instance_id)
+
+
+def _warn_if_killed(container, instance_id: int) -> None:
+    """Say so when a stop ran out of time and Docker killed the server: its
+    last save may not have been written."""
+    try:
+        container.reload()
+        state = container.attrs.get("State") or {}
+    except (DockerException, NotFound, AttributeError):
+        return
+    if state.get("ExitCode") == 137 and not state.get("OOMKilled"):
+        logger.warning(
+            "Instance %s did not shut down within %s seconds and was killed. If that "
+            "keeps happening, raise INSTANCE_STOP_TIMEOUT in .env.",
+            instance_id, config.settings.instance_stop_timeout,
+        )
 
 
 def delete_instance(instance_id: int, purge_data: bool = False) -> None:
@@ -1179,8 +1281,12 @@ def instance_view(
         "auto_restart": inst.auto_restart,
         "auto_start": inst.auto_start,
         "restart_times": schedule_times(inst),
+        **_schedule_view(inst),
         "next_restart": next_restart_label(inst),
         "mod_auto_update": inst.mod_auto_update,
+        "restart_unresponsive": inst.restart_unresponsive,
+        "mem_limit_mb": inst.mem_limit_mb,
+        "cpuset": inst.cpuset or "",
         **_template_switch_view(inst, template_names),
         "status": status,
         "server_files_ready": server_files_ready(inst.branch),
@@ -1236,6 +1342,7 @@ def instance_stats(instance_id: int) -> dict:
         target = stages.run_target(session, inst)
         admins = _admin_ids(target.content.config_json) if target else set()
         run_config = target.content.config_json if target else None
+        battleye = _battleye_on(run_config)
 
     public = config.settings.public_address
     # ONE lookup for the container, reused for status, uptime, logs and cpu/mem.
@@ -1254,7 +1361,13 @@ def instance_stats(instance_id: int) -> dict:
         # While it is starting: how far the mod download has got (#235).
         "mod_download": None,
         "uptime_seconds": None,
+        # Seconds since an online server last printed its status line, once that
+        # is long enough to mean it has stopped responding; None otherwise.
+        "unresponsive_seconds": None,
         "players": None,
+        # The roster is read from BattlEye's log lines: with BattlEye off the
+        # count is still right, but there are no names to list.
+        "battleye": battleye,
         "roster": [],
         "server_fps": None,
         "server_mem_kb": None,
@@ -1276,6 +1389,8 @@ def instance_stats(instance_id: int) -> dict:
         log_lines = current_run_log_lines(container, tail=ROSTER_LOG_TAIL)
         log_text = "\n".join(text for _, text in log_lines)
         stats["server_state"] = server_state(container, log_text)
+        if stats["server_state"] == STATE_ONLINE:
+            stats["unresponsive_seconds"] = unresponsive_seconds(container, log_lines)
         if stats["server_state"] == STATE_STARTING:
             # The same folders as the Maintenance "Downloaded & baked mods" row,
             # less the mods of an earlier template. Only walked while starting,
@@ -1802,6 +1917,85 @@ def _max_players(config_json: str) -> int | None:
     return value if isinstance(value, int) else None
 
 
+def _battleye_on(config_json: str | None) -> bool:
+    """Whether a template's config runs BattlEye (the engine's default: on)."""
+    try:
+        props = ((json.loads(config_json or "{}").get("game") or {})
+                 .get("gameProperties") or {})
+    except (ValueError, AttributeError):
+        return True
+    return props.get("battlEye", True) is not False
+
+
+def _stats_interval_seconds(container) -> float:
+    """How often this container's server prints its status line (-logStats)."""
+    try:
+        env = (container.attrs.get("Config") or {}).get("Env") or []
+    except AttributeError:
+        env = []
+    for entry in env:
+        key, _, value = str(entry).partition("=")
+        if key == "ARMA_PARAMS":
+            m = _LOG_STATS_ARG_RE.search(value)
+            if m:
+                return max(1.0, int(m.group(1)) / 1000)
+    return STATS_LOG_INTERVAL_MS / 1000
+
+
+def unresponsive_seconds(container, log_lines, now: datetime | None = None) -> int | None:
+    """Seconds since an online server's last status line, when that is too long.
+
+    `log_lines` are (timestamp, text) pairs of the current run. None while the
+    server is fine, and also when the lines read hold no status line at all (a
+    very chatty log can push them out of the tail): no evidence is not a freeze.
+    """
+    last = None
+    for ts, text in log_lines:
+        if ts is not None and _FPS_RE.search(text):
+            last = ts
+    if last is None:
+        return None
+    age = ((now or datetime.now(UTC)) - last).total_seconds()
+    threshold = max(UNRESPONSIVE_AFTER_SECONDS, 3 * _stats_interval_seconds(container))
+    return int(age) if age >= threshold else None
+
+
+def restart_unresponsive_servers() -> None:
+    """Restart servers that stopped responding, where that is switched on.
+
+    Called from the background monitor about once a minute. Non-fatal.
+    """
+    if not docker_service.ping():
+        return
+    with Session(get_engine()) as session:
+        instances = [i for i in _all_instances(session)
+                     if i.restart_unresponsive and i.desired_state == "running"
+                     and i.template_id is not None]
+    for inst in instances:
+        try:
+            container = docker_service.find_instance_container(inst.id)
+            if container is None or status_of(container) != "running":
+                continue
+            lines = current_run_log_lines(container)
+            text = "\n".join(t for _, t in lines)
+            if server_state(container, text) != STATE_ONLINE:
+                continue
+            frozen = unresponsive_seconds(container, lines)
+        except DockerException as exc:
+            logger.debug("Could not check whether %s responds: %s", inst.name, exc)
+            continue
+        if frozen is None or frozen < UNRESPONSIVE_RESTART_SECONDS:
+            continue
+        logger.warning(
+            "Instance %s has printed no status line for %d seconds; restarting it",
+            inst.name, frozen,
+        )
+        try:
+            restart_instance(inst.id)
+        except InstanceError as exc:
+            logger.warning("Restart of unresponsive %s failed: %s", inst.name, exc)
+
+
 def _admin_ids(config_json: str) -> set[str]:
     """The ids a template's game.admins lists (Steam64 or identity id), lower-cased."""
     try:
@@ -1861,6 +2055,7 @@ def instances_summary() -> dict:
             "start_gave_up": start_guard.given_up(inst.id),
             "next_restart": next_restart_label(inst),
             "uptime_seconds": None,
+            "unresponsive_seconds": None,
             "server_fps": None,
             "cpu_percent": None,
             "mem_bytes": None,
@@ -1875,8 +2070,11 @@ def instances_summary() -> dict:
                 container, target.changed_at if target else None
             )
             try:
-                log_text = current_run_log(container)
+                log_lines = current_run_log_lines(container)
+                log_text = "\n".join(text for _, text in log_lines)
                 entry["server_state"] = server_state(container, log_text)
+                if entry["server_state"] == STATE_ONLINE:
+                    entry["unresponsive_seconds"] = unresponsive_seconds(container, log_lines)
                 parsed = parse_server_status(log_text)
                 if parsed:
                     entry["server_fps"] = parsed["fps"]
@@ -2015,9 +2213,11 @@ def _stage_view(inst: Instance, target: "stages.RunTarget | None") -> dict:
 
 
 def set_restart_settings(
-    instance_id: int, auto_restart: bool | None, auto_start: bool | None
+    instance_id: int, auto_restart: bool | None, auto_start: bool | None,
+    restart_unresponsive: bool | None = None,
 ) -> None:
-    """Update the crash-restart and/or start-on-boot toggles (issue #26)."""
+    """Update the crash-restart, start-on-boot and restart-when-frozen toggles
+    (issue #26)."""
     with Session(get_engine()) as session:
         inst = session.get(Instance, instance_id)
         if not inst:
@@ -2026,6 +2226,8 @@ def set_restart_settings(
             inst.auto_restart = auto_restart
         if auto_start is not None:
             inst.auto_start = auto_start
+        if restart_unresponsive is not None:
+            inst.restart_unresponsive = restart_unresponsive
         policy = _restart_policy(inst)
         session.add(inst)
         session.commit()
@@ -2063,21 +2265,79 @@ def _normalise_times(raw: list[str]) -> list[str]:
     return [f"{h:02d}:{mm:02d}" for h, mm in sorted(seen)]
 
 
-def schedule_times(inst: Instance) -> list[str]:
-    """The instance's configured daily restart times, or [] if none/invalid."""
+# The longest a scheduled restart waits for the server to empty. Under the
+# catch-up grace, so a restart that waited is still due when the wait ends.
+SCHEDULE_WAIT_EMPTY_MAX_MINUTES = 45
+
+
+def _normalise_days(raw) -> list[int]:
+    """Weekdays a schedule runs on, Monday = 0; [] means every day."""
+    if not isinstance(raw, list):
+        raise InstanceError("Days are a list of numbers, Monday = 0")
+    days: set[int] = set()
+    for entry in raw:
+        if isinstance(entry, bool) or not isinstance(entry, int) or not 0 <= entry <= 6:
+            raise InstanceError(f"Invalid day '{entry}': use 0 (Monday) to 6 (Sunday)")
+        days.add(entry)
+    return [] if len(days) == 7 else sorted(days)
+
+
+def _normalise_wait(raw) -> int:
+    if isinstance(raw, bool) or not isinstance(raw, int) \
+            or not 0 <= raw <= SCHEDULE_WAIT_EMPTY_MAX_MINUTES:
+        raise InstanceError(
+            f"The wait for an empty server is 0 to {SCHEDULE_WAIT_EMPTY_MAX_MINUTES} minutes"
+        )
+    return raw
+
+
+def _no_schedule() -> dict:
+    return {"times": [], "days": [], "wait_empty_minutes": 0, "backup": False}
+
+
+def schedule_options(inst: Instance) -> dict:
+    """The instance's restart schedule: {times, days, wait_empty_minutes, backup}.
+
+    `days` [] = every day. `wait_empty_minutes` > 0: a due restart waits that
+    long for the last player to leave. `backup`: the saved game is backed up
+    between the stop and the start. Nothing valid stored reads as no schedule.
+    """
     raw = inst.restart_schedule_json or ""
     if not raw:
-        return []
+        return _no_schedule()
     try:
-        times = json.loads(raw).get("times", [])
-        return _normalise_times(times)
-    except (ValueError, InstanceError, AttributeError):
-        return []
+        data = json.loads(raw)
+        return {
+            "times": _normalise_times(data.get("times", [])),
+            "days": _normalise_days(data.get("days") or []),
+            "wait_empty_minutes": _normalise_wait(data.get("wait_empty_minutes") or 0),
+            "backup": bool(data.get("backup")),
+        }
+    except (ValueError, InstanceError, AttributeError, TypeError):
+        return _no_schedule()
 
 
-def set_restart_schedule(instance_id: int, times: list[str]) -> None:
+def schedule_times(inst: Instance) -> list[str]:
+    """The instance's configured daily restart times, or [] if none/invalid."""
+    return schedule_options(inst)["times"]
+
+
+def _schedule_view(inst: Instance) -> dict:
+    opts = schedule_options(inst)
+    return {
+        "restart_days": opts["days"],
+        "restart_wait_empty_minutes": opts["wait_empty_minutes"],
+        "restart_backup": opts["backup"],
+    }
+
+
+def set_restart_schedule(
+    instance_id: int, times: list[str], days: list[int] | None = None,
+    wait_empty_minutes: int | None = None, backup: bool | None = None,
+) -> None:
     """Set (or clear) an instance's daily restart schedule.
 
+    `days`, `wait_empty_minutes` and `backup` left as None keep what is stored.
     Storing the schedule also stamps last_scheduled_restart to 'now' so an
     occurrence already past earlier today does not fire immediately.
     """
@@ -2086,15 +2346,24 @@ def set_restart_schedule(instance_id: int, times: list[str]) -> None:
         inst = session.get(Instance, instance_id)
         if not inst:
             raise InstanceError("Server not found")
+        current = schedule_options(inst)
+        schedule = {
+            "times": normalised,
+            "days": current["days"] if days is None else _normalise_days(days),
+            "wait_empty_minutes": (current["wait_empty_minutes"] if wait_empty_minutes is None
+                                   else _normalise_wait(wait_empty_minutes)),
+            "backup": current["backup"] if backup is None else bool(backup),
+        }
         if normalised:
-            inst.restart_schedule_json = json.dumps({"times": normalised})
+            inst.restart_schedule_json = json.dumps(schedule)
             inst.last_scheduled_restart = datetime.now()
         else:
             inst.restart_schedule_json = ""
             inst.last_scheduled_restart = None
         session.add(inst)
         session.commit()
-    logger.info("Set restart schedule for instance %s: %s", instance_id, normalised or "none")
+    logger.info("Set restart schedule for instance %s: %s", instance_id,
+                schedule if normalised else "none")
 
 
 # --------------------------------------------------------------------------- #
@@ -2205,7 +2474,8 @@ def redownload_mods(instance_id: int, scope: str = REDOWNLOAD_TEMPLATE) -> dict:
 
 
 def _due_scheduled_restart(
-    times: list[str], now: datetime, last: datetime | None, grace_seconds: int
+    times: list[str], now: datetime, last: datetime | None, grace_seconds: int,
+    days: list[int] | None = None,
 ) -> datetime | None:
     """Return the most recent restart occurrence that is due now, else None.
 
@@ -2214,6 +2484,8 @@ def _due_scheduled_restart(
     still within `grace_seconds` of it. Pure and side-effect free for testing.
     """
     due: datetime | None = None
+    if days and now.weekday() not in days:
+        return None  # every occurrence looked at is today's
     for hhmm in times:
         hh, mm = int(hhmm[:2]), int(hhmm[3:])
         occ = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
@@ -2228,19 +2500,25 @@ def _due_scheduled_restart(
     return due
 
 
-def _next_scheduled_restart(times: list[str], now: datetime) -> datetime | None:
+def _next_scheduled_restart(
+    times: list[str], now: datetime, days: list[int] | None = None
+) -> datetime | None:
     """The next upcoming restart occurrence (today if still ahead, else the
-    earliest time tomorrow). None when there are no times. Pure for testing."""
+    earliest time on the next day the schedule runs). None when there are no
+    times. Pure for testing."""
     if not times:
         return None
     candidates = []
-    for hhmm in times:
-        hh, mm = int(hhmm[:2]), int(hhmm[3:])
-        occ = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
-        if occ <= now:
-            occ += timedelta(days=1)
-        candidates.append(occ)
-    return min(candidates)
+    for ahead in range(8):  # a week ahead covers any choice of weekdays
+        day = now + timedelta(days=ahead)
+        if days and day.weekday() not in days:
+            continue
+        for hhmm in times:
+            hh, mm = int(hhmm[:2]), int(hhmm[3:])
+            occ = day.replace(hour=hh, minute=mm, second=0, microsecond=0)
+            if occ > now:
+                candidates.append(occ)
+    return min(candidates) if candidates else None
 
 
 def next_restart_label(inst: Instance, now: datetime | None = None) -> str | None:
@@ -2249,8 +2527,8 @@ def next_restart_label(inst: Instance, now: datetime | None = None) -> str | Non
     Rendered server-side (not as a bare timestamp) so the UI shows it in the
     server's local time — the same frame the schedule is defined in.
     """
-    times = schedule_times(inst)
-    nxt = _next_scheduled_restart(times, now or datetime.now())
+    opts = schedule_options(inst)
+    nxt = _next_scheduled_restart(opts["times"], now or datetime.now(), opts["days"])
     return nxt.strftime("%Y-%m-%d %H:%M") if nxt else None
 
 
@@ -2289,6 +2567,54 @@ def restart_instances_for_branch(branch: str) -> list[str]:
     return restarted
 
 
+# Servers whose due restart is waiting for the last player to leave, so that is
+# logged once and not every 15 seconds.
+_waiting_for_empty: set[int] = set()
+
+
+def _players_online(instance_id: int) -> int | None:
+    """How many players the server's own log says are on; None when unknown."""
+    try:
+        container = docker_service.find_instance_container(instance_id)
+        if container is None or status_of(container) != "running":
+            return None
+        parsed = parse_server_status(current_run_log(container))
+    except DockerException:
+        return None
+    return parsed["players"] if parsed else None
+
+
+def _backup_at_rest(inst: Instance) -> None:
+    """Back up a stopped server's saved game: nothing is writing to it, so the
+    copy is a consistent one. Never stops the restart it is part of."""
+    from services import instance_backup  # it imports this module
+
+    try:
+        meta = instance_backup.create_backup(
+            inst.id, label="Before the scheduled restart",
+            source=instance_backup.SOURCE_SCHEDULED,
+        )
+        logger.info("Backed up %s before its scheduled restart (%s files)",
+                    inst.name, meta.get("files"))
+    except InstanceError as exc:
+        logger.info("No backup of %s before its scheduled restart: %s", inst.name, exc)
+    except Exception as exc:  # a failed backup must not leave the server down
+        logger.warning("Backup of %s before its scheduled restart failed: %s", inst.name, exc)
+
+
+def _scheduled_restart(inst: Instance, opts: dict) -> None:
+    try:
+        if opts["backup"]:
+            stop_instance(inst.id)
+            _backup_at_rest(inst)
+            start_instance(inst.id, inst.mod_auto_update)
+        else:
+            # The one ordinary start that may move mods to a newer release (#246)
+            restart_instance(inst.id, update_mods=inst.mod_auto_update)
+    except InstanceError as exc:
+        logger.warning("Scheduled restart of %s failed: %s", inst.name, exc)
+
+
 def apply_scheduled_restarts() -> None:
     """Restart instances whose daily schedule has come due. Non-fatal.
 
@@ -2300,21 +2626,44 @@ def apply_scheduled_restarts() -> None:
     unmarked it stayed due for the grace hour, so starting the server at 04:30
     got it restarted (and, with mod updates on, updated) 15 seconds later for
     the 04:00 it had missed.
+
+    With a wait for an empty server set, a due restart is held back while
+    players are on, for at most that many minutes; then it happens anyway.
+
+    Servers due on the same pass restart side by side: one after another, ten
+    servers at 04:00 kept the monitor (and so crash recovery) busy for minutes.
     """
     if not docker_service.ping():
         return
     now = datetime.now()
     with Session(get_engine()) as session:
         instances = _all_instances(session)
+    jobs: list[tuple[Instance, dict]] = []
     for inst in instances:
-        times = schedule_times(inst)
-        if not times:
+        opts = schedule_options(inst)
+        if not opts["times"]:
             continue
         due = _due_scheduled_restart(
-            times, now, inst.last_scheduled_restart, SCHEDULE_CATCHUP_GRACE_SECONDS
+            opts["times"], now, inst.last_scheduled_restart,
+            SCHEDULE_CATCHUP_GRACE_SECONDS, opts["days"],
         )
         if due is None:
+            _waiting_for_empty.discard(inst.id)
             continue
+        running = inst.desired_state == "running"
+        wait_seconds = opts["wait_empty_minutes"] * 60
+        if running and wait_seconds and (now - due).total_seconds() < wait_seconds:
+            players = _players_online(inst.id)
+            if players:
+                if inst.id not in _waiting_for_empty:
+                    _waiting_for_empty.add(inst.id)
+                    logger.info(
+                        "Scheduled restart of instance %s (%02d:%02d) waits for %d "
+                        "player(s) to leave, at most %d minutes",
+                        inst.name, due.hour, due.minute, players, opts["wait_empty_minutes"],
+                    )
+                continue
+        _waiting_for_empty.discard(inst.id)
         with Session(get_engine()) as session:
             fresh = session.get(Instance, inst.id)
             if not fresh:
@@ -2322,19 +2671,21 @@ def apply_scheduled_restarts() -> None:
             fresh.last_scheduled_restart = now
             session.add(fresh)
             session.commit()
-        if inst.desired_state != "running":
+        if not running:
             logger.info("Scheduled restart of instance %s (%02d:%02d) skipped: it is stopped",
                         inst.name, due.hour, due.minute)
             continue
         logger.info(
-            "Scheduled restart of instance %s (%02d:%02d)%s", inst.name, due.hour, due.minute,
+            "Scheduled restart of instance %s (%02d:%02d)%s%s", inst.name, due.hour, due.minute,
             ", updating its mods" if inst.mod_auto_update else "",
+            ", backing up its saved game" if opts["backup"] else "",
         )
-        try:
-            # The one ordinary start that may move mods to a newer release (#246)
-            restart_instance(inst.id, update_mods=inst.mod_auto_update)
-        except InstanceError as exc:
-            logger.warning("Scheduled restart of %s failed: %s", inst.name, exc)
+        jobs.append((inst, opts))
+    if len(jobs) == 1:
+        _scheduled_restart(*jobs[0])
+    elif jobs:
+        with ThreadPoolExecutor(max_workers=min(8, len(jobs))) as pool:
+            list(pool.map(lambda job: _scheduled_restart(*job), jobs))
 
 
 # --------------------------------------------------------------------------- #
@@ -2367,7 +2718,8 @@ def shutdown_all_instances() -> None:
     def _stop(container) -> None:
         forget_run(container.id)
         try:
-            container.stop(timeout=30)
+            # Held under the compose stop_grace_period (2m), whatever the setting.
+            container.stop(timeout=min(config.settings.instance_stop_timeout, 90))
         except DockerException as exc:
             logger.warning("Stop of %s failed: %s", container.name, exc)
 

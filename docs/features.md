@@ -69,7 +69,11 @@ A server's own page keeps every server listed down the left and splits into five
 - See who is on: each player's name, time online, platform, IP address (shown on
   request) and identity, Steam and BattlEye ids, with server admins marked.
 - Recover servers after manager or host restarts.
-- Configure auto-start and scheduled restarts.
+- Configure auto-start and scheduled restarts: on chosen weekdays, waiting up to 45 minutes for the last player to leave, and with a backup of the saved game taken while the server is stopped.
+- Stop a server that goes down three times in a row without coming online, instead of restarting it for ever, and say so under *Needs attention*.
+- See when an online server has stopped responding (no status line for five minutes), and optionally restart it.
+- Give a server a memory limit and a set of CPUs, so one server cannot take the whole machine.
+- Keep each server's container log to a fixed size.
 - Apply template changes to existing servers.
 - Start fresh after switching a server to another template: the first Start asks whether to clear the old template's downloaded mods, saved game (backed up first by default) and logs, or keep them.
 - See assigned game, A2S, and RCON ports without managing leases manually.
