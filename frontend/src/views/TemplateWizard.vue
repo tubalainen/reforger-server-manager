@@ -187,7 +187,7 @@ const spec = reactive({
   max_players: 64,
   visible: true,
   cross_platform: true,
-  mods_required_by_default: false,
+  mods_required_by_default: true,
   battleye: true,
   server_max_view_distance: 1600,
   server_min_grass_distance: 50,

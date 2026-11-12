@@ -13,6 +13,8 @@ import {
   planSave,
   settingsFrom,
   validate,
+  WAIT_EMPTY_MAX_MINUTES,
+  WEEKDAYS,
 } from '../../settingsForm'
 import { groupByStage, versionOptions } from '../../stages'
 import StoredData from '../StoredData.vue'
@@ -84,6 +86,20 @@ function addTime() {
 }
 function removeTime(t) {
   draft.value.restart_times = draft.value.restart_times.filter((x) => x !== t)
+}
+// No day ticked means every day, so the row shows all seven ticked then.
+const runsOn = (day) => !draft.value.restart_days.length || draft.value.restart_days.includes(day)
+function toggleDay(day) {
+  const all = [0, 1, 2, 3, 4, 5, 6]
+  const now = draft.value.restart_days.length ? draft.value.restart_days : all
+  const next = now.includes(day) ? now.filter((d) => d !== day) : [...now, day].sort()
+  // Unticking the last day would mean "never": keep it as it was instead.
+  if (next.length) draft.value.restart_days = next.length === 7 ? [] : next
+}
+const WAIT_CHOICES = [0, 5, 10, 15, 30, WAIT_EMPTY_MAX_MINUTES]
+// An empty box is "no limit", not the number zero.
+function setMemLimit(raw) {
+  draft.value.mem_limit_mb = raw === '' ? null : Number(raw)
 }
 
 // --- Templates and the world they read ------------------------------------------
@@ -384,6 +400,27 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
           </div>
 
           <div class="rsm-row">
+            <label for="set-restart-unresponsive" class="rsm-row-label">Restart when it stops responding</label>
+            <div class="d-flex align-items-start gap-3">
+              <div class="form-check form-switch mb-0 mt-1">
+                <input
+                  id="set-restart-unresponsive"
+                  v-model="draft.restart_unresponsive"
+                  class="form-check-input"
+                  :class="{ 'rsm-changed': isChanged('restart_unresponsive') }"
+                  type="checkbox"
+                  role="switch"
+                />
+              </div>
+              <span class="form-text mt-0">
+                A frozen server still counts as running, so nothing else restarts it. With
+                this on, an online server that has printed no status line for 10 minutes is
+                restarted. The Servers page says so after 5 minutes either way.
+              </span>
+            </div>
+          </div>
+
+          <div class="rsm-row">
             <label for="set-new-time" class="rsm-row-label">Daily restarts</label>
             <div>
               <div class="d-flex flex-wrap align-items-center gap-2">
@@ -424,6 +461,70 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
             </div>
           </div>
 
+          <div v-if="draft.restart_times.length" class="rsm-row">
+            <span id="days-label" class="rsm-row-label">On these days</span>
+            <div>
+              <div
+                class="btn-group btn-group-sm flex-wrap"
+                role="group"
+                aria-labelledby="days-label"
+                :class="{ 'rsm-changed-badge': isChanged('restart_days') }"
+              >
+                <button
+                  v-for="(name, day) in WEEKDAYS"
+                  :key="day"
+                  type="button"
+                  class="btn"
+                  :class="runsOn(day) ? 'btn-secondary' : 'btn-outline-secondary'"
+                  :aria-pressed="runsOn(day)"
+                  @click="toggleDay(day)"
+                >{{ name }}</button>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="draft.restart_times.length" class="rsm-row">
+            <label for="set-wait-empty" class="rsm-row-label">Wait for an empty server</label>
+            <div>
+              <select
+                id="set-wait-empty"
+                v-model.number="draft.restart_wait_empty_minutes"
+                class="form-select"
+                style="max-width: 16rem"
+                :class="{ 'rsm-changed': isChanged('restart_wait_empty_minutes') }"
+              >
+                <option v-for="m in WAIT_CHOICES" :key="m" :value="m">
+                  {{ m ? `Up to ${m} minutes` : 'No: restart on time' }}
+                </option>
+              </select>
+              <div class="form-text">
+                While players are on, the restart is held back for at most this long. It
+                happens as soon as the last one leaves, and after the wait in any case.
+              </div>
+            </div>
+          </div>
+
+          <div v-if="draft.restart_times.length" class="rsm-row">
+            <label for="set-restart-backup" class="rsm-row-label">Back up the saved game</label>
+            <div class="d-flex align-items-start gap-3">
+              <div class="form-check form-switch mb-0 mt-1">
+                <input
+                  id="set-restart-backup"
+                  v-model="draft.restart_backup"
+                  class="form-check-input"
+                  :class="{ 'rsm-changed': isChanged('restart_backup') }"
+                  type="checkbox"
+                  role="switch"
+                />
+              </div>
+              <span class="form-text mt-0">
+                Taken during the daily restart, while the server is stopped, so nothing is
+                being written to it. The newest 7 are kept, apart from the backups you
+                make yourself. They are on the Saves tab.
+              </span>
+            </div>
+          </div>
+
           <div class="rsm-row">
             <label for="set-mod-updates" class="rsm-row-label">Update mods on the daily restart</label>
             <div class="d-flex align-items-start gap-3">
@@ -449,6 +550,63 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload))
                 </template>
               </span>
             </div>
+          </div>
+        </div>
+      </fieldset>
+
+      <!-- Limits -->
+      <fieldset class="card">
+        <legend class="card-header py-2 fw-semibold small mb-0">Limits</legend>
+        <div class="card-body rsm-rows">
+          <div class="rsm-row">
+            <label for="set-mem-limit" class="rsm-row-label">Memory limit</label>
+            <div>
+              <div class="input-group" style="max-width: 16rem">
+                <input
+                  id="set-mem-limit"
+                  :value="draft.mem_limit_mb ?? ''"
+                  type="number"
+                  min="2048"
+                  step="512"
+                  class="form-control rsm-num"
+                  :class="{ 'is-invalid': errors.mem_limit_mb, 'rsm-changed': isChanged('mem_limit_mb') }"
+                  placeholder="No limit"
+                  @input="setMemLimit($event.target.value)"
+                />
+                <span class="input-group-text">MB</span>
+              </div>
+              <div v-if="errors.mem_limit_mb" class="small text-danger mt-1">{{ errors.mem_limit_mb }}</div>
+              <div v-else class="form-text">
+                A server that grows past its limit is killed (and restarted, with
+                <em>Restart after a crash</em> on) instead of taking the whole machine
+                down with it. Leave it empty for no limit.
+              </div>
+            </div>
+          </div>
+
+          <div class="rsm-row">
+            <label for="set-cpuset" class="rsm-row-label">Run on these CPUs</label>
+            <div>
+              <input
+                id="set-cpuset"
+                v-model.trim="draft.cpuset"
+                class="form-control rsm-num"
+                style="max-width: 16rem"
+                :class="{ 'is-invalid': errors.cpuset, 'rsm-changed': isChanged('cpuset') }"
+                placeholder="Any"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <div v-if="errors.cpuset" class="small text-danger mt-1">{{ errors.cpuset }}</div>
+              <div v-else class="form-text">
+                CPU numbers and ranges, counted from 0: <code>0-3</code> or <code>0,2,4</code>.
+                A number the machine does not have stops the server from starting.
+              </div>
+            </div>
+          </div>
+
+          <div class="form-text pb-2">
+            Both take effect the next time the server starts.
           </div>
         </div>
       </fieldset>

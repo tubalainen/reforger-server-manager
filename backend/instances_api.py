@@ -42,11 +42,25 @@ class CreateInstance(BaseModel):
 class RestartSettings(BaseModel):
     auto_restart: bool | None = None
     auto_start: bool | None = None
+    # Restart it when it stops printing its status line (a freeze)
+    restart_unresponsive: bool | None = None
 
 
 class RestartSchedule(BaseModel):
     # Daily restart times as 24-hour "HH:MM"; empty list clears the schedule.
     times: list[str] = Field(default_factory=list)
+    # Weekdays it runs on, Monday = 0; [] = every day. None keeps what is stored.
+    days: list[int] | None = None
+    # Hold a due restart back while players are on, for at most this long
+    wait_empty_minutes: int | None = None
+    # Back the saved game up between the stop and the start
+    backup: bool | None = None
+
+
+class Resources(BaseModel):
+    # Container limits; null / "" = none. Applied when the server next starts.
+    mem_limit_mb: int | None = None
+    cpuset: str = Field(default="", max_length=200)
 
 
 class ModUpdates(BaseModel):
@@ -274,7 +288,7 @@ async def restart_settings(
     try:
         await asyncio.to_thread(
             instance_service.set_restart_settings,
-            instance_id, body.auto_restart, body.auto_start,
+            instance_id, body.auto_restart, body.auto_start, body.restart_unresponsive,
         )
     except InstanceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -287,7 +301,22 @@ async def restart_schedule(
 ):
     try:
         await asyncio.to_thread(
-            instance_service.set_restart_schedule, instance_id, body.times
+            instance_service.set_restart_schedule, instance_id, body.times,
+            body.days, body.wait_empty_minutes, body.backup,
+        )
+    except InstanceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return await asyncio.to_thread(_view, instance_id)
+
+
+@router.put("/{instance_id}/resources")
+async def resources(
+    instance_id: int, body: Resources, _user: str = Depends(auth.require_session)
+):
+    """A memory limit and the CPUs the server may run on; applied at its next start."""
+    try:
+        await asyncio.to_thread(
+            instance_service.set_resources, instance_id, body.mem_limit_mb, body.cpuset
         )
     except InstanceError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

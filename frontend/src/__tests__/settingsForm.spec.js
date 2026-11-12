@@ -5,6 +5,7 @@ import {
   describeSteps,
   LOCKED_WHILE_RUNNING,
   mergeIncoming,
+  normaliseDays,
   normaliseTimes,
   pickTemplate,
   planSave,
@@ -107,7 +108,7 @@ describe('planSave', () => {
         key: 'restart',
         label: 'restart behaviour',
         path: '/restart-settings',
-        body: { auto_restart: true, auto_start: false },
+        body: { auto_restart: true, auto_start: false, restart_unresponsive: false },
       },
     ])
   })
@@ -127,7 +128,7 @@ describe('planSave', () => {
     expect(steps[0].label).toBe('name')
     // All three ports go together, so the backend checks them as a set.
     expect(steps[1].body).toEqual({ game_port: 2005, a2s_port: 17777, rcon_port: 19999 })
-    expect(steps[3].body).toEqual({ times: ['06:00'] })
+    expect(steps[3].body).toEqual({ times: ['06:00'], days: [], wait_empty_minutes: 0, backup: false })
   })
 
   it('saves mod updates on its own endpoint, after the restart times (#246)', () => {
@@ -190,5 +191,52 @@ describe('template versions (#223)', () => {
   it('starts another template at latest', () => {
     const draft = pickTemplate({ ...settingsFrom(inst()), template_version: 3 }, 2)
     expect(draft).toMatchObject({ template_id: 2, template_version: null })
+  })
+})
+
+describe('restart options and limits (v0.95.0)', () => {
+  const base = () => settingsFrom(inst())
+
+  it('reads a server with none of them set', () => {
+    const s = base()
+    expect(s.restart_days).toEqual([])
+    expect(s.restart_wait_empty_minutes).toBe(0)
+    expect(s.restart_backup).toBe(false)
+    expect(s.restart_unresponsive).toBe(false)
+    expect(s.mem_limit_mb).toBeNull()
+    expect(s.cpuset).toBe('')
+  })
+
+  it('treats all seven days as every day', () => {
+    expect(normaliseDays([6, 5, 4, 3, 2, 1, 0])).toEqual([])
+    expect(normaliseDays([4, 0, 4, 9])).toEqual([0, 4])
+  })
+
+  it('saves the days, the wait and the backup with the times, in one request', () => {
+    const steps = planSave(base(), { ...base(), restart_days: [0, 4], restart_backup: true })
+    expect(steps).toHaveLength(1)
+    expect(steps[0].path).toBe('/schedule')
+    expect(steps[0].body).toMatchObject({ days: [0, 4], wait_empty_minutes: 0, backup: true })
+    expect(steps[0].body.times).toEqual(base().restart_times)
+  })
+
+  it('saves the freeze switch with the other restart switches', () => {
+    const [step] = planSave(base(), { ...base(), restart_unresponsive: true })
+    expect(step.path).toBe('/restart-settings')
+    expect(step.body.restart_unresponsive).toBe(true)
+  })
+
+  it('saves the limits on their own, an emptied box as no limit', () => {
+    const [step] = planSave(base(), { ...base(), mem_limit_mb: 8192, cpuset: '0-3, 6' })
+    expect(step).toMatchObject({ path: '/resources', body: { mem_limit_mb: 8192, cpuset: '0-3,6' } })
+    const withLimit = settingsFrom(inst({ mem_limit_mb: 8192 }))
+    const [cleared] = planSave(withLimit, { ...withLimit, mem_limit_mb: null })
+    expect(cleared.body.mem_limit_mb).toBeNull()
+  })
+
+  it('refuses a limit that would kill the server and a CPU list that is not one', () => {
+    expect(validate({ ...base(), mem_limit_mb: 512 }).mem_limit_mb).toBeTruthy()
+    expect(validate({ ...base(), cpuset: '0-' }).cpuset).toBeTruthy()
+    expect(validate({ ...base(), mem_limit_mb: 4096, cpuset: '0,2-3' })).toEqual({})
   })
 })

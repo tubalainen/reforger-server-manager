@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends
 import auth
 import config
 from services import ai_client, docker_service, instance_service, onboarding
+from services.workshop_service import workshop
 
 router = APIRouter(prefix="/api/system", tags=["system"])
 
@@ -58,6 +59,23 @@ def warnings(_user: str = Depends(auth.require_session)):
     engine = docker_service.engine_warning()
     if engine:
         found.append(engine)
+    health = workshop.health()
+    if not health["ok"]:
+        found.append({
+            "id": "workshop_unreadable",
+            "severity": "warning",
+            "title": "The Workshop cannot be read right now",
+            "detail": (
+                f"The last {health['failures']} requests to the Arma Reforger Workshop "
+                f"failed ({health['error'] or 'no answer'}). Searching for mods, resolving "
+                "dependencies and checking for mod updates do not work until it answers "
+                "again; servers keep the mod versions they already have."
+            ),
+            "action": (
+                "If reforger.armaplatform.com opens in your browser, the site has probably "
+                "changed: update the manager. Mods can still be added by their id."
+            ),
+        })
     return {"warnings": found}
 
 

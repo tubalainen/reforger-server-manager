@@ -34,6 +34,13 @@ describe('attentionItems', () => {
     expect(item.action).toEqual({ kind: 'console', id: 1 })
   })
 
+  it('says when an online server has stopped responding', () => {
+    const [item] = attentionItems([server({ unresponsive_seconds: 420 })])
+    expect(item.text).toContain('7 minutes')
+    expect(item.action).toEqual({ kind: 'restart', id: 1 })
+    expect(attentionItems([server({ unresponsive_seconds: null })])).toEqual([])
+  })
+
   it('ignores a stale template on a server that is not running', () => {
     // The flag only means something for a live config; a stopped server picks the
     // template up when it next starts.

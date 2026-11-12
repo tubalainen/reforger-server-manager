@@ -72,6 +72,11 @@ SOURCE_MANUAL = "manual"
 SOURCE_TEMPLATE_SWITCH = "template-switch"
 SOURCE_PRE_RESTORE = "pre-restore"
 SOURCE_UPLOAD = "upload"
+# Taken by a scheduled restart, between the stop and the start. These have a
+# shelf of their own, so a week of nightly copies cannot push out the backups
+# someone made by hand.
+SOURCE_SCHEDULED = "scheduled-restart"
+KEEP_SCHEDULED = 7
 
 # How a backup relates to what the instance is configured for right now (#181).
 # "match" is the only one the engine will actually load.
@@ -355,6 +360,7 @@ def overview(instance_id: int) -> dict:
     return {
         "running": running,
         "keep": KEEP,
+        "keep_scheduled": KEEP_SCHEDULED,
         # Every template's save target, so the restore dialog can offer them all
         # and annotate each with how it fits the chosen backup. The annotation is
         # a hint; the refusal in restore_backup is the authority (#184).
@@ -494,8 +500,10 @@ def prune(instance_id: int, protect: str | None = None) -> list[str]:
     restore is about to unpack (#181).
     """
     backups = list_backups(instance_id)
+    scheduled = [b for b in backups if b.get("source") == SOURCE_SCHEDULED]
+    others = [b for b in backups if b.get("source") != SOURCE_SCHEDULED]
     dropped = []
-    for backup in backups[KEEP:]:
+    for backup in others[KEEP:] + scheduled[KEEP_SCHEDULED:]:
         if backup["id"] == protect:
             continue
         delete_backup(instance_id, backup["id"])

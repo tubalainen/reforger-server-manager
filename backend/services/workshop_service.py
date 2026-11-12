@@ -29,6 +29,9 @@ _ASSET_ID_RE = re.compile(r"([0-9A-Fa-f]{16})")
 
 _ASSET_CACHE_TTL = 600  # seconds
 
+# Failed requests in a row before the GUI is told the Workshop cannot be read.
+UNHEALTHY_AFTER = 3
+
 # Bounds on the recursive dependency walk (security review R11). Each new node
 # costs one HTTP fetch of up to REQUEST_TIMEOUT, so an unbounded graph could tie
 # up a worker thread for a very long time and fan out a lot of outbound traffic.
@@ -169,6 +172,10 @@ class WorkshopService:
     def __init__(self):
         self._build_id: str | None = None
         self._asset_cache: dict[str, tuple[float, dict]] = {}
+        # Requests in a row the Workshop did not answer in a way we can read.
+        self._failures = 0
+        self._failing_since: float | None = None
+        self._last_error = ""
 
     def _client(self) -> httpx.Client:
         return httpx.Client(
@@ -178,13 +185,49 @@ class WorkshopService:
         )
 
     def _get_page_props(self, path: str, params: dict | None = None) -> dict:
-        with self._client() as client:
-            resp = client.get(f"{BASE_URL}{path}", params=params)
-            resp.raise_for_status()
-            html = resp.text
-        if self._build_id is None:
-            self._build_id = extract_build_id(html)
-        return extract_next_data(html)
+        try:
+            with self._client() as client:
+                resp = client.get(f"{BASE_URL}{path}", params=params)
+                resp.raise_for_status()
+                html = resp.text
+            if self._build_id is None:
+                self._build_id = extract_build_id(html)
+            props = extract_next_data(html)
+        except httpx.HTTPStatusError as exc:
+            # One page that is not there (a mod taken off the Workshop) says
+            # nothing about the Workshop itself.
+            if exc.response.status_code != 404:
+                self._note_failure(str(exc))
+            raise
+        except (httpx.HTTPError, ValueError) as exc:
+            self._note_failure(str(exc))
+            raise
+        self._failures = 0
+        self._failing_since = None
+        self._last_error = ""
+        return props
+
+    def _note_failure(self, error: str) -> None:
+        self._failures += 1
+        self._last_error = error
+        if self._failing_since is None:
+            self._failing_since = time.time()
+
+    def health(self) -> dict:
+        """Whether the Workshop is being read, as far as the last requests say.
+
+        The manager reads the Workshop website's own page data; there is no
+        official API. If the site changes or is down, searching, dependency
+        lookups and mod-update checks all stop working, and mods quietly stay
+        at the versions on disk. `ok` turns False after UNHEALTHY_AFTER failed
+        requests in a row, and True again with the first one that works.
+        """
+        return {
+            "ok": self._failures < UNHEALTHY_AFTER,
+            "failures": self._failures,
+            "failing_since": self._failing_since,
+            "error": self._last_error,
+        }
 
     def search(self, query: str, page: int = 1) -> dict:
         """Search the Workshop. Raises WorkshopError on any failure."""

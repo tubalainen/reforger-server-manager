@@ -139,7 +139,11 @@ function joinedAt(p) {
       </table>
     </div>
     <div v-else class="card-body">
-      <p v-if="stats.players" class="text-secondary fst-italic mb-0">
+      <p v-if="stats.players && stats.battleye === false" class="text-secondary fst-italic mb-0">
+        {{ stats.players }} online. Their names are read from BattlEye's lines in the log,
+        and BattlEye is off in this server's template, so there are none to list.
+      </p>
+      <p v-else-if="stats.players" class="text-secondary fst-italic mb-0">
         {{ stats.players }} online — this server build doesn’t print player names to the log.
       </p>
       <p v-else class="text-secondary fst-italic mb-0">No one connected.</p>

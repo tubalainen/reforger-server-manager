@@ -290,7 +290,10 @@ class TemplateSpec(BaseModel):
     # rendered before these existed.
     player_whitelist: list[WhitelistEntry] = []
     player_ban_list: list[BanEntry] = []
-    mods_required_by_default: bool = False
+    # On, as the engine's own default is: a server that starts without a mod it
+    # could not download lets players into a scenario that is missing parts.
+    # Stored templates keep what they say; this is what a NEW template starts with.
+    mods_required_by_default: bool = True
 
     # gameProperties
     battleye: bool = True
