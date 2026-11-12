@@ -23,7 +23,14 @@ import system_api
 import templates_api
 import web
 import workshop_api
-from services import auto_update, docker_service, fleet_history, instance_service, onboarding
+from services import (
+    auto_update,
+    docker_service,
+    fleet_history,
+    handover,
+    instance_service,
+    onboarding,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("manager")
@@ -66,6 +73,12 @@ async def lifespan(_app: FastAPI):
             "Docker-controlling GUI (see the SECURITY errors above). Fix the "
             "configuration, or bind the GUI to 127.0.0.1."
         )
+    # A request to leave the servers running belongs to the manager that was
+    # replaced, never to this one (see services/handover.py).
+    try:
+        handover.clear()
+    except OSError as exc:
+        logger.warning("Could not clear the server handover marker: %s", exc)
     # A brand-new install opens on the setup screen; decided once (#241).
     try:
         await asyncio.to_thread(onboarding.settle)
@@ -100,7 +113,12 @@ async def lifespan(_app: FastAPI):
         # boot (see _crash_monitor). Needs the stop_grace_period set in
         # docker-compose.yaml — with the default 10s compose would SIGKILL us
         # mid-stop.
-        await asyncio.to_thread(instance_service.shutdown_all_instances)
+        # Unless `rsm update` is replacing this manager with a newer one: then the
+        # servers keep running and their players stay on (services/handover.py).
+        if await asyncio.to_thread(handover.take):
+            logger.info("Manager update: leaving the game servers running for the new manager")
+        else:
+            await asyncio.to_thread(instance_service.shutdown_all_instances)
 
 
 async def _crash_monitor():

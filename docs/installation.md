@@ -46,7 +46,7 @@ curl -fsSL https://raw.githubusercontent.com/tubalainen/reforger-server-manager/
 
 The installer checks for Docker (Engine 26 or newer — it offers to install or upgrade it), generates a strong GUI password, optionally configures the firewall, and starts the stack. Save the password printed at the end, then open `http://localhost:7780`.
 
-Update later with `rsm update`. Check the [release notes](https://github.com/tubalainen/reforger-server-manager/releases) first for breaking changes or manual steps.
+Update later with `rsm update`. Check the [release notes](https://github.com/tubalainen/reforger-server-manager/releases) first for breaking changes or manual steps. The game servers keep running while `rsm update` replaces the manager, so players stay connected; `rsm restart`, `rsm stop` and `docker compose down` still stop them.
 
 ### Manual Linux setup
 

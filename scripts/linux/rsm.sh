@@ -1706,6 +1706,10 @@ stack_cmd() {
             _before=$(image_version "$STACK-manager")
             echo "Updating stack '$STACK' (now on ${_before:+v}${_before:-an unknown version})..."
             dc pull
+            # The game servers keep running while the manager is replaced, so
+            # nobody is disconnected; the new manager takes them over. A manager
+            # older than v0.96.2 does not know the command: it stops them, as before.
+            docker exec -u app "$STACK-manager" python manage.py keep-servers >/dev/null 2>&1 || true
             dc up -d
             echo "Updated. Current images:"
             dc images

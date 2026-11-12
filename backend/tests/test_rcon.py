@@ -40,7 +40,7 @@ class FakeServer:
     """A BattlEye RCon server in a thread: answers logins and commands."""
 
     def __init__(self, password="secret", replies=None, drop_first=0, split=None,
-                 push_message=False):
+                 push_message=False, as_messages=False):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind(("127.0.0.1", 0))
         self.sock.settimeout(0.2)
@@ -50,6 +50,8 @@ class FakeServer:
         self.drop_first = drop_first      # ignore this many packets (UDP loss)
         self.split = split                # send replies in this many parts
         self.push_message = push_message  # send a 0x02 message before replying
+        self.as_messages = as_messages    # Reforger: empty reply, output as messages
+        self._msg_seq = 0
         self.commands: list[str] = []
         self.acks: list[int] = []
         self._stop = threading.Event()
@@ -88,7 +90,14 @@ class FakeServer:
                 if self.push_message:
                     self.sock.sendto(packet(bytes([rcon.MESSAGE, 42]) + b"chat"), addr)
                 reply = self.replies.get(text, "").encode()
-                if self.split:
+                if self.as_messages:
+                    self.sock.sendto(packet(bytes([rcon.COMMAND, seq])), addr)
+                    for line in [f"Processing Command: {text}", *reply.decode().split("\n")]:
+                        if line:
+                            self.sock.sendto(packet(bytes([rcon.MESSAGE, self._msg_seq])
+                                                    + line.encode()), addr)
+                            self._msg_seq = (self._msg_seq + 1) % 256
+                elif self.split:
                     size = max(1, -(-len(reply) // self.split))
                     chunks = [reply[i:i + size] for i in range(0, len(reply), size)]
                     for index, chunk in reversed(list(enumerate(chunks))):
@@ -307,3 +316,33 @@ def test_the_docker_host_is_the_managers_own_gateway(monkeypatch):
     assert rcon_admin._docker_host() == "172.21.0.1"
     monkeypatch.setattr(rcon_admin, "_default_gateway", lambda: None)
     assert rcon_admin._docker_host() == "host.docker.internal"
+
+
+def test_reforger_sends_a_commands_output_as_messages_after_an_empty_reply():
+    # Seen on Arma Reforger 1.9: COMMAND '' then MESSAGE 'Processing Command: ...'
+    # then the output, one message per line.
+    replies = {"#ban list": "Server has no bans to list.",
+               "#players": "Players on server: [Player#] ; [Player UID] ; [Player Name]\n0 ; abc ; Reidond"}
+    with FakeServer(replies=replies, as_messages=True) as server:
+        out = _run(server, ["#ban list", "#players", "#kick 0"])
+    assert out[0] == "Server has no bans to list."
+    assert out[1].endswith("0 ; abc ; Reidond") and "Processing Command" not in out[1]
+    assert out[2] == ""  # nothing printed: an empty answer, not an error
+
+
+@pytest.mark.parametrize("reply", ["Player not found", "error 'ban create x 60'",
+                                   "unknown command 'kik'"])
+def test_a_command_the_server_refused_is_a_failure_not_a_success(server_with_rcon, monkeypatch,
+                                                                  reply):
+    iid, _sent, _ = server_with_rcon
+    monkeypatch.setattr(rcon, "run", lambda *a, **k: [reply])
+    with pytest.raises(InstanceError, match="could not"):
+        rcon_admin.kick(iid, 99)
+
+
+def test_an_ordinary_answer_is_passed_on(server_with_rcon, monkeypatch):
+    iid, _sent, _ = server_with_rcon
+    monkeypatch.setattr(rcon, "run", lambda *a, **k: ["Player #3 kicked"])
+    assert rcon_admin.kick(iid, 3) == "Player #3 kicked"
+    monkeypatch.setattr(rcon, "run", lambda *a, **k: [""])
+    assert rcon_admin.kick(iid, 3) == ""

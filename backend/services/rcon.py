@@ -16,6 +16,17 @@ has to be acknowledged with its sequence byte.
 UDP loses packets, so a login or command that gets no answer is sent again a
 few times before giving up.
 
+Arma Reforger answers a command with an EMPTY reply and sends what the command
+printed as separate server messages, right after it (seen on 1.9):
+
+    COMMAND seq=1 ''
+    MESSAGE 'Processing Command: #ban list'
+    MESSAGE 'Server has no bans to list.'
+
+So a command's answer is its reply when that holds text, and otherwise the
+messages that arrive in the moment after it, less the "Processing Command"
+echo. Collecting stops when the server has been quiet for MESSAGE_QUIET.
+
 Only the wire protocol lives here. Which commands exist is the game's business
 (Server Management wiki); see rcon_admin for the ones the manager uses.
 """
@@ -28,6 +39,12 @@ LOGIN, COMMAND, MESSAGE = 0x00, 0x01, 0x02
 
 DEFAULT_TIMEOUT = 2.0   # seconds to wait for one answer
 DEFAULT_ATTEMPTS = 3    # times a login or command is sent before giving up
+# After a command's (empty) reply, how long a silence ends its messages, and the
+# longest they are waited for in all.
+MESSAGE_QUIET = 0.6
+MESSAGE_MAX = 4.0
+# Server messages that are not a command's output.
+_NOISE = ("Processing Command:", "Logged In!")
 # Sent on the way out (Reforger 1.2.1+): frees the server's client slot at once
 # instead of after its 45-second timeout. Not waited for.
 LOGOUT_COMMAND = "@logout"
@@ -104,10 +121,11 @@ class Session:
         self._seq = (self._seq + 1) % 256
         return seq
 
-    def _receive(self, deadline: float) -> bytes | None:
+    def _receive(self, deadline: float, messages: list[str] | None = None) -> bytes | None:
         """The next valid packet body before `deadline`, or None when time is up.
 
-        A message the server sends on its own is acknowledged here and skipped.
+        A message the server sends on its own is acknowledged here, kept in
+        `messages` when a list is given, and skipped.
         """
         while True:
             left = deadline - time.monotonic()
@@ -130,6 +148,8 @@ class Session:
                 continue
             if body[0] == MESSAGE and len(body) >= 2:
                 self._send(bytes([MESSAGE, body[1]]))
+                if messages is not None:
+                    messages.append(body[2:].decode("utf-8", errors="replace"))
                 continue
             return body
 
@@ -154,12 +174,13 @@ class Session:
         )
 
     def command(self, text: str) -> str:
-        """Send one command; return the server's reply (often empty)."""
+        """Send one command; return what it printed (see the module docstring)."""
         if self._sock is None:
             raise RconError("The RCON session is closed")
         seq = self._next_seq()
         request = bytes([COMMAND, seq]) + text.encode("utf-8")
         parts: dict[int, bytes] = {}
+        messages: list[str] = []
         for _ in range(self.attempts):
             try:
                 self._send(request)
@@ -167,7 +188,7 @@ class Session:
                 raise RconError(f"RCON connection failed ({exc})") from exc
             deadline = time.monotonic() + self.timeout
             while True:
-                body = self._receive(deadline)
+                body = self._receive(deadline, messages)
                 if body is None:
                     break
                 if body[0] != COMMAND or len(body) < 2 or body[1] != seq:
@@ -181,8 +202,19 @@ class Session:
                         joined = b"".join(parts[i] for i in sorted(parts))
                         return joined.decode("utf-8", errors="replace")
                     continue
-                return rest.decode("utf-8", errors="replace")
+                reply = rest.decode("utf-8", errors="replace")
+                return reply if reply.strip() else self._printed(messages)
         raise RconError("The server did not answer the RCON command")
+
+    def _printed(self, messages: list[str]) -> str:
+        """The server messages that follow a command's empty reply: its output."""
+        end = time.monotonic() + MESSAGE_MAX
+        while time.monotonic() < end:
+            seen = len(messages)
+            body = self._receive(min(end, time.monotonic() + MESSAGE_QUIET), messages)
+            if body is None and len(messages) == seen:
+                break  # quiet for MESSAGE_QUIET: the output is complete
+        return "\n".join(m for m in messages if not m.startswith(_NOISE)).strip()
 
 
 def run(host: str, port: int, password: str, commands: list[str],
