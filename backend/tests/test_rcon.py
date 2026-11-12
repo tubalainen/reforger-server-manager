@@ -298,3 +298,12 @@ def test_the_api_answers_with_the_reply_and_refusals_as_409(logged_in, server_wi
     write(None)
     r = logged_in.post(f"/api/instances/{iid}/players/ban", json={"player_id": 4})
     assert r.status_code == 409
+
+
+def test_the_docker_host_is_the_managers_own_gateway(monkeypatch):
+    # host.docker.internal maps to docker0, which Docker does not let another
+    # bridge network reach; the container's own gateway does answer.
+    monkeypatch.setattr(rcon_admin, "_default_gateway", lambda: "172.21.0.1")
+    assert rcon_admin._docker_host() == "172.21.0.1"
+    monkeypatch.setattr(rcon_admin, "_default_gateway", lambda: None)
+    assert rcon_admin._docker_host() == "host.docker.internal"

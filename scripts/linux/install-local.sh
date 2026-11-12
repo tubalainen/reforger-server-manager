@@ -272,6 +272,6 @@ say "    * forward UDP $GAME_RANGE and UDP $A2S_RANGE on your ROUTER to this mac
 say "      and give this machine a fixed/reserved LAN IP."
 say "    * never forward the RCON ports or the web GUI port ($WEB_PORT)."
 say ""
-say "  Then open the GUI and use Server Instances → Server files to download the"
+say "  Then open the GUI and use System → Server files to download the"
 say "  Arma server files before creating your first server."
 say ""
