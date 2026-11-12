@@ -19,7 +19,14 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 import auth
-from services import ai_client, docker_service, instance_backup, instance_service, log_explain
+from services import (
+    ai_client,
+    docker_service,
+    instance_backup,
+    instance_service,
+    log_explain,
+    rcon_admin,
+)
 from services.instance_service import InstanceError
 
 logger = logging.getLogger("manager.instances_api")
@@ -55,6 +62,20 @@ class RestartSchedule(BaseModel):
     wait_empty_minutes: int | None = None
     # Back the saved game up between the stop and the start
     backup: bool | None = None
+
+
+class Kick(BaseModel):
+    # The server's player id for this session (the Players tab's ID column)
+    player_id: int = Field(ge=0)
+
+
+class Ban(BaseModel):
+    # By identity id where there is one: it also works once the player has left
+    player_id: int | None = Field(default=None, ge=0)
+    identity_id: str | None = Field(default=None, max_length=64)
+    # 0 = for ever
+    duration_seconds: int = Field(default=0, ge=0, le=rcon_admin.DURATION_MAX)
+    reason: str = Field(default="", max_length=500)
 
 
 class Resources(BaseModel):
@@ -658,3 +679,45 @@ async def logs(websocket: WebSocket, instance_id: int):
     finally:
         stop.set()
         task.cancel()
+
+
+# --------------------------------------------------------------------------- #
+# Acting on a running server over its RCON: kick, ban, the ban list
+# --------------------------------------------------------------------------- #
+
+async def _rcon(fn, *args, **kwargs) -> dict:
+    try:
+        reply = await asyncio.to_thread(fn, *args, **kwargs)
+    except InstanceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"reply": reply}
+
+
+@router.get("/{instance_id}/rcon")
+async def rcon_status(instance_id: int, _user: str = Depends(auth.require_session)):
+    """Whether the server's RCON is on, and with which permission (from the
+    config.json it last started with)."""
+    return await asyncio.to_thread(rcon_admin.status, instance_id)
+
+
+@router.post("/{instance_id}/players/kick")
+async def kick_player(instance_id: int, body: Kick, _user: str = Depends(auth.require_session)):
+    return await _rcon(rcon_admin.kick, instance_id, body.player_id)
+
+
+@router.post("/{instance_id}/players/ban")
+async def ban_player(instance_id: int, body: Ban, _user: str = Depends(auth.require_session)):
+    return await _rcon(
+        rcon_admin.ban, instance_id, player_id=body.player_id, identity_id=body.identity_id,
+        duration_seconds=body.duration_seconds, reason=body.reason,
+    )
+
+
+@router.get("/{instance_id}/bans")
+async def ban_list(instance_id: int, page: int = 1, _user: str = Depends(auth.require_session)):
+    return await _rcon(rcon_admin.ban_list, instance_id, page)
+
+
+@router.delete("/{instance_id}/bans/{ban_id}")
+async def remove_ban(instance_id: int, ban_id: str, _user: str = Depends(auth.require_session)):
+    return await _rcon(rcon_admin.ban_remove, instance_id, ban_id)
