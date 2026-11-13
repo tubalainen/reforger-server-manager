@@ -10,9 +10,18 @@ It runs on Linux, a public VPS, or Windows 10/11 through Docker Desktop. The pro
 
 **Container image:** `ghcr.io/tubalainen/reforger-server-manager:latest`
 
-[Installation](docs/installation.md) · [Feature tour](docs/features.md) · [Releases](https://github.com/tubalainen/reforger-server-manager/releases) · [Video walkthrough](https://youtu.be/s6ml4SacnRo)
+[Installation](docs/installation.md) · [Feature tour](docs/features.md) · [Releases](https://github.com/tubalainen/reforger-server-manager/releases) · [Video tutorials](#video-tutorials)
 
 ![Servers overview](docs/images/06-servers-overview.png)
+
+## Video tutorials
+
+A four-part series on YouTube, recorded on a real install ([the whole playlist](https://www.youtube.com/playlist?list=PLbHMyJR6yeVw)):
+
+1. [Install it at home](https://youtu.be/O-hlgzCplFs): hardware, Debian, the one-line installer, logging in, firewalls and port forwarding, and your first server.
+2. [The Library](https://youtu.be/05tlCHJqAdc): building a server template, mods and load order, mod lists, and Test, Dev and Prod.
+3. [Servers, System and the AI helpers](https://youtu.be/W5p71OkeAAQ): every server setting, saves, players, server files, and troubleshooting Ask AI.
+4. [Advanced](https://youtu.be/pzvHLpP-0OM): the `rsm` command, several communities on one machine, and the Server Supervisor.
 
 ## Highlights
 
