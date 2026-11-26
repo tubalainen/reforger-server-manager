@@ -4,7 +4,7 @@
 set -e
 
 # Run the command as 'app', with its groups (including the docker-socket group
-# added below) and its own HOME, the way gosu did before v0.97.1.
+# added below) and its own HOME, the way gosu did before v0.97.2.
 as_app() {
     exec env HOME=/home/app setpriv --reuid=app --regid=app --init-groups -- "$@"
 }
