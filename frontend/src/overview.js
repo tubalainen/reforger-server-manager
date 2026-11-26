@@ -1,6 +1,8 @@
 // The Servers overview's derived views (#189): the host-wide "needs attention" list
 // and the sparkline geometry. Kept free of Vue so both can be tested on their own.
 
+import { formatBytes } from './format'
+
 const BRANCH_LABEL = { stable: 'Stable', experimental: 'Experimental' }
 
 export function branchLabel(branch) {
@@ -134,4 +136,27 @@ export function sparkline(values, width = 120, height = 28, pad = 3) {
   const [lx] = coords[coords.length - 1]
   const [fx] = coords[0]
   return { line, area: `${line}L${lx},${height}L${fx},${height}Z` }
+}
+
+/**
+ * What a player downloads to join a server (#283), from summary.servers[].mods_download:
+ * the Workshop sizes of its mods and their dependencies. `text` is '' while there is
+ * nothing to show (no template, no mods, still being looked up, Workshop unreachable).
+ *
+ * @returns {{ text: string, title: string }}
+ */
+export function modsDownload(md) {
+  if (!md || md.state !== 'ready' || md.bytes == null) return { text: '', title: '' }
+  // Workshop sizes, so base 1000 like the Workshop lists them.
+  const size = formatBytes(md.bytes, { base: 1000, empty: '0 MB' })
+  const short = md.missing > 0
+  const mods = `${md.mods} mod${md.mods === 1 ? '' : 's'}`
+  return {
+    text: `${short ? 'At least ' : ''}${size} of mods to download`,
+    title:
+      `What a player downloads to join: ${mods} with their dependencies, by Workshop size` +
+      (short
+        ? `. ${md.missing} more could not be sized, so it is at least this much.`
+        : '.'),
+  }
 }

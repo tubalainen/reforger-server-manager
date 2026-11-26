@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { attentionItems, joinNames, sparkline } from '../overview'
+import { attentionItems, joinNames, modsDownload, sparkline } from '../overview'
 
 const server = (over = {}) => ({
   id: 1,
@@ -129,5 +129,27 @@ describe('attentionItems: a server without a template (#223)', () => {
     expect(items.map((i) => i.key)).toEqual(['no-template-4'])
     expect(items[0].action).toEqual({ kind: 'settings', id: 4 })
     expect(items[0].text).toContain('No template selected')
+  })
+})
+
+describe('modsDownload (#283)', () => {
+  it('shows the Workshop total in GB, base 1000', () => {
+    const v = modsDownload({ state: 'ready', bytes: 12_300_000_000, mods: 42, missing: 0 })
+    expect(v.text).toBe('12.30 GB of mods to download')
+    expect(v.title).toContain('42 mods with their dependencies')
+  })
+
+  it('says "at least" when some mods could not be sized', () => {
+    const v = modsDownload({ state: 'ready', bytes: 5_000_000, mods: 1, missing: 2 })
+    expect(v.text).toBe('At least 5.0 MB of mods to download')
+    expect(v.title).toContain('1 mod with')
+    expect(v.title).toContain('2 more could not be sized')
+  })
+
+  it('shows nothing until the size is known', () => {
+    for (const md of [null, undefined, { state: 'resolving', bytes: null },
+      { state: 'failed', bytes: null }, { state: 'none', bytes: null }]) {
+      expect(modsDownload(md).text).toBe('')
+    }
   })
 })
