@@ -100,6 +100,32 @@ def test_a_running_server_carries_what_the_overview_table_shows(fleet):
     assert srv["mem_bytes"] == 1000
 
 
+def test_each_server_carries_its_mods_download_size(fleet, monkeypatch):
+    # #283: what a player downloads to join, from the config the server runs.
+    from services import mod_download
+
+    seen = []
+
+    def fake(config_json):
+        seen.append(config_json)
+        return {"state": "ready", "bytes": 12_300_000_000, "mods": 42, "missing": 0}
+
+    monkeypatch.setattr(mod_download, "players_download", fake)
+    servers = instance_service.instances_summary()["servers"]
+    assert all(s["mods_download"]["bytes"] == 12_300_000_000 for s in servers)
+    assert seen == ['{"game": {"maxPlayers": 64}}'] * 2
+
+
+def test_a_server_without_a_template_has_no_mods_download(fleet):
+    with Session(models.get_engine()) as session:
+        inst = session.get(models.Instance, 2)
+        inst.template_id = None
+        session.add(inst)
+        session.commit()
+    srv = next(s for s in instance_service.instances_summary()["servers"] if s["id"] == 2)
+    assert srv["mods_download"] is None
+
+
 def test_template_edited_after_start_is_flagged(fleet):
     srv = next(s for s in instance_service.instances_summary()["servers"] if s["id"] == 1)
     assert srv["template_changed"] is True

@@ -2049,6 +2049,9 @@ def instances_summary() -> dict:
             **_stage_view(inst, target),
             "scenario_name": content.scenario_name if content else "",
             "max_players": _max_players(content.config_json) if content else None,
+            # What a player has to download to join (#283): the Workshop sizes of
+            # the mods it runs, dependencies included.
+            "mods_download": mod_download.players_download(content.config_json) if content else None,
             "template_changed": False,
             **_template_switch_view(inst, names),
             "server_files_ready": files_ready[inst.branch],

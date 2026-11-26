@@ -9,7 +9,7 @@ import StageBadge from '../components/StageBadge.vue'
 import { startServerFilesDownload } from '../jobs'
 import { groupByStage, versionOptions } from '../stages'
 import { formatBytes, formatUptime } from '../format'
-import { attentionItems, branchLabel } from '../overview'
+import { attentionItems, branchLabel, modsDownload } from '../overview'
 import { serverStatus } from '../status'
 
 // The Servers overview (#189): host totals, one list of what needs attention, and a
@@ -384,6 +384,11 @@ onUnmounted(() => clearInterval(poll))
                   <span :class="{ 'text-warning': s.template_id == null }">{{ scenarioOf(s) }}</span> · {{ branchLabel(s.branch) }}
                   <StageBadge :stage="s.template_stage" :version="s.template_prod_version" class="ms-1" />
                 </div>
+                <div
+                  v-if="modsDownload(s.mods_download).text"
+                  class="small text-secondary"
+                  :title="modsDownload(s.mods_download).title"
+                >{{ modsDownload(s.mods_download).text }}</div>
               </td>
               <td data-label="Status">
                 <span class="d-inline-flex align-items-center gap-2 text-nowrap" :title="rowStatus(s).long">

@@ -83,6 +83,22 @@ def test_the_total_is_resolved_in_the_background_then_cached(monkeypatch):
     assert calls == [A]
 
 
+def test_players_download_is_the_workshop_total_without_internals(monkeypatch):
+    # #283: the Servers overview shows what a player downloads to join.
+    monkeypatch.setattr(ws.workshop, "resolve_dependencies", lambda mid: {
+        "mods": [{"modId": mid, "size": 100}, {"modId": "B" * 16, "size": 50}],
+        "missing": [],
+    })
+    monkeypatch.setattr(mod_download, "threading", _InlineThreading)
+    cfg = json.dumps({"game": {"mods": [{"modId": A}]}})
+    assert mod_download.players_download(cfg)["state"] == "resolving"
+    # JSON-ready: no frozenset of ids, no per-mod sizes.
+    assert mod_download.players_download(cfg) == {
+        "state": "ready", "bytes": 150, "mods": 2, "missing": 0,
+    }
+    assert mod_download.players_download("{}")["state"] == "none"
+
+
 def test_a_template_without_mods_expects_nothing():
     assert mod_download.expected_total([])["state"] == "none"
 

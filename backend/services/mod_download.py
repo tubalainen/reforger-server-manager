@@ -162,6 +162,16 @@ def expected_total(ids: list[str]) -> dict:
     return {"state": EXPECTED_RESOLVING, "bytes": None, "mods": 0, "missing": 0}
 
 
+def players_download(config_json: str | None) -> dict:
+    """What a player downloads to join a server running this config (#283).
+
+    The Workshop sizes of the template's mods and every dependency, each once:
+    {state, bytes, mods, missing}. Never blocks; see expected_total.
+    """
+    total = expected_total(mod_ids(config_json))
+    return {k: total[k] for k in ("state", "bytes", "mods", "missing")}
+
+
 def record(key: str, downloaded: int, now: float | None = None) -> dict:
     """Note the bytes on disk for one run; returns {rate_bps, growing}.
 
