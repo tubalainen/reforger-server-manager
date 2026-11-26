@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { api } from '../../api'
 import { startServerFilesDownload } from '../../jobs'
 import { isErrorLine } from '../../log'
-import { attentionItems } from '../../overview'
+import { attentionItems, modsDownload } from '../../overview'
 import { SERVER_TABS, tabParams } from '../../server'
 import { serverStatus } from '../../status'
 import DeleteServerDialog from '../DeleteServerDialog.vue'
@@ -62,6 +62,8 @@ const dotClass = computed(() => view.value.cls.replace('text-bg-', 'bg-'))
 // This server's row in the summary: its player limit, scenario and history live there.
 const row = computed(() => (props.summary?.servers || []).find((s) => String(s.id) === String(props.id)))
 const maxPlayers = computed(() => row.value?.max_players ?? null)
+// What a player downloads to join (#283), the same figure as on the Servers overview.
+const modsSize = computed(() => modsDownload(row.value?.mods_download))
 const history = computed(() => props.summary?.history || [])
 
 // Start after a switch to another template first asks what of the old one's data
@@ -290,6 +292,10 @@ onUnmounted(() => {
             <StageBadge :stage="inst.template_stage" :version="inst.template_prod_version" />
             <span aria-hidden="true">·</span>
             <span class="text-capitalize">{{ inst.branch }}</span>
+            <template v-if="modsSize.text">
+              <span aria-hidden="true">·</span>
+              <span :title="modsSize.title">{{ modsSize.text }}</span>
+            </template>
             <template v-if="connect">
               <span aria-hidden="true">·</span>
               <code class="text-body">{{ connect }}</code>
