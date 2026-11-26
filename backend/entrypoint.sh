@@ -3,6 +3,12 @@
 # then drops privileges to the unprivileged 'app' user.
 set -e
 
+# Run the command as 'app', with its groups (including the docker-socket group
+# added below) and its own HOME, the way gosu did before v0.97.1.
+as_app() {
+    exec env HOME=/home/app setpriv --reuid=app --regid=app --init-groups -- "$@"
+}
+
 if [ "$(id -u)" = "0" ]; then
     # ./data is auto-created root-owned by the docker bind mount on first
     # run; hand it to the app user so SQLite can create its database.
@@ -34,7 +40,7 @@ if [ "$(id -u)" = "0" ]; then
     #     which never talks to Docker itself: its observer does.
     if [ -n "${RSM_OBSERVER_SOCKET:-}" ]; then
         echo "Server Supervisor: reading Docker through its observer" >&2
-        exec gosu app "$@"
+        as_app "$@"
     fi
     case "$DOCKER_HOST" in
         unix:///run/rsm-gate/*)
@@ -56,7 +62,7 @@ if [ "$(id -u)" = "0" ]; then
             ;;
     esac
 
-    exec gosu app "$@"
+    as_app "$@"
 fi
 
 # Container was started with a non-root --user override: run as-is.
